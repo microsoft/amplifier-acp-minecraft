@@ -1,0 +1,34 @@
+// Minecraft evidence projection only. Watch policy and persistence live in Rust.
+const fs=require('node:fs');
+const path=require('node:path');
+const {execFile}=require('node:child_process');
+const {promisify}=require('node:util');
+const exec=promisify(execFile);
+
+function bounded(value,limit=1400){const text=JSON.stringify(value);return text.length<=limit?value:{truncated:true,excerpt:text.slice(0,limit)};}
+function context(cfg,history,live){
+ const task=history.task();const since=task?.started_at||'';
+ const records=history.data.events.filter(e=>!e.whisper&&e.time>=since);
+ const messages=records.filter(e=>['chat','chat_sent'].includes(e.kind)).slice(-30);
+ const actions=records.filter(e=>['action_result','action_failed'].includes(e.kind)).slice(-10);
+ const events=[...messages.map(e=>({id:e.id,kind:'message',source:`Public ${e.source||'self'} report: ${e.username||cfg.username}`,content:bounded({time:e.time,text:e.message||e.sent})})),
+  ...actions.map(e=>({id:e.id,kind:'tool',source:'Local game tool receipt',content:bounded(e)}))];
+ if(live.ready){
+  const position=p=>p?Object.fromEntries(Object.entries(p).map(([k,v])=>[k,Math.round(v)])):null;
+  events.push({id:'environment:self',kind:'environment',source:'Direct current player observation',content:{position:position(live.position),health:live.health,inventory:live.inventory}});
+  events.push({id:'environment:peers',kind:'environment',source:'Visible game players',content:(live.players||[]).map(p=>({name:p.name,position:position(p.position)}))});
+ }
+ return {scope:`${cfg.conversation_id||'minecraft:workshop'}:${cfg.username}`,
+  task:task?{id:task.id,goal:task.goal,status:task.status,deadline_ms:task.deadline,remaining_turns:Math.max(0,task.max_turns-task.turns)}:null,events};
+}
+
+async function invoke(command,home,input){
+ const temp=fs.mkdtempSync(path.join(home,'watch-request-'));
+ try{
+  const file=path.join(temp,'input.json');fs.writeFileSync(file,JSON.stringify(input),{mode:0o600});
+  const {stdout}=await exec(command,['watch','--store',path.join(home,'watches.json'),file],{timeout:5000,maxBuffer:512*1024});
+  return JSON.parse(stdout);
+ }catch(e){throw Error(e.stderr?.trim().slice(0,400)||'Attention watch operation failed');}
+ finally{fs.rmSync(temp,{recursive:true,force:true});}
+}
+module.exports={context,invoke};

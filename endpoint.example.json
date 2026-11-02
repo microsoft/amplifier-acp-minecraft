@@ -1,0 +1,5 @@
+{
+  "command": ["/absolute/path/to/an-acp-agent"],
+  "cwd": "/absolute/path/to/its/workspace",
+  "env": {}
+}

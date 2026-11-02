@@ -1,0 +1,17 @@
+node_modules/
+__pycache__/
+evidence/
+.state/
+*.log
+
+# Private installations, worlds and publication review material
+private/
+instances/
+world/
+worlds/
+.env
+.env.*
+!.env.example
+*.sqlite
+*.db
+server.properties

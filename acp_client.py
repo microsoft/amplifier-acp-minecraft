@@ -1,0 +1,182 @@
+"""Minimal ACP v1 stdio client. Endpoint ownership stays outside the lab."""
+import asyncio
+import json
+import os
+from pathlib import Path
+import signal
+
+__version__ = "0.1.0"
+
+
+class ProtocolError(RuntimeError):
+    pass
+
+
+def turn_disposition(result, body_busy=False):
+    """A clean protocol budget boundary is resumable, an unfinished action isn't."""
+    if body_busy or result.get('unsettled_tools'):
+        return 'interrupted'
+    if result.get('stop_reason') == 'end_turn':
+        return 'complete'
+    if result.get('stop_reason') in ('max_tokens','max_turn_requests'):
+        return 'limited'
+    return 'interrupted'
+
+
+class Client:
+    def __init__(self, endpoint, observe):
+        self.endpoint, self.observe = endpoint, observe
+        self.process = None
+        self.next_id = 0
+        self.session = None
+        self.info = None
+        self.write_lock = asyncio.Lock()
+        self.tool_calls = {}
+        self.permission_active = lambda: False
+
+    async def start(self):
+        # Explicit inheritance avoids carrying unrelated access tokens to agents.
+        names = ("PATH", "HOME", "USER", "LANG", "SYSTEMROOT", "WINDIR", "TEMP", "TMP", "SSL_CERT_FILE", "SSL_CERT_DIR", "SSH_AUTH_SOCK")
+        env = {name: os.environ[name] for name in names if name in os.environ}
+        env.update(self.endpoint.get("env", {}))
+        for name, path in self.endpoint.get("secret_env", {}).items():
+            env[name] = Path(path).expanduser().read_text().strip()
+        command = self.endpoint["command"]
+        self.process = await asyncio.create_subprocess_exec(*command,
+            cwd=self.endpoint.get("launch_cwd") or None, env=env,
+            stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.DEVNULL, limit=4 * 1024 * 1024,
+            start_new_session=os.name != "nt")
+        self.info = await asyncio.wait_for(self.request("initialize", {
+            "protocolVersion": 1, "clientInfo": {"name": "minecraft-adapter", "version": __version__},
+            "clientCapabilities": {},
+        }), 30)
+        if self.info.get("protocolVersion") != 1:
+            raise ProtocolError("Endpoint did not negotiate ACP v1")
+        self.observe("initialized", agent_info=self.info.get("agentInfo"), capabilities=self.info.get("agentCapabilities", {}))
+
+    async def open_session(self, previous=None):
+        params = {"cwd": self.endpoint["cwd"], "mcpServers": self.endpoint.get("mcp_servers", [])}
+        if self.endpoint.get("session_meta"):
+            params["_meta"] = self.endpoint["session_meta"]
+        if previous and self.info.get("agentCapabilities", {}).get("loadSession"):
+            params["sessionId"] = previous
+            await asyncio.wait_for(self.request("session/load", params), 30)
+            self.session = previous
+            self.observe("session_loaded", session_id=previous)
+        else:
+            result = await asyncio.wait_for(self.request("session/new", params), 30)
+            self.session = result.get("sessionId")
+            if not isinstance(self.session, str) or not self.session:
+                raise ProtocolError("Endpoint returned no session ID")
+            self.observe("session_recreated" if previous else "session_created", session_id=self.session)
+        return self.session
+
+    async def send(self, value):
+        async with self.write_lock:
+            self.process.stdin.write((json.dumps({"jsonrpc": "2.0", **value}) + "\n").encode())
+            await self.process.stdin.drain()
+
+    async def cancel(self):
+        await self.send({"method": "session/cancel", "params": {"sessionId": self.session}})
+
+    async def request(self, method, params, update=None):
+        self.next_id += 1
+        request_id = self.next_id
+        await self.send({"id": request_id, "method": method, "params": params})
+        while True:
+            line = await self.process.stdout.readline()
+            if not line:
+                raise ProtocolError("ACP closed before replying")
+            value = json.loads(line)
+            if value.get("jsonrpc") != "2.0":
+                raise ProtocolError("Invalid JSON-RPC frame")
+            if "method" not in value and value.get("id") == request_id:
+                if "error" in value:
+                    raise ProtocolError("ACP request rejected (see endpoint logs)")
+                return value.get("result", {})
+            if "method" in value and "id" in value:
+                if value["method"] == "session/request_permission":
+                    params = value.get('params', {})
+                    update_call = params.get('toolCall', {})
+                    call = {**self.tool_calls.get(update_call.get('toolCallId'), {}), **update_call}
+                    raw = call.get('rawInput') or {}
+                    allowed = {'observe','survey','inspect','find','chat','move','follow','gather','craft','place','build','give','stop','work_begin','work_report','map','plan_route','dig','set_open','tell','work_note','inventory','entities','shear','furnace','attention_watch','attention_watches','attention_cancel','read_sign','write_sign'}
+                    # Only this session's registered game server, using structured
+                    # tool metadata; a friendly display title never grants access.
+                    valid = (params.get('sessionId') == self.session and isinstance(raw, dict)
+                        and raw.get('server') == 'minecraft' and raw.get('tool') in allowed
+                        and self.permission_active())
+                    option = next((o for o in params.get('options', []) if o.get('kind') == 'allow_once'), None)
+                    outcome = {'outcome':'selected','optionId':option['optionId']} if valid and option else {'outcome':'cancelled'}
+                    self.observe('game_permission_allowed' if valid and option else 'permission_cancelled', tool=raw.get('tool') if isinstance(raw,dict) else None)
+                    await self.send({'id':value['id'],'result':{'outcome':outcome}})
+                else:
+                    await self.send({"id": value["id"], "error": {"code": -32601, "message": "Client capability not offered"}})
+                    self.observe("unsupported_callback", method=value["method"])
+            elif value.get("method") == "session/update" and update:
+                message = value.get("params", {})
+                if message.get("sessionId") != self.session:
+                    raise ProtocolError("Update addressed a different ACP session")
+                item = message.get('update', {})
+                if item.get('sessionUpdate') in ('tool_call','tool_call_update'):
+                    tid = item.get('toolCallId')
+                    self.tool_calls[tid] = {**self.tool_calls.get(tid, {}), **{k:v for k,v in item.items() if v is not None}}
+                await update(item)
+
+    async def prompt(self, text, timeout, on_chunk=None):
+        parts, final_parts, characters = [], [], 0
+        self.tool_calls = {}
+
+        async def update(message):
+            nonlocal characters
+            kind = message.get("sessionUpdate")
+            if kind == "agent_message_chunk" and message.get("content", {}).get("type") == "text":
+                chunk = message["content"]["text"]
+                characters += len(chunk)
+                if characters > 250_000:
+                    raise ProtocolError("ACP output exceeds the observation limit")
+                parts.append(chunk)
+                final_parts.append(chunk)
+                if on_chunk:
+                    await on_chunk(chunk)
+            elif kind in ("tool_call", "tool_call_update"):
+                final_parts.clear()
+                if parts and not parts[-1].endswith('\n'):
+                    parts.append('\n')
+                self.observe("tool_update", tool_id=message.get("toolCallId"), status=message.get("status"), title=message.get("title"))
+            elif kind == "usage_update":
+                self.observe("usage", usage={key: message[key] for key in ("used", "size", "cost") if key in message})
+            # Reasoning and raw tool content are not copied into the lab report.
+
+        try:
+            result = await asyncio.wait_for(self.request("session/prompt", {
+                "sessionId": self.session, "prompt": [{"type": "text", "text": text}],
+            }, update), timeout)
+            unsettled=[tid for tid,call in self.tool_calls.items() if call.get('status') not in ('completed','failed')]
+            return {"text": "".join(parts), "final_text": "".join(final_parts), "stop_reason": result.get("stopReason", "unknown"), 'unsettled_tools':unsettled}
+        except asyncio.TimeoutError:
+            try:
+                await self.cancel()
+                self.observe("timeout_cancel_requested")
+            except (OSError, RuntimeError):
+                pass
+            raise
+
+    async def close(self):
+        if not self.process:
+            return
+        if self.process.returncode is None:
+            try:
+                if os.name != "nt":
+                    os.killpg(self.process.pid, signal.SIGTERM)
+                else:
+                    self.process.terminate()
+                await asyncio.wait_for(self.process.wait(), 3)
+            except (ProcessLookupError, asyncio.TimeoutError):
+                if self.process.returncode is None:
+                    if os.name != "nt":
+                        os.killpg(self.process.pid, signal.SIGKILL)
+                    else:
+                        self.process.kill()
+                    await self.process.wait()

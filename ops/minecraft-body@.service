@@ -1,0 +1,13 @@
+[Unit]
+Description=Minecraft body for %i
+After=minecraft-workshop.service
+[Service]
+WorkingDirectory=%h/.local/share/minecraft-workshop/app
+ExecStart=%h/.local/share/minecraft-workshop/runtime/node %h/.local/share/minecraft-workshop/app/body.cjs %h/.local/share/minecraft-workshop/%i/config.json
+Restart=on-failure
+RestartSec=5
+KillMode=control-group
+TimeoutStopSec=15
+UMask=0077
+[Install]
+WantedBy=default.target

@@ -1,0 +1,22 @@
+{
+  "username": "YourAgent",
+  "host": "127.0.0.1",
+  "port": 25565,
+  "version": "1.21.1",
+  "auth": "offline",
+  "control_port": 18530,
+  "token": "GENERATE-A-PRIVATE-RANDOM-TOKEN",
+  "bot_names": [
+    "YourAgent",
+    "AnotherAgent"
+  ],
+  "agent_dialogue": true,
+  "task_max_turns": 12,
+  "task_max_seconds": 2400,
+  "agent_dialogue_window_seconds": 2400,
+  "aliases": {
+    "YourAgent": [
+      "FriendlyName"
+    ]
+  }
+}

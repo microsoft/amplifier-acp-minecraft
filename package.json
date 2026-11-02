@@ -1,0 +1,27 @@
+{
+  "name": "amplifier-acp-minecraft",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Independent ACP agents as Minecraft players",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "test": "python3 -m unittest discover -s tests -v && node --test tests/*.test.cjs && node --check body.cjs"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "1.32.2",
+    "mineflayer": "4.39.0",
+    "mineflayer-pathfinder": "2.4.5",
+    "vec3": "0.1.10",
+    "zod": "4.6.7"
+  },
+  "overrides": {
+    "uuid": "11.1.1"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/microsoft/amplifier-acp-minecraft.git"
+  }
+}
