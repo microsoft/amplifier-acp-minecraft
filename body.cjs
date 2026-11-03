@@ -12,6 +12,7 @@ const survival=require('./survival.cjs');
 const handoff=require('./handoff.cjs');
 const watchBridge=require('./watch-bridge.cjs');
 const crafting=require('./crafting.cjs');
+const containers=require('./containers.cjs');
 const mineflayer = require('mineflayer');
 const { pathfinder, goals } = require('mineflayer-pathfinder');
 const { Vec3 } = require('vec3');
@@ -153,6 +154,7 @@ async function operate(name,a={}){
       if(name==='chat')return speak(a.text);
       if(name==='shear')return survival.shear(bot,a,check);
       if(name==='furnace')return survival.furnace(bot,coord(a),a,check);
+      if(name==='container')return containers.container(bot,coord(a),a,check);
       if(name==='tell'){if(a.player===bot.username||!bot.players[a.player])throw Error('Choose another connected player by their exact name');const marker={request:'',update:'[FYI] ',ack:'[ACK] '}[a.intent];return {...speak('@'+a.player+' '+marker+a.text),intent:a.intent,requests_reply:a.intent==='request'};}
       if(name==='move'){const p=coord(a),before=bot.entity.position.clone();if(a.mode==='walk_only')return walking.move(bot,p,a.range??0,check);await go(p,a.range??0,true);return {mode:'normal',position:bot.entity.position,before,target:p,reached:true,exact_feet_y:true};}
       if(name==='write_sign')return signs.write(bot,coord(a),a,check);
@@ -227,6 +229,7 @@ const definitions={
   shear:['Shear one visible adult sheep within three blocks using inventory shears. Verifies wool removal; dropped wool is not necessarily collected. Never attacks animals.',{id:z.number().int(),uuid:z.string().uuid()}],
   furnace:['Inspect, load, or collect from an ordinary nearby furnace. Load requires empty input/output and inventory materials. Smelting continues between calls; do other work before inspecting or collecting. Do not reload or claim output from a load acknowledgment.',{...xyz,operation:z.enum(['inspect','load','collect']),item:z.string().max(80).optional(),count:z.number().int().min(1).max(8).optional(),fuel:z.string().max(80).optional(),fuel_count:z.number().int().min(1).max(8).optional()}],
   inventory:['Refresh inventory from the server, including after crafting or a held-item discrepancy. A normal observation may reflect cached inventory.',{}],
+  container:['Inspect an ordinary chest/barrel or deposit/withdraw 1–64 ordinary supply items, verifying both inventories against server snapshots. Stand within four blocks with clear reach; never walks. Coordinate shared storage. Partial/unconfirmed results require inspection, never blind retries. recover returns a held cursor to its original source slot after an interrupted transfer. Named/enchanted/component-bearing items are refused.',{...xyz,expected:z.enum(['chest','barrel']),operation:z.enum(['inspect','deposit','withdraw','recover']),item:z.string().min(1).max(80).optional(),count:z.number().int().min(1).max(64).optional()}],
   work_note:['Update an existing task after a bounded recovery or new observation. Resolving a blocked task marks it for review; never schedules more work or resets budgets.',{task_id:z.string(),summary:z.string().min(1).max(2000),blocker_resolved:z.boolean().default(false),status:z.enum(['blocked','needs_review','review']).optional()}],
   tell:['Address a player in public chat. intent=request asks for action/reply and can wake an agent; update adds visible [FYI], ack adds [ACK], both stored as context without waking a turn. Use requests only for actual dependencies; do not acknowledge acknowledgments.',{player:z.string().min(1).max(16),text:z.string().min(1).max(210),intent:z.enum(['request','update','ack']).default('request')}],
   work_begin:['Accept a recent human game request that needs several turns. Only use when the human asks for ongoing work; do not turn ordinary chat into tasks. Use its event id. Budgets persist and Stop cancels the task.',{request_id:z.string(),goal:z.string().min(1).max(2000)}],

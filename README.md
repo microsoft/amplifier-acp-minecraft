@@ -85,6 +85,21 @@ server inventory. Sign writes verify the server's text echo and can reject stale
 edits with `expected_lines`. Item drops remain physical world interactions:
 another nearby player may collect them, so verify the recipient's inventory.
 
+`container` inspects ordinary chests (single/double) and barrels, or deposits and
+withdraws 1–64 ordinary supply items. It checks reach without moving, uses
+server-confirmed clicks, and verifies the exact source and destination deltas.
+Insufficient supplies or capacity fail before transferring. Shared containers
+are not locked: coordinate ownership, and inspect after a partial or unconfirmed
+result instead of repeating it. An interrupted transfer can leave a cursor;
+`recover` returns it to its original source slot when safe. It never drops
+leftovers to make room. Custom-name, enchantment, and other component-bearing
+items require more precise selection and are currently refused.
+
+The optional `tests/containers_live.py` regression requires a **separate disposable
+server** on a non-production port with `level-name=container-fixture`. Pass
+`--node`, `--properties`, and `--out` explicitly. It creates fixture supplies in
+that world; it does not use a model or modify the workshop world.
+
 ## Continuing tasks and recovery
 
 A routed human request can authorize `work_begin`. The agent reports progress
