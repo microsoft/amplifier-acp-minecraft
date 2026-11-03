@@ -1,11 +1,15 @@
 """Minimal ACP v1 stdio client. Endpoint ownership stays outside the lab."""
 import asyncio
+import hashlib
 import json
 import os
 from pathlib import Path
 import signal
 
 __version__ = "0.1.0"
+
+# One source for both callback enforcement and the agent-visible policy.
+GAME_TOOLS = frozenset({'observe','survey','inspect','find','chat','move','follow','gather','craft','place','build','give','stop','work_begin','work_report','work_reopen','map','plan_route','dig','set_open','tell','work_note','inventory','entities','shear','furnace','container','attention_watch','attention_watches','attention_cancel','read_sign','write_sign'})
 
 
 class ProtocolError(RuntimeError):
@@ -90,6 +94,16 @@ class Client:
     async def cancel(self):
         await self.send({"method": "session/cancel", "params": {"sessionId": self.session}})
 
+    def permission_context(self):
+        """Describe this client's current policy, never grant a tool invocation."""
+        policy = {'server': 'minecraft', 'tools': sorted(GAME_TOOLS),
+                  'approval': 'allow_once', 'scope': 'same ACP session, active game turn, not session replay'}
+        revision = hashlib.sha256(json.dumps(policy, sort_keys=True).encode()).hexdigest()
+        active = bool(self.session) and not self.replaying and bool(self.permission_active())
+        return {'policy_revision': revision, 'session_id': self.session, 'active': active,
+                'server': policy['server'], 'allow_once_tools': policy['tools'] if active else [],
+                'scope': policy['scope']}
+
     async def request(self, method, params, update=None, idle_timeout=None):
         self.next_id += 1
         request_id = self.next_id
@@ -123,11 +137,10 @@ class Client:
                     update_call = params.get('toolCall', {})
                     call = {**self.tool_calls.get(update_call.get('toolCallId'), {}), **update_call}
                     raw = call.get('rawInput') or {}
-                    allowed = {'observe','survey','inspect','find','chat','move','follow','gather','craft','place','build','give','stop','work_begin','work_report','work_reopen','map','plan_route','dig','set_open','tell','work_note','inventory','entities','shear','furnace','attention_watch','attention_watches','attention_cancel','read_sign','write_sign'}
                     # Only this session's registered game server, using structured
                     # tool metadata; a friendly display title never grants access.
                     valid = (params.get('sessionId') == self.session and isinstance(raw, dict)
-                        and raw.get('server') == 'minecraft' and raw.get('tool') in allowed
+                        and raw.get('server') == 'minecraft' and raw.get('tool') in GAME_TOOLS
                         and not self.replaying and self.permission_active())
                     option = next((o for o in params.get('options', []) if o.get('kind') == 'allow_once'), None)
                     outcome = {'outcome':'selected','optionId':option['optionId']} if valid and option else {'outcome':'cancelled'}
@@ -149,6 +162,17 @@ class Client:
     async def prompt(self, text, timeout, on_chunk=None):
         parts, final_parts, characters = [], [], 0
         self.tool_calls = {}
+        permissions = self.permission_context()
+        self.observe('permission_context_supplied', **permissions)
+        permission_text = (
+            'Current adapter permission policy for this turn:\n' + json.dumps(permissions) + '\n'
+            'An earlier adapter denial describes that earlier invocation, not a permanent restriction. '
+            'If this current policy explicitly covers an operation that is still needed for your accepted task, '
+            'you may try it through the offered tool. Each invocation is checked again; a new denial or human Stop still applies. '
+            'This snapshot does not prove the operation succeeded, resolve uncertain prior effects, '
+            'grant access on another connection, or extend task scope/deadlines/budgets. '
+            'Inspect uncertain or partial effects before retrying.\n'
+        )
 
         async def update(message):
             nonlocal characters
@@ -173,7 +197,7 @@ class Client:
 
         try:
             result = await asyncio.wait_for(self.request("session/prompt", {
-                "sessionId": self.session, "prompt": [{"type": "text", "text": text}],
+                "sessionId": self.session, "prompt": [{"type": "text", "text": permission_text}, {"type": "text", "text": text}],
             }, update), timeout)
             unsettled=[tid for tid,call in self.tool_calls.items() if call.get('status') not in ('completed','failed')]
             return {"text": "".join(parts), "final_text": "".join(final_parts), "stop_reason": result.get("stopReason", "unknown"), 'unsettled_tools':unsettled}

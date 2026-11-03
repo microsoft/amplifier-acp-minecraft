@@ -12,6 +12,8 @@ const survival=require('./survival.cjs');
 const handoff=require('./handoff.cjs');
 const watchBridge=require('./watch-bridge.cjs');
 const crafting=require('./crafting.cjs');
+const containers=require('./containers.cjs');
+const {boundedAction}=require('./action-deadline.cjs');
 const mineflayer = require('mineflayer');
 const { pathfinder, goals } = require('mineflayer-pathfinder');
 const { Vec3 } = require('vec3');
@@ -32,7 +34,8 @@ const events=[], inbox=history.data.inbox||(history.data.inbox=[]), receipts=[];
 const routeHuman=conversationRouter(cfg.username,{aliases:cfg.aliases||{}});
 const delay=ms=>new Promise(r=>setTimeout(r,ms));
 function record(kind,data={}) { const e=history.record({seq:++sequence,time:new Date().toISOString(),kind,...data});events.push(e);if(events.length>200)events.shift(); console.log(JSON.stringify(e)); return e; }
-function stop(){ generation++;turnUntil=0;bot.pathfinder.setGoal(null);bot.clearControlStates();try{bot.stopDigging();}catch{} }
+function cancelAction(){ generation++;bot.pathfinder.setGoal(null);bot.clearControlStates();try{bot.stopDigging();}catch{} }
+function stop(){ turnUntil=0;cancelAction(); }
 bot.on('spawn',()=>{ready=true;const m=new spatial.SpatialMovements(bot);m.canDig=false;m.allow1by1towers=false;m.allowParkour=false;m.allowFreeMotion=false;m.scafoldingBlocks=[];m.maxDropDown=2; /* upstream measures to landing FLOOR: 2 permits a one-block feet descent */m.liquidCost=20;bot.pathfinder.setMovements(m);record('spawn',{position:bot.entity.position});});
 bot.on('end',reason=>{ready=false;stop();record('disconnected',{reason});setTimeout(()=>process.exit(shuttingDown?0:1),1000);});
 bot.on('error',e=>record('connection_error',{message:e.message}));
@@ -112,7 +115,7 @@ async function operate(name,a={}){
   if(!['chat','tell'].includes(name)&&!history.data.turn?.may_mutate)throw Error('A peer message does not authorize game actions after a responsibility stops. You may inspect and reply; a new human request is needed for more work.');
   if(!['chat','tell'].includes(name)&&turnUntil-Date.now()<95000)throw Error('Wrap up this turn now: use work_report to save progress and continue in the next turn. No more game mutations this turn.');
   if(++actions>24)throw Error('This turn reached its 24-action budget; save progress with work_report');
-  busy=true;const epoch=generation;const actionId=crypto.randomUUID();history.actionStarted(actionId);record('action_started',{action_id:actionId,action:name,arguments:a});let timer;
+  busy=true;const epoch=generation;const actionId=crypto.randomUUID();history.actionStarted(actionId);record('action_started',{action_id:actionId,action:name,arguments:a});let unfinished;
   const check=()=>{if(epoch!==generation||Date.now()>turnUntil)throw Error('Action cancelled');};
   const go=async(p,r=2,exactHeight=false)=>{check();const goal=exactHeight?new spatial.FeetGoal(p.x,p.y,p.z,r):new goals.GoalNear(p.x,p.y,p.z,r);await spatial.gotoWithProgress(bot,goal);await delay(250);check();if(!goal.isEnd(bot.entity.position.floored()))throw Error('Movement ended without reaching the requested destination; inspect current position');};
   async function place(p,item,supportFace,facing){
@@ -149,10 +152,11 @@ async function operate(name,a={}){
     return {position:p,actual,verified:true,properties,...(head?{head}: {})};
   }
   try {
-    const result=await Promise.race([(async()=>{
+    const result=await boundedAction(async()=>{
       if(name==='chat')return speak(a.text);
       if(name==='shear')return survival.shear(bot,a,check);
       if(name==='furnace')return survival.furnace(bot,coord(a),a,check);
+      if(name==='container')return containers.container(bot,coord(a),a,check);
       if(name==='tell'){if(a.player===bot.username||!bot.players[a.player])throw Error('Choose another connected player by their exact name');const marker={request:'',update:'[FYI] ',ack:'[ACK] '}[a.intent];return {...speak('@'+a.player+' '+marker+a.text),intent:a.intent,requests_reply:a.intent==='request'};}
       if(name==='move'){const p=coord(a),before=bot.entity.position.clone();if(a.mode==='walk_only')return walking.move(bot,p,a.range??0,check);await go(p,a.range??0,true);return {mode:'normal',position:bot.entity.position,before,target:p,reached:true,exact_feet_y:true};}
       if(name==='write_sign')return signs.write(bot,coord(a),a,check);
@@ -212,21 +216,31 @@ async function operate(name,a={}){
         return handoff.give(bot,a,check);
       }
       throw Error('Unknown action');
-    })(),new Promise((_,reject)=>{timer=setTimeout(()=>{stop();reject(Error('Action timed out; unfinished movement stopped'));},60000);})]);
+    },{cancel:()=>{if(name==='move')cancelAction();else stop();},
+      onUnsettled:completion=>{unfinished=completion;stop();}});
     history.actionSettled(actionId,!result?.error);const r=record('action_result',{action_id:actionId,action:name,arguments:a,result});receipts.push(r);if(receipts.length>100)receipts.shift();return result;
-  }catch(e){history.actionSettled(actionId,false);record('action_failed',{action_id:actionId,action:name,arguments:a,error:e.message});throw e;}
-  finally{clearTimeout(timer);busy=false;}
+  }catch(e){history.actionSettled(actionId,false);record('action_failed',{action_id:actionId,action:name,arguments:a,error:e.message,
+    ...(e.actionTimeout?{timeout:true,operation_settled:e.operationSettled,turn_preserved:Date.now()<turnUntil}: {})});throw e;}
+  finally{if(unfinished)unfinished.then(()=>{busy=false;});else busy=false;}
 }
 const xyz={x:z.number().int(),y:z.number().int(),z:z.number().int()};
 const support_face=z.enum(['north','south','east','west','up','down']).optional();
+const watch_alternative=z.union([z.string().min(1).max(600),z.object({
+ condition:z.string().min(1).max(600),message:z.object({
+  authors:z.array(z.string().min(1).max(160)).max(16).optional(),
+  recipients:z.array(z.string().min(1).max(160)).max(16).optional(),
+  intents:z.array(z.enum(['request','update','ack'])).max(3).optional()
+ }).strict()
+}).strict()]);
 const definitions={
-  attention_watch:['Watch evidence for your current responsibility. initial_check=current_state checks facts already present and then monitors changes; new_events ignores facts present at registration. Use a predicate for exact current facts (no model call): event_id=environment:self, path=/inventory_counts/oak_log, op=gte, value=20, kinds=[environment]. Use any_of for semantic peer reports, one alternative per entry. Supply predicate OR any_of, not both. A one-shot notification requests inspection, never new authority. At most 3 watches, TTL 30–1800 seconds.',{label:z.string().min(1).max(120),initial_check:z.enum(['current_state','new_events']).default('current_state'),any_of:z.array(z.string().min(1).max(600)).min(1).max(4).optional(),predicate:z.object({event_id:z.string().min(1).max(160),path:z.string().min(1).max(256),op:z.enum(['eq','gte','lte']),value:z.union([z.number(),z.string().max(600),z.boolean()])}).optional(),kinds:z.array(z.enum(['message','tool','environment'])).min(1).max(3),ttl_seconds:z.number().int().min(30).max(1800)}],
+  attention_watch:['Watch evidence for your current responsibility. initial_check=current_state checks facts already present and then monitors changes; new_events ignores facts present at registration. Use a predicate for exact current facts (no model call): event_id=environment:self, path=/inventory_counts/oak_log, op=gte, value=20, kinds=[environment]. Use any_of for semantic peer reports, one alternative per entry. A string watches all selected evidence. An object {condition,message:{authors,recipients,intents}} filters exact message metadata first; each filter is an optional array, with at least one nonempty. Use your exact name in recipients and request intent for directed requests; allow update for completed results. Supply predicate OR any_of, not both. A one-shot notification requests inspection, never new authority. At most 3 watches, TTL 30–1800 seconds.',{label:z.string().min(1).max(120),initial_check:z.enum(['current_state','new_events']).default('current_state'),any_of:z.array(watch_alternative).min(1).max(4).optional(),predicate:z.object({event_id:z.string().min(1).max(160),path:z.string().min(1).max(256),op:z.enum(['eq','gte','lte']),value:z.union([z.number(),z.string().max(600),z.boolean()])}).optional(),kinds:z.array(z.enum(['message','tool','environment'])).min(1).max(3),ttl_seconds:z.number().int().min(30).max(1800)}],
   attention_watches:['Inspect your own attention watches, expiry and pending evidence. Completed or stopped responsibilities cancel outstanding watches.',{}],
   attention_cancel:['Cancel one of your own watches that is no longer useful.',{id:z.string().uuid()}],
   entities:['Find nearby loaded animals, players or dropped items, including sheep color, age and wool state. Empty results cover loaded surroundings only. Use exact entity id and uuid when shearing.',{name:z.string().max(80).optional(),radius:z.number().int().min(1).max(48).default(32)}],
   shear:['Shear one visible adult sheep within three blocks using inventory shears. Verifies wool removal; dropped wool is not necessarily collected. Never attacks animals.',{id:z.number().int(),uuid:z.string().uuid()}],
   furnace:['Inspect, load, or collect from an ordinary nearby furnace. Load requires empty input/output and inventory materials. Smelting continues between calls; do other work before inspecting or collecting. Do not reload or claim output from a load acknowledgment.',{...xyz,operation:z.enum(['inspect','load','collect']),item:z.string().max(80).optional(),count:z.number().int().min(1).max(8).optional(),fuel:z.string().max(80).optional(),fuel_count:z.number().int().min(1).max(8).optional()}],
   inventory:['Refresh inventory from the server, including after crafting or a held-item discrepancy. A normal observation may reflect cached inventory.',{}],
+  container:['Inspect an ordinary chest/barrel or deposit/withdraw 1–64 ordinary supply items, verifying both inventories against server snapshots. Stand within four blocks with clear reach; never walks. Coordinate shared storage. Partial/unconfirmed results require inspection, never blind retries. recover returns a held cursor to its original source slot after an interrupted transfer. Named/enchanted/component-bearing items are refused.',{...xyz,expected:z.enum(['chest','barrel']),operation:z.enum(['inspect','deposit','withdraw','recover']),item:z.string().min(1).max(80).optional(),count:z.number().int().min(1).max(64).optional()}],
   work_note:['Update an existing task after a bounded recovery or new observation. Resolving a blocked task marks it for review; never schedules more work or resets budgets.',{task_id:z.string(),summary:z.string().min(1).max(2000),blocker_resolved:z.boolean().default(false),status:z.enum(['blocked','needs_review','review']).optional()}],
   tell:['Address a player in public chat. intent=request asks for action/reply and can wake an agent; update adds visible [FYI], ack adds [ACK], both stored as context without waking a turn. Use requests only for actual dependencies; do not acknowledge acknowledgments.',{player:z.string().min(1).max(16),text:z.string().min(1).max(210),intent:z.enum(['request','update','ack']).default('request')}],
   work_begin:['Accept a recent human game request that needs several turns. Only use when the human asks for ongoing work; do not turn ordinary chat into tasks. Use its event id. Budgets persist and Stop cancels the task.',{request_id:z.string(),goal:z.string().min(1).max(2000)}],

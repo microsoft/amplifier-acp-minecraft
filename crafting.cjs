@@ -77,4 +77,5 @@ async function craft(bot,item,count,table,check){
   if(bot.currentWindow?.type.startsWith('minecraft:crafting')&&!bot.currentWindow.selectedItem)bot.closeWindow(bot.currentWindow);
  }
 }
-module.exports={craft,prepare,parkCursor};
+// The same authoritative click is useful for ordinary storage transfers.
+module.exports={craft,prepare,parkCursor,click};
