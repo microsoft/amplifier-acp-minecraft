@@ -13,6 +13,7 @@ const handoff=require('./handoff.cjs');
 const watchBridge=require('./watch-bridge.cjs');
 const crafting=require('./crafting.cjs');
 const containers=require('./containers.cjs');
+const {boundedAction}=require('./action-deadline.cjs');
 const mineflayer = require('mineflayer');
 const { pathfinder, goals } = require('mineflayer-pathfinder');
 const { Vec3 } = require('vec3');
@@ -33,7 +34,8 @@ const events=[], inbox=history.data.inbox||(history.data.inbox=[]), receipts=[];
 const routeHuman=conversationRouter(cfg.username,{aliases:cfg.aliases||{}});
 const delay=ms=>new Promise(r=>setTimeout(r,ms));
 function record(kind,data={}) { const e=history.record({seq:++sequence,time:new Date().toISOString(),kind,...data});events.push(e);if(events.length>200)events.shift(); console.log(JSON.stringify(e)); return e; }
-function stop(){ generation++;turnUntil=0;bot.pathfinder.setGoal(null);bot.clearControlStates();try{bot.stopDigging();}catch{} }
+function cancelAction(){ generation++;bot.pathfinder.setGoal(null);bot.clearControlStates();try{bot.stopDigging();}catch{} }
+function stop(){ turnUntil=0;cancelAction(); }
 bot.on('spawn',()=>{ready=true;const m=new spatial.SpatialMovements(bot);m.canDig=false;m.allow1by1towers=false;m.allowParkour=false;m.allowFreeMotion=false;m.scafoldingBlocks=[];m.maxDropDown=2; /* upstream measures to landing FLOOR: 2 permits a one-block feet descent */m.liquidCost=20;bot.pathfinder.setMovements(m);record('spawn',{position:bot.entity.position});});
 bot.on('end',reason=>{ready=false;stop();record('disconnected',{reason});setTimeout(()=>process.exit(shuttingDown?0:1),1000);});
 bot.on('error',e=>record('connection_error',{message:e.message}));
@@ -113,7 +115,7 @@ async function operate(name,a={}){
   if(!['chat','tell'].includes(name)&&!history.data.turn?.may_mutate)throw Error('A peer message does not authorize game actions after a responsibility stops. You may inspect and reply; a new human request is needed for more work.');
   if(!['chat','tell'].includes(name)&&turnUntil-Date.now()<95000)throw Error('Wrap up this turn now: use work_report to save progress and continue in the next turn. No more game mutations this turn.');
   if(++actions>24)throw Error('This turn reached its 24-action budget; save progress with work_report');
-  busy=true;const epoch=generation;const actionId=crypto.randomUUID();history.actionStarted(actionId);record('action_started',{action_id:actionId,action:name,arguments:a});let timer;
+  busy=true;const epoch=generation;const actionId=crypto.randomUUID();history.actionStarted(actionId);record('action_started',{action_id:actionId,action:name,arguments:a});let unfinished;
   const check=()=>{if(epoch!==generation||Date.now()>turnUntil)throw Error('Action cancelled');};
   const go=async(p,r=2,exactHeight=false)=>{check();const goal=exactHeight?new spatial.FeetGoal(p.x,p.y,p.z,r):new goals.GoalNear(p.x,p.y,p.z,r);await spatial.gotoWithProgress(bot,goal);await delay(250);check();if(!goal.isEnd(bot.entity.position.floored()))throw Error('Movement ended without reaching the requested destination; inspect current position');};
   async function place(p,item,supportFace,facing){
@@ -150,7 +152,7 @@ async function operate(name,a={}){
     return {position:p,actual,verified:true,properties,...(head?{head}: {})};
   }
   try {
-    const result=await Promise.race([(async()=>{
+    const result=await boundedAction(async()=>{
       if(name==='chat')return speak(a.text);
       if(name==='shear')return survival.shear(bot,a,check);
       if(name==='furnace')return survival.furnace(bot,coord(a),a,check);
@@ -214,10 +216,12 @@ async function operate(name,a={}){
         return handoff.give(bot,a,check);
       }
       throw Error('Unknown action');
-    })(),new Promise((_,reject)=>{timer=setTimeout(()=>{stop();reject(Error('Action timed out; unfinished movement stopped'));},60000);})]);
+    },{cancel:()=>{if(name==='move')cancelAction();else stop();},
+      onUnsettled:completion=>{unfinished=completion;stop();}});
     history.actionSettled(actionId,!result?.error);const r=record('action_result',{action_id:actionId,action:name,arguments:a,result});receipts.push(r);if(receipts.length>100)receipts.shift();return result;
-  }catch(e){history.actionSettled(actionId,false);record('action_failed',{action_id:actionId,action:name,arguments:a,error:e.message});throw e;}
-  finally{clearTimeout(timer);busy=false;}
+  }catch(e){history.actionSettled(actionId,false);record('action_failed',{action_id:actionId,action:name,arguments:a,error:e.message,
+    ...(e.actionTimeout?{timeout:true,operation_settled:e.operationSettled,turn_preserved:Date.now()<turnUntil}: {})});throw e;}
+  finally{if(unfinished)unfinished.then(()=>{busy=false;});else busy=false;}
 }
 const xyz={x:z.number().int(),y:z.number().int(),z:z.number().int()};
 const support_face=z.enum(['north','south','east','west','up','down']).optional();
