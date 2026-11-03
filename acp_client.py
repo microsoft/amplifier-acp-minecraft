@@ -24,7 +24,7 @@ def turn_disposition(result, body_busy=False):
 
 
 class Client:
-    def __init__(self, endpoint, observe):
+    def __init__(self, endpoint, observe, *, load_timeout=180, idle_timeout=30):
         self.endpoint, self.observe = endpoint, observe
         self.process = None
         self.next_id = 0
@@ -33,6 +33,8 @@ class Client:
         self.write_lock = asyncio.Lock()
         self.tool_calls = {}
         self.permission_active = lambda: False
+        self.load_timeout, self.idle_timeout = load_timeout, idle_timeout
+        self.replaying = False
 
     async def start(self):
         # Explicit inheritance avoids carrying unrelated access tokens to agents.
@@ -59,10 +61,18 @@ class Client:
         params = {"cwd": self.endpoint["cwd"], "mcpServers": self.endpoint.get("mcp_servers", [])}
         if self.endpoint.get("session_meta"):
             params["_meta"] = self.endpoint["session_meta"]
-        if previous and self.info.get("agentCapabilities", {}).get("loadSession"):
+        if previous and not self.info.get("agentCapabilities", {}).get("loadSession"):
+            raise ProtocolError("Saved session cannot be loaded by this endpoint; refusing to replace it")
+        if previous:
             params["sessionId"] = previous
-            await asyncio.wait_for(self.request("session/load", params), 30)
             self.session = previous
+            self.replaying = True
+            try:
+                await asyncio.wait_for(self.request("session/load", params, idle_timeout=self.idle_timeout), self.load_timeout)
+            except asyncio.TimeoutError as e:
+                raise ProtocolError("ACP session/load exceeded its total replay deadline") from e
+            finally:
+                self.replaying = False
             self.observe("session_loaded", session_id=previous)
         else:
             result = await asyncio.wait_for(self.request("session/new", params), 30)
@@ -80,20 +90,32 @@ class Client:
     async def cancel(self):
         await self.send({"method": "session/cancel", "params": {"sessionId": self.session}})
 
-    async def request(self, method, params, update=None):
+    async def request(self, method, params, update=None, idle_timeout=None):
         self.next_id += 1
         request_id = self.next_id
         await self.send({"id": request_id, "method": method, "params": params})
+        frames, size, reported = 0, 0, asyncio.get_running_loop().time()
         while True:
-            line = await self.process.stdout.readline()
+            try:
+                line = await asyncio.wait_for(self.process.stdout.readline(), idle_timeout) if idle_timeout else await self.process.stdout.readline()
+            except asyncio.TimeoutError as e:
+                raise ProtocolError(f"ACP {method} stopped making replay progress") from e
             if not line:
                 raise ProtocolError("ACP closed before replying")
+            frames += 1
+            size += len(line)
+            now = asyncio.get_running_loop().time()
+            if method == 'session/load' and now - reported >= 5:
+                self.observe('session_load_progress', frames=frames, bytes=size)
+                reported = now
             value = json.loads(line)
             if value.get("jsonrpc") != "2.0":
                 raise ProtocolError("Invalid JSON-RPC frame")
             if "method" not in value and value.get("id") == request_id:
                 if "error" in value:
-                    raise ProtocolError("ACP request rejected (see endpoint logs)")
+                    code = value['error'].get('code')
+                    code = code if isinstance(code, int) else 'unknown'
+                    raise ProtocolError(f"ACP {method} rejected (code {code}; see endpoint logs)")
                 return value.get("result", {})
             if "method" in value and "id" in value:
                 if value["method"] == "session/request_permission":
@@ -101,12 +123,12 @@ class Client:
                     update_call = params.get('toolCall', {})
                     call = {**self.tool_calls.get(update_call.get('toolCallId'), {}), **update_call}
                     raw = call.get('rawInput') or {}
-                    allowed = {'observe','survey','inspect','find','chat','move','follow','gather','craft','place','build','give','stop','work_begin','work_report','map','plan_route','dig','set_open','tell','work_note','inventory','entities','shear','furnace','attention_watch','attention_watches','attention_cancel','read_sign','write_sign'}
+                    allowed = {'observe','survey','inspect','find','chat','move','follow','gather','craft','place','build','give','stop','work_begin','work_report','work_reopen','map','plan_route','dig','set_open','tell','work_note','inventory','entities','shear','furnace','attention_watch','attention_watches','attention_cancel','read_sign','write_sign'}
                     # Only this session's registered game server, using structured
                     # tool metadata; a friendly display title never grants access.
                     valid = (params.get('sessionId') == self.session and isinstance(raw, dict)
                         and raw.get('server') == 'minecraft' and raw.get('tool') in allowed
-                        and self.permission_active())
+                        and not self.replaying and self.permission_active())
                     option = next((o for o in params.get('options', []) if o.get('kind') == 'allow_once'), None)
                     outcome = {'outcome':'selected','optionId':option['optionId']} if valid and option else {'outcome':'cancelled'}
                     self.observe('game_permission_allowed' if valid and option else 'permission_cancelled', tool=raw.get('tool') if isinstance(raw,dict) else None)

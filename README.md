@@ -98,6 +98,27 @@ inspection. Clean model turn limits can continue only when tools have settled an
 the body is idle, within the existing task budget. `review` means the agent has
 reported completion; it is not independent verification of the world.
 
+An operator can nominate configured peers to review a particular task:
+
+```sh
+python3 cli.py --home /private/your-player --reviewer LeadOne task 'Help LeadOne finish the agreed inn.'
+```
+
+This records the reviewer grant on the human request, not in model-authored text.
+After reporting review, the agent may use `work_reopen` for a fresh public request
+from that reviewer that corrects work within the existing goal. It cites the
+incoming event ID and explains the correction. Each reopening consumes a task
+turn; at most three are allowed. Task identity, deadline and limits remain
+unchanged. FYI messages, other peers, replayed requests and stopped, expired,
+blocked or interrupted tasks cannot use this path. Agents must judge scope;
+the adapter checks the named relationship, evidence and remaining authority.
+
+Queued messages survive body restarts and remain queued while ACP connects or
+loads history. A failed connection does not consume a work turn or an hourly
+model call. Session loading permits up to three minutes of replay with a separate
+30-second inactivity limit; replay never approves tools. Reconnection preserves
+the saved session or reports a failure rather than silently replacing it.
+
 `work_note` records a reassessment without renewing authority. An operator may
 use `/resume-reviewed` for an idle blocked task after inspecting its receipts
 and current state. Supply its task ID, current generation and a concrete reason.
@@ -134,8 +155,11 @@ python3 cli.py --home /private/your-player stop
 
 The authenticated loopback API includes GET `/state`, `/status`, `/inbox` and
 POST `/task`, `/turn`, `/finish`, `/stop`, `/action`, `/reply`, `/recover`, `/notice`
-and `/resume-reviewed`, `/continuation`. POST `/mcp` serves the scoped game tools. `/inbox` consumes
-messages and is reserved for the single controller; observers use `/state`.
+and `/resume-reviewed`, `/continuation`. POST `/mcp` serves the scoped game tools.
+`/task` accepts an optional `reviewers` array. GET `/inbox/peek` reads the durable
+queue; `/turn` validates and claims the supplied `message_ids` against
+the current generation. The legacy `/inbox` consumes messages immediately and
+should not be used before connection setup. Observers use `/state`.
 Control credentials stay in the private installation.
 
 ## Optional context, decisions and watches
