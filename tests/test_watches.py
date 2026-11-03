@@ -6,6 +6,14 @@ from watches import Watches
 
 
 class WatchTransportTests(unittest.IsolatedAsyncioTestCase):
+    async def test_exact_message_filter_skips_model_and_logs_separate_evidence(self):
+        with tempfile.TemporaryDirectory() as d:
+            req=AsyncMock(return_value={'skip':'no_new_selected_evidence','filtered_events':2})
+            events=[]
+            w=Watches(Path(d),{},req,lambda kind,**kw:events.append((kind,kw)))
+            w.transport.evaluate=AsyncMock()
+            await w.poll();w.transport.evaluate.assert_not_called()
+            self.assertEqual(events,[('watch_filtered',{'evaluator':'message_metadata','events':2,'model_called':False})])
     async def test_optional_bridge_outage_does_not_abort_planner_or_substitute_policy(self):
         with tempfile.TemporaryDirectory() as d:
             req=AsyncMock(side_effect=RuntimeError('unavailable'))

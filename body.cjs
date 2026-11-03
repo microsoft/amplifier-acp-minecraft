@@ -12,6 +12,8 @@ const survival=require('./survival.cjs');
 const handoff=require('./handoff.cjs');
 const watchBridge=require('./watch-bridge.cjs');
 const crafting=require('./crafting.cjs');
+const containers=require('./containers.cjs');
+const {boundedAction}=require('./action-deadline.cjs');
 const mineflayer = require('mineflayer');
 const { pathfinder, goals } = require('mineflayer-pathfinder');
 const { Vec3 } = require('vec3');
@@ -28,11 +30,12 @@ bot.on('path_update',result=>spatial.normalizePassages(bot,result));
 let ready=false, busy=false, generation=0, turnUntil=0, actions=0, replies=0, sequence=0, shuttingDown=false;
 let lastHumanAt=Date.parse(history.data.events.filter(e=>e.kind==='chat'&&e.source==='human').at(-1)?.time)||0;
 let agentWakeTimes=[],lastNoticeAt=0;
-const events=[], inbox=[], receipts=[];
+const events=[], inbox=history.data.inbox||(history.data.inbox=[]), receipts=[];
 const routeHuman=conversationRouter(cfg.username,{aliases:cfg.aliases||{}});
 const delay=ms=>new Promise(r=>setTimeout(r,ms));
-function record(kind,data={}) { const e={seq:++sequence,time:new Date().toISOString(),kind,...data};events.push(e);if(events.length>200)events.shift();history.record(e); console.log(JSON.stringify(e)); return e; }
-function stop(){ generation++;turnUntil=0;bot.pathfinder.setGoal(null);bot.clearControlStates();try{bot.stopDigging();}catch{} }
+function record(kind,data={}) { const e=history.record({seq:++sequence,time:new Date().toISOString(),kind,...data});events.push(e);if(events.length>200)events.shift(); console.log(JSON.stringify(e)); return e; }
+function cancelAction(){ generation++;bot.pathfinder.setGoal(null);bot.clearControlStates();try{bot.stopDigging();}catch{} }
+function stop(){ turnUntil=0;cancelAction(); }
 bot.on('spawn',()=>{ready=true;const m=new spatial.SpatialMovements(bot);m.canDig=false;m.allow1by1towers=false;m.allowParkour=false;m.allowFreeMotion=false;m.scafoldingBlocks=[];m.maxDropDown=2; /* upstream measures to landing FLOOR: 2 permits a one-block feet descent */m.liquidCost=20;bot.pathfinder.setMovements(m);record('spawn',{position:bot.entity.position});});
 bot.on('end',reason=>{ready=false;stop();record('disconnected',{reason});setTimeout(()=>process.exit(shuttingDown?0:1),1000);});
 bot.on('error',e=>record('connection_error',{message:e.message}));
@@ -50,17 +53,17 @@ function hear(username,message,whisper=false){
     const intent=peerIntent(message,bot.username);
     agentWakeTimes=agentWakeTimes.filter(t=>t>Date.now()-3600000);
     const accepted=!!(cfg.agent_dialogue && direct && intent==='request' && Date.now()-lastHumanAt<(cfg.agent_dialogue_window_seconds||2400)*1000 && agentWakeTimes.length<Math.min(60,Math.max(1,cfg.peer_wakes_per_hour||4)) && inbox.length<8);
-    record('chat',{username,message,whisper,source:'agent',intent,accepted});
+    const e=record('chat',{username,message,whisper,source:'agent',intent,accepted});
     record('chat_routing',{username,route:direct&&intent!=='request'?'peer_'+intent:accepted?'peer_direct':direct?'peer_budget_or_window':'context_only'});
-    if(accepted){agentWakeTimes.push(Date.now());inbox.push({username,message,source:'agent'});}
+    if(accepted){agentWakeTimes.push(Date.now());inbox.push({id:e.id,username,message,source:'agent'});history.save();}
     return;
   }
-  record('chat',{username,message,whisper,source:'human',accepted:!!route});
+  const e=record('chat',{username,message,whisper,source:'human',accepted:!!route});
   lastHumanAt=Date.now();
   record('chat_routing',{username,route:route||'context_only'});
   if(!route)return;
-  if(/\b(stop|pause)\b/i.test(message)){stop();history.stop();inbox.length=0;record('stopped_by_player',{username});bot.chat('Stopped.');return;}
-  if(inbox.length<8)inbox.push({username,message,whisper});
+  if(/\b(stop|pause)\b/i.test(message)){stop();inbox.length=0;history.stop();record('stopped_by_player',{username});bot.chat('Stopped.');return;}
+  if(inbox.length<8){inbox.push({id:e.id,username,message,whisper,source:'human'});history.save();}
 }
 bot.on('chat',(u,m)=>hear(u,m));bot.on('whisper',(u,m)=>hear(u,m,true));
 function snapshot(){
@@ -105,14 +108,14 @@ async function operate(name,a={}){
     const action=name==='attention_watch'?{operation:'arm',spec:a}:name==='attention_cancel'?{operation:'cancel',id:a.id}:{operation:'list'};
     const result=await watchOperation(action);record('attention_watch_tool',{tool:name,result});return result;
   }
-  if(name==='work_begin'||name==='work_report'){
-    const result=name==='work_begin'?history.begin(a):history.report(a);if(name==='work_begin')turnUntil=Math.min(turnUntil,result.deadline);
+  if(['work_begin','work_report','work_reopen'].includes(name)){
+    const result=name==='work_begin'?history.begin(a):name==='work_reopen'?history.reopen(a):history.report(a);if(name!=='work_report')turnUntil=Math.min(turnUntil,result.deadline);
     record('work_status',{task_id:result.id,status:result.status,goal:result.goal,progress:result.progress.at(-1)});return result;
   }
   if(!['chat','tell'].includes(name)&&!history.data.turn?.may_mutate)throw Error('A peer message does not authorize game actions after a responsibility stops. You may inspect and reply; a new human request is needed for more work.');
   if(!['chat','tell'].includes(name)&&turnUntil-Date.now()<95000)throw Error('Wrap up this turn now: use work_report to save progress and continue in the next turn. No more game mutations this turn.');
   if(++actions>24)throw Error('This turn reached its 24-action budget; save progress with work_report');
-  busy=true;const epoch=generation;const actionId=crypto.randomUUID();history.actionStarted(actionId);record('action_started',{action_id:actionId,action:name,arguments:a});let timer;
+  busy=true;const epoch=generation;const actionId=crypto.randomUUID();history.actionStarted(actionId);record('action_started',{action_id:actionId,action:name,arguments:a});let unfinished;
   const check=()=>{if(epoch!==generation||Date.now()>turnUntil)throw Error('Action cancelled');};
   const go=async(p,r=2,exactHeight=false)=>{check();const goal=exactHeight?new spatial.FeetGoal(p.x,p.y,p.z,r):new goals.GoalNear(p.x,p.y,p.z,r);await spatial.gotoWithProgress(bot,goal);await delay(250);check();if(!goal.isEnd(bot.entity.position.floored()))throw Error('Movement ended without reaching the requested destination; inspect current position');};
   async function place(p,item,supportFace,facing){
@@ -149,10 +152,11 @@ async function operate(name,a={}){
     return {position:p,actual,verified:true,properties,...(head?{head}: {})};
   }
   try {
-    const result=await Promise.race([(async()=>{
+    const result=await boundedAction(async()=>{
       if(name==='chat')return speak(a.text);
       if(name==='shear')return survival.shear(bot,a,check);
       if(name==='furnace')return survival.furnace(bot,coord(a),a,check);
+      if(name==='container')return containers.container(bot,coord(a),a,check);
       if(name==='tell'){if(a.player===bot.username||!bot.players[a.player])throw Error('Choose another connected player by their exact name');const marker={request:'',update:'[FYI] ',ack:'[ACK] '}[a.intent];return {...speak('@'+a.player+' '+marker+a.text),intent:a.intent,requests_reply:a.intent==='request'};}
       if(name==='move'){const p=coord(a),before=bot.entity.position.clone();if(a.mode==='walk_only')return walking.move(bot,p,a.range??0,check);await go(p,a.range??0,true);return {mode:'normal',position:bot.entity.position,before,target:p,reached:true,exact_feet_y:true};}
       if(name==='write_sign')return signs.write(bot,coord(a),a,check);
@@ -212,25 +216,36 @@ async function operate(name,a={}){
         return handoff.give(bot,a,check);
       }
       throw Error('Unknown action');
-    })(),new Promise((_,reject)=>{timer=setTimeout(()=>{stop();reject(Error('Action timed out; unfinished movement stopped'));},60000);})]);
+    },{cancel:()=>{if(name==='move')cancelAction();else stop();},
+      onUnsettled:completion=>{unfinished=completion;stop();}});
     history.actionSettled(actionId,!result?.error);const r=record('action_result',{action_id:actionId,action:name,arguments:a,result});receipts.push(r);if(receipts.length>100)receipts.shift();return result;
-  }catch(e){history.actionSettled(actionId,false);record('action_failed',{action_id:actionId,action:name,arguments:a,error:e.message});throw e;}
-  finally{clearTimeout(timer);busy=false;}
+  }catch(e){history.actionSettled(actionId,false);record('action_failed',{action_id:actionId,action:name,arguments:a,error:e.message,
+    ...(e.actionTimeout?{timeout:true,operation_settled:e.operationSettled,turn_preserved:Date.now()<turnUntil}: {})});throw e;}
+  finally{if(unfinished)unfinished.then(()=>{busy=false;});else busy=false;}
 }
 const xyz={x:z.number().int(),y:z.number().int(),z:z.number().int()};
 const support_face=z.enum(['north','south','east','west','up','down']).optional();
+const watch_alternative=z.union([z.string().min(1).max(600),z.object({
+ condition:z.string().min(1).max(600),message:z.object({
+  authors:z.array(z.string().min(1).max(160)).max(16).optional(),
+  recipients:z.array(z.string().min(1).max(160)).max(16).optional(),
+  intents:z.array(z.enum(['request','update','ack'])).max(3).optional()
+ }).strict()
+}).strict()]);
 const definitions={
-  attention_watch:['Watch evidence for your current responsibility. initial_check=current_state checks facts already present and then monitors changes; new_events ignores facts present at registration. Use a predicate for exact current facts (no model call): event_id=environment:self, path=/inventory_counts/oak_log, op=gte, value=20, kinds=[environment]. Use any_of for semantic peer reports, one alternative per entry. Supply predicate OR any_of, not both. A one-shot notification requests inspection, never new authority. At most 3 watches, TTL 30–1800 seconds.',{label:z.string().min(1).max(120),initial_check:z.enum(['current_state','new_events']).default('current_state'),any_of:z.array(z.string().min(1).max(600)).min(1).max(4).optional(),predicate:z.object({event_id:z.string().min(1).max(160),path:z.string().min(1).max(256),op:z.enum(['eq','gte','lte']),value:z.union([z.number(),z.string().max(600),z.boolean()])}).optional(),kinds:z.array(z.enum(['message','tool','environment'])).min(1).max(3),ttl_seconds:z.number().int().min(30).max(1800)}],
+  attention_watch:['Watch evidence for your current responsibility. initial_check=current_state checks facts already present and then monitors changes; new_events ignores facts present at registration. Use a predicate for exact current facts (no model call): event_id=environment:self, path=/inventory_counts/oak_log, op=gte, value=20, kinds=[environment]. Use any_of for semantic peer reports, one alternative per entry. A string watches all selected evidence. An object {condition,message:{authors,recipients,intents}} filters exact message metadata first; each filter is an optional array, with at least one nonempty. Use your exact name in recipients and request intent for directed requests; allow update for completed results. Supply predicate OR any_of, not both. A one-shot notification requests inspection, never new authority. At most 3 watches, TTL 30–1800 seconds.',{label:z.string().min(1).max(120),initial_check:z.enum(['current_state','new_events']).default('current_state'),any_of:z.array(watch_alternative).min(1).max(4).optional(),predicate:z.object({event_id:z.string().min(1).max(160),path:z.string().min(1).max(256),op:z.enum(['eq','gte','lte']),value:z.union([z.number(),z.string().max(600),z.boolean()])}).optional(),kinds:z.array(z.enum(['message','tool','environment'])).min(1).max(3),ttl_seconds:z.number().int().min(30).max(1800)}],
   attention_watches:['Inspect your own attention watches, expiry and pending evidence. Completed or stopped responsibilities cancel outstanding watches.',{}],
   attention_cancel:['Cancel one of your own watches that is no longer useful.',{id:z.string().uuid()}],
   entities:['Find nearby loaded animals, players or dropped items, including sheep color, age and wool state. Empty results cover loaded surroundings only. Use exact entity id and uuid when shearing.',{name:z.string().max(80).optional(),radius:z.number().int().min(1).max(48).default(32)}],
   shear:['Shear one visible adult sheep within three blocks using inventory shears. Verifies wool removal; dropped wool is not necessarily collected. Never attacks animals.',{id:z.number().int(),uuid:z.string().uuid()}],
   furnace:['Inspect, load, or collect from an ordinary nearby furnace. Load requires empty input/output and inventory materials. Smelting continues between calls; do other work before inspecting or collecting. Do not reload or claim output from a load acknowledgment.',{...xyz,operation:z.enum(['inspect','load','collect']),item:z.string().max(80).optional(),count:z.number().int().min(1).max(8).optional(),fuel:z.string().max(80).optional(),fuel_count:z.number().int().min(1).max(8).optional()}],
   inventory:['Refresh inventory from the server, including after crafting or a held-item discrepancy. A normal observation may reflect cached inventory.',{}],
+  container:['Inspect an ordinary chest/barrel or deposit/withdraw 1–64 ordinary supply items, verifying both inventories against server snapshots. Stand within four blocks with clear reach; never walks. Coordinate shared storage. Partial/unconfirmed results require inspection, never blind retries. recover returns a held cursor to its original source slot after an interrupted transfer. Named/enchanted/component-bearing items are refused.',{...xyz,expected:z.enum(['chest','barrel']),operation:z.enum(['inspect','deposit','withdraw','recover']),item:z.string().min(1).max(80).optional(),count:z.number().int().min(1).max(64).optional()}],
   work_note:['Update an existing task after a bounded recovery or new observation. Resolving a blocked task marks it for review; never schedules more work or resets budgets.',{task_id:z.string(),summary:z.string().min(1).max(2000),blocker_resolved:z.boolean().default(false),status:z.enum(['blocked','needs_review','review']).optional()}],
   tell:['Address a player in public chat. intent=request asks for action/reply and can wake an agent; update adds visible [FYI], ack adds [ACK], both stored as context without waking a turn. Use requests only for actual dependencies; do not acknowledge acknowledgments.',{player:z.string().min(1).max(16),text:z.string().min(1).max(210),intent:z.enum(['request','update','ack']).default('request')}],
   work_begin:['Accept a recent human game request that needs several turns. Only use when the human asks for ongoing work; do not turn ordinary chat into tasks. Use its event id. Budgets persist and Stop cancels the task.',{request_id:z.string(),goal:z.string().min(1).max(2000)}],
   work_report:['Record concrete progress and choose running to continue, waiting with a concrete wait_for condition for a temporary dependency, blocked for an obstacle, or review when finished for humans to inspect. Never claim verified completion. Call before ending every work turn.',{status:z.enum(['running','waiting','blocked','review']),summary:z.string().min(1).max(2000),wait_for:z.string().min(1).max(1000).optional()}],
+  work_reopen:['Return a reviewed task to work for an in-scope correction requested publicly by an operator-authorized reviewer. Use the incoming message event id and explain how it fits your existing goal. Preserves the task, deadline and limits; consumes one work turn. Cannot revive stopped, expired or interrupted work.',{task_id:z.string(),request_id:z.string(),reason:z.string().min(1).max(2000)}],
   observe:['Inspect your player, inventory, nearby blocks, visible players, chat and actual action results.',{}],
   survey:['Survey loaded surroundings for a building site. Sampled ground elevation is separated from tree canopy; includes water and head clearance. Samples are not a complete footprint or a proven route. Use map/inspect before building.',{radius:z.number().int().min(8).max(24).default(16)}],
   map:['Read local elevation slices, obstacles, footing and standing candidates. Coordinates are feet positions; use plan_route to test reachability.',{radius:z.number().int().min(2).max(8).default(4)}],
@@ -294,13 +309,16 @@ const server=http.createServer(async(req,res)=>{
       }else result={action:'hold'};
     }
     else if(req.method==='GET'&&req.url==='/status')result={ready,busy,turn_active:Date.now()<turnUntil,task:history.task()};
-    else if(req.method==='GET'&&req.url==='/inbox')result=inbox.splice(0,8);
+    else if(req.method==='GET'&&req.url==='/inbox/peek')result=inbox.slice(0,8);
+    else if(req.method==='GET'&&req.url==='/inbox'){result=inbox.splice(0,8);history.save();}
     else if(req.method==='POST'&&req.url==='/recover'){history.recover();stop();result={task:history.task()};}
     else if(req.method==='POST'&&req.url==='/turn'){
       const a=await json(req);
       if(a.expected_generation!==undefined&&a.expected_generation!==generation)throw Error('Turn was superseded by Stop or a connection change');
+      const ids=a.message_ids||[];
+      if(!Array.isArray(ids)||ids.length>8||new Set(ids).size!==ids.length||ids.some(id=>!inbox.some(m=>m.id===id)))throw Error('Queued request changed before turn start');
       if(a.continuation&&history.task()?.status!=='running')throw Error('Task is no longer running');
-      if(history.budgetCheckpoint()&&a.continuation)throw Error('Task budget saved for review');history.startTurn({peerOnly:!!a.peer_only});stop();turnUntil=Math.min(Date.now()+240000,history.task()?.status==='running'?history.task().deadline:Infinity);actions=0;replies=0;result={active:true};}
+      if(history.budgetCheckpoint()&&a.continuation)throw Error('Task budget saved for review');history.startTurn({peerOnly:!!a.peer_only,requestIds:ids});for(let i=inbox.length-1;i>=0;i--)if(ids.includes(inbox[i].id))inbox.splice(i,1);history.save();stop();turnUntil=Math.min(Date.now()+240000,history.task()?.status==='running'?history.task().deadline:Infinity);actions=0;replies=0;result={active:true};}
     else if(req.method==='POST'&&req.url==='/notice'){
       const a=await json(req);const notices={budget:'I am waiting for hourly capacity. I will resume while the task remains authorized and within its deadline.',paused:'My game turn was interrupted. Progress so far is saved; ask me to inspect it and continue.'};
       if(!notices[a.kind])throw Error('Unknown status notice');
@@ -314,8 +332,11 @@ const server=http.createServer(async(req,res)=>{
     else if(req.method==='POST'&&req.url==='/finish'){const a=await json(req);if(ready)history.checkpoint({position:bot.entity.position.clone(),health:bot.health,recent_actions:receipts.slice(-8)});history.finish(!!a.error||busy,!!a.budget_limited&&!busy);stop();result={stopped:true};}
     else if(req.method==='POST'&&req.url==='/wake'){const a=await json(req);if(a.generation!==generation||Date.now()<turnUntil)throw Error('Observation superseded or turn already active');result=history.wake(a.task_id);record('attention_wake',{task_id:a.task_id});}
     else if(req.method==='POST'&&req.url==='/resume-reviewed'){const a=await json(req);if(!ready||busy||Date.now()<turnUntil||a.generation!==generation)throw Error('Recovery review superseded or player not idle');result=history.resumeReviewed(a);record('operator_recovery',{task_id:result.id,reason:a.reason});}
-    else if(req.method==='POST'&&req.url==='/stop'){stop();history.stop();inbox.length=0;result={stopped:true};}
-    else if(req.method==='POST'&&req.url==='/task'){const a=await json(req);if(typeof a.text!=='string'||!a.text.trim()||a.text.length>12000||inbox.length>=8)throw Error('Task must contain 1–12000 characters and the queue must have space');lastHumanAt=Date.now();record('chat',{username:'Operator',message:a.text,source:'human',accepted:true,whisper:false});inbox.push({username:'Operator',message:a.text});result={queued:true};}
+    else if(req.method==='POST'&&req.url==='/stop'){stop();inbox.length=0;history.stop();result={stopped:true};}
+    else if(req.method==='POST'&&req.url==='/task'){
+      const a=await json(req);if(typeof a.text!=='string'||!a.text.trim()||a.text.length>12000||inbox.length>=8)throw Error('Task must contain 1–12000 characters and the queue must have space');
+      const reviewers=a.reviewers||[];if(!Array.isArray(reviewers)||reviewers.length>8||reviewers.some(n=>typeof n!=='string'||!(cfg.bot_names||[]).includes(n)||n===cfg.username))throw Error('Reviewers must be configured peers other than this player');
+      lastHumanAt=Date.now();const e=record('chat',{username:'Operator',message:a.text,source:'human',accepted:true,whisper:false,reviewers:[...new Set(reviewers)]});inbox.push({id:e.id,username:'Operator',message:a.text,source:'human'});history.save();result={queued:true,request_id:e.id};}
     else if(req.method==='POST'&&req.url==='/action'){const a=await json(req);if(!definitions[a.name])throw Error('Unknown action');const args=z.object(definitions[a.name][1]).strict().parse(a.arguments||{});result=await operate(a.name,args);}
     else {res.writeHead(404);return res.end();}
     res.writeHead(200,{'Content-Type':'application/json'});res.end(JSON.stringify(result));

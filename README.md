@@ -85,6 +85,21 @@ server inventory. Sign writes verify the server's text echo and can reject stale
 edits with `expected_lines`. Item drops remain physical world interactions:
 another nearby player may collect them, so verify the recipient's inventory.
 
+`container` inspects ordinary chests (single/double) and barrels, or deposits and
+withdraws 1–64 ordinary supply items. It checks reach without moving, uses
+server-confirmed clicks, and verifies the exact source and destination deltas.
+Insufficient supplies or capacity fail before transferring. Shared containers
+are not locked: coordinate ownership, and inspect after a partial or unconfirmed
+result instead of repeating it. An interrupted transfer can leave a cursor;
+`recover` returns it to its original source slot when safe. It never drops
+leftovers to make room. Custom-name, enchantment, and other component-bearing
+items require more precise selection and are currently refused.
+
+The optional `tests/containers_live.py` regression requires a **separate disposable
+server** on a non-production port with `level-name=container-fixture`. Pass
+`--node`, `--properties`, and `--out` explicitly. It creates fixture supplies in
+that world; it does not use a model or modify the workshop world.
+
 ## Continuing tasks and recovery
 
 A routed human request can authorize `work_begin`. The agent reports progress
@@ -97,6 +112,27 @@ Stop cancels work and revokes the current action lease. Interrupted work require
 inspection. Clean model turn limits can continue only when tools have settled and
 the body is idle, within the existing task budget. `review` means the agent has
 reported completion; it is not independent verification of the world.
+
+An operator can nominate configured peers to review a particular task:
+
+```sh
+python3 cli.py --home /private/your-player --reviewer LeadOne task 'Help LeadOne finish the agreed inn.'
+```
+
+This records the reviewer grant on the human request, not in model-authored text.
+After reporting review, the agent may use `work_reopen` for a fresh public request
+from that reviewer that corrects work within the existing goal. It cites the
+incoming event ID and explains the correction. Each reopening consumes a task
+turn; at most three are allowed. Task identity, deadline and limits remain
+unchanged. FYI messages, other peers, replayed requests and stopped, expired,
+blocked or interrupted tasks cannot use this path. Agents must judge scope;
+the adapter checks the named relationship, evidence and remaining authority.
+
+Queued messages survive body restarts and remain queued while ACP connects or
+loads history. A failed connection does not consume a work turn or an hourly
+model call. Session loading permits up to three minutes of replay with a separate
+30-second inactivity limit; replay never approves tools. Reconnection preserves
+the saved session or reports a failure rather than silently replacing it.
 
 `work_note` records a reassessment without renewing authority. An operator may
 use `/resume-reviewed` for an idle blocked task after inspecting its receipts
@@ -134,9 +170,39 @@ python3 cli.py --home /private/your-player stop
 
 The authenticated loopback API includes GET `/state`, `/status`, `/inbox` and
 POST `/task`, `/turn`, `/finish`, `/stop`, `/action`, `/reply`, `/recover`, `/notice`
-and `/resume-reviewed`, `/continuation`. POST `/mcp` serves the scoped game tools. `/inbox` consumes
-messages and is reserved for the single controller; observers use `/state`.
+and `/resume-reviewed`, `/continuation`. POST `/mcp` serves the scoped game tools.
+`/task` accepts an optional `reviewers` array. GET `/inbox/peek` reads the durable
+queue; `/turn` validates and claims the supplied `message_ids` against
+the current generation. The legacy `/inbox` consumes messages immediately and
+should not be used before connection setup. Observers use `/state`.
 Control credentials stay in the private installation.
+
+## Current connection permissions
+
+Each normally admitted ACP turn includes the adapter's current permission policy:
+its revision, session scope and tools eligible for one-call approval. The list
+comes from the same allowlist used to answer ACP permission callbacks. This lets
+an agent distinguish an old adapter denial from the current connection policy
+after a tool has been added or repaired. It does not wake an idle agent, replace
+its session, add a task or renew a budget.
+
+The snapshot is context, not an approval token. Each callback still checks the
+session, tool metadata, live turn status and replay state. Human Stop or a new
+denial takes precedence, and an uncertain prior operation still needs inspection.
+The adapter owns this connection-specific policy; agent implementations remain
+free to reason about capability changes without Minecraft-specific runtime code.
+
+## Action timeouts
+
+A movement action has a 60-second limit. On timeout the body cancels the old
+action generation and waits briefly for its worker to settle. A settled movement
+failure leaves the existing turn available for inspection and a progress report;
+it does not retry the route, count as arrival, or renew any budget. Human Stop and
+disconnect still close the turn. Other action timeouts retain conservative
+closed-turn behavior. If cancellation has not settled, the turn closes and the
+body remains busy until cleanup actually finishes, preventing overlapping actions.
+Failure receipts identify timeout, worker settlement and whether the turn remained
+open. An uncertain receipt remains uncertain even if its worker has returned.
 
 ## Optional context, decisions and watches
 
@@ -181,6 +247,24 @@ environment fact without a model call: for example `environment:self`, pointer
 and positions use the containing block (floor), including negative coordinates.
 Use `any_of` for semantic peer reports. Predicates and semantic conditions are
 alternatives; their receipts and model-call counts remain separate.
+
+Message projection requires a helper supporting `responsibility-watch-v7`.
+Upgrade the helper before this adapter. The bridge supplies the server-observed
+author, the first explicit `@recipient`, and the visible `tell` convention:
+`[FYI]` means `update`, `[ACK]` means `ack`, and an addressed message without a
+marker has the default `request` intent. Unaddressed chat has no inferred intent;
+later mentions and quoted addresses are not recipients. These are routing facts,
+not a claim that the message actually satisfies a request or completion condition.
+
+Agents may use a string `any_of` branch as before, or an object such as
+`{"condition":"Lena asks Bea for help", "message":{"authors":["Lena"],
+"recipients":["Bea"],"intents":["request"]}}`. Exact filters avoid decision calls
+for wrong recipients or message types before semantic evaluation. Completion
+watches should allow updates and need not require a direct recipient. The
+`watch_filtered` receipt records filtered evidence and whether other eligible
+evidence still called the model. It is separate from a semantic hold, a pending
+notification, or a gate that actually admits a planner turn. Saved watches are
+preserved, not silently converted or rearmed by the upgrade.
 
 See the runtime's [assessment](https://github.com/microsoft/amplifier-constellation-runtime/blob/main/docs/assessment.md)
 and [watch](https://github.com/microsoft/amplifier-constellation-runtime/blob/main/docs/watches.md)

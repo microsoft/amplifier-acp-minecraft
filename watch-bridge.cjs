@@ -6,12 +6,21 @@ const {promisify}=require('node:util');
 const exec=promisify(execFile);
 
 function bounded(value,limit=1400){const text=JSON.stringify(value);return text.length<=limit?value:{truncated:true,excerpt:text.slice(0,limit)};}
+function messageEnvelope(cfg,e){
+ // tell's first @addressee and visible FYI/ACK marker are game transport facts.
+ // A later mention, a quoted address, or a name embedded in prose is not a recipient.
+ const first=(e.message||e.sent||'').match(/^@([A-Za-z0-9_]{1,16})\s+(?:\[(FYI|ACK)\]\s+)?/i);
+ const canonical=name=>[cfg.username,...(cfg.bot_names||[])].find(n=>n.toLowerCase()===name.toLowerCase())||
+  Object.keys(cfg.aliases||{}).find(n=>(cfg.aliases[n]||[]).some(a=>a.toLowerCase()===name.toLowerCase()))||name;
+ return {author:e.username||cfg.username,recipients:first?[canonical(first[1])]:[],
+  intent:first?first[2]?.toUpperCase()==='FYI'?'update':first[2]?.toUpperCase()==='ACK'?'ack':'request':null};
+}
 function context(cfg,history,live){
  const task=history.task();const since=task?.started_at||'';
  const records=history.data.events.filter(e=>!e.whisper&&e.time>=since);
  const messages=records.filter(e=>['chat','chat_sent'].includes(e.kind)).slice(-30);
  const actions=records.filter(e=>['action_result','action_failed'].includes(e.kind)).slice(-10);
- const events=[...messages.map(e=>({id:e.id,kind:'message',source:`Public ${e.source||'self'} report: ${e.username||cfg.username}`,content:bounded({time:e.time,text:e.message||e.sent})})),
+ const events=[...messages.map(e=>({id:e.id,kind:'message',source:`Public ${e.source||'self'} report: ${e.username||cfg.username}`,content:bounded({time:e.time,text:e.message||e.sent}),message:messageEnvelope(cfg,e)})),
   ...actions.map(e=>({id:e.id,kind:'tool',source:'Local game tool receipt',content:bounded(e)}))];
  if(live.ready){
   const inventory_counts={};for(const item of live.inventory||[])inventory_counts[item.name]=(inventory_counts[item.name]||0)+item.count;
@@ -32,4 +41,4 @@ async function invoke(command,home,input,operation='watch'){
  }catch(e){throw Error(e.stderr?.trim().slice(0,400)||'Attention watch operation failed');}
  finally{fs.rmSync(temp,{recursive:true,force:true});}
 }
-module.exports={context,invoke};
+module.exports={context,invoke,messageEnvelope};

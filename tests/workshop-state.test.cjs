@@ -150,7 +150,7 @@ test('recovery rejects active, stopped, reviewed, expired, or exhausted work',t=
   if(condition==='active')s.data.turn={task_id:task.id};
   if(condition==='deadline')task.deadline=Date.now()-1;
   if(condition==='turns')task.turns=task.max_turns;
-  assert.throws(()=>s.resumeReviewed({task_id:task.id,reason:'checked'}));assert.equal(task.status,'needs_review');
+  assert.throws(()=>s.resumeReviewed({task_id:task.id,reason:'checked'}));assert.equal(task.status,condition==='deadline'?'budget_exhausted':'needs_review');
  }
 });
 
@@ -186,4 +186,46 @@ test('peer replies cannot authorize mutations after work stops or expires',t=>{
  const s=fixture(t);s.startTurn({peerOnly:true});assert.equal(s.data.turn.may_mutate,false);s.finish();
  s.startTurn();assert.equal(s.data.turn.may_mutate,true);
  s.begin({request_id:request(s),goal:'library'});s.report({status:'running',summary:'progress'});s.finish();s.startTurn({peerOnly:true});assert.equal(s.data.turn.may_mutate,true);
+});
+
+function reviewFixture(t){
+ const s=fixture(t,{maxTurns:9});s.startTurn();const task=s.begin({request_id:request(s,{reviewers:['LeadOne']}),goal:'Complete an inn'});s.report({status:'review',summary:'shell ready'});s.finish();return {s,task};
+}
+function correction(s,changes={}){
+ return request(s,{username:'LeadOne',source:'agent',intent:'request',message:'BuilderOne, the requested kitchen is missing; please finish it.',...changes});
+}
+test('named reviewer correction reopens within the original task, counted and persisted',t=>{
+ const {s,task}=reviewFixture(t);const {id,deadline,max_turns,request_id,turns}=task;
+ const rid=correction(s);s.startTurn({peerOnly:true,requestIds:[rid]});assert.equal(s.data.turn.may_mutate,false);
+ s.reopen({task_id:id,request_id:rid,reason:'The kitchen is part of the accepted inn goal.'});
+ assert.equal(task.id,id);assert.equal(task.deadline,deadline);assert.equal(task.max_turns,max_turns);assert.equal(task.request_id,request_id);assert.equal(task.turns,turns+1);assert.equal(s.data.turn.may_mutate,true);
+ s.report({status:'review',summary:'kitchen inspected'});s.finish();assert.equal(new WorkshopState(s.file).task().rework_requests[0],rid);
+ s.startTurn({peerOnly:true,requestIds:[rid]});assert.throws(()=>s.reopen({task_id:id,request_id:rid,reason:'reuse correction'}));
+});
+test('review correction requires actual fresh addressed reviewer evidence',t=>{
+ for(const changes of [{username:'OtherPeer'},{source:'human'},{intent:'update'},{intent:'ack'},{accepted:false},{whisper:true},{time:'2000-01-01T00:00:00Z'}]){
+  const {s,task}=reviewFixture(t);const rid=correction(s,changes);s.startTurn({peerOnly:true,requestIds:[rid]});assert.throws(()=>s.reopen({task_id:task.id,request_id:rid,reason:'fix'}));assert.equal(s.data.turn.may_mutate,false);
+ }
+ const {s,task}=reviewFixture(t);const rid=correction(s);s.startTurn({peerOnly:true,requestIds:[]});assert.throws(()=>s.reopen({task_id:task.id,request_id:rid,reason:'not incoming'}));
+});
+test('reviewer cannot revive stopped, expired, interrupted or exhausted work',t=>{
+ for(const condition of ['stop','expired','turns','needs_review','blocked','limit']){
+  const {s,task}=reviewFixture(t);const rid=correction(s);
+  if(condition==='stop')s.stop();if(condition==='expired')task.deadline=Date.now()-1;if(condition==='turns')task.turns=task.max_turns;if(['needs_review','blocked'].includes(condition))task.status=condition;if(condition==='limit')task.rework_requests=['one','two','three'];
+  s.startTurn({peerOnly:true,requestIds:[rid]});assert.throws(()=>s.reopen({task_id:task.id,request_id:rid,reason:'correction'}));assert.equal(s.data.turn.may_mutate,false);
+  if(['stop','expired'].includes(condition))assert.throws(()=>s.note({task_id:task.id,summary:'bypass',status:'review'},{}));
+ }
+ const {s,task}=reviewFixture(t);task.reviewers=[];const rid=correction(s);s.startTurn({peerOnly:true,requestIds:[rid]});assert.throws(()=>s.reopen({task_id:task.id,request_id:rid,reason:'ungranted'}));
+});
+test('failure before an actual turn cannot consume interruption recovery',t=>{
+ const s=fixture(t);const task=s.begin({request_id:request(s),goal:'continue'});s.finish(true);assert.equal(task.status,'running');assert.equal(task.recovery_attempts,undefined);
+});
+
+test('review claimed during an interrupted turn cannot bypass receipt reconciliation',t=>{
+ for(const crash of [true,false]){
+  const {s,task}=reviewFixture(t);s.startTurn({peerOnly:true});
+  if(crash)s.recover();else s.finish(true);
+  assert.equal(task.status,'needs_review');
+  const rid=correction(s);s.startTurn({peerOnly:true,requestIds:[rid]});assert.throws(()=>s.reopen({task_id:task.id,request_id:rid,reason:'bypass interruption'}));
+ }
 });
