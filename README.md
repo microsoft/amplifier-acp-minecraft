@@ -221,6 +221,24 @@ and positions use the containing block (floor), including negative coordinates.
 Use `any_of` for semantic peer reports. Predicates and semantic conditions are
 alternatives; their receipts and model-call counts remain separate.
 
+Message projection requires a helper supporting `responsibility-watch-v7`.
+Upgrade the helper before this adapter. The bridge supplies the server-observed
+author, the first explicit `@recipient`, and the visible `tell` convention:
+`[FYI]` means `update`, `[ACK]` means `ack`, and an addressed message without a
+marker has the default `request` intent. Unaddressed chat has no inferred intent;
+later mentions and quoted addresses are not recipients. These are routing facts,
+not a claim that the message actually satisfies a request or completion condition.
+
+Agents may use a string `any_of` branch as before, or an object such as
+`{"condition":"Lena asks Bea for help", "message":{"authors":["Lena"],
+"recipients":["Bea"],"intents":["request"]}}`. Exact filters avoid decision calls
+for wrong recipients or message types before semantic evaluation. Completion
+watches should allow updates and need not require a direct recipient. The
+`watch_filtered` receipt records filtered evidence and whether other eligible
+evidence still called the model. It is separate from a semantic hold, a pending
+notification, or a gate that actually admits a planner turn. Saved watches are
+preserved, not silently converted or rearmed by the upgrade.
+
 See the runtime's [assessment](https://github.com/microsoft/amplifier-constellation-runtime/blob/main/docs/assessment.md)
 and [watch](https://github.com/microsoft/amplifier-constellation-runtime/blob/main/docs/watches.md)
 contracts. Disabling these optional helpers leaves ordinary ACP operation available.
