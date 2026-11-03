@@ -194,6 +194,50 @@ python3 ops/analyze_experiment.py --root /private/workshop --players builder-one
 python3 ops/watch_report.py --root /private/workshop --players builder-one builder-two --briefs /private/run.json --out /private/watch-results.json
 ```
 
+For a running experiment, `ops/measure_attention.py` separates planner admissions
+from provider requests, waiting decisions from active-turn advice, and quiet
+waiting from hourly capacity limits. It reads the named players' user-service
+journals and the observer's samples; it never prompts agents or changes game
+state. This journal reader requires Linux/systemd.
+
+```sh
+python3 ops/measure_attention.py --root /private/workshop --run /private/experiment --seconds 7200
+```
+
+The experiment directory needs `briefs.json` with `started_at` (ISO timestamp),
+`players` (player-directory names), and `limits.max_seconds`. If available,
+`accepted_tasks` maps each player to its task `id`; this excludes a prior task's
+idle state while the new request is being accepted. Run `observe_run.py` with
+`--out /private/experiment/observations` for the same players. Measurement stops
+no later than 15 minutes after the experiment's time limit, including on restart.
+
+Optional `measurement-inputs.json` maps player names to read-only usage sources.
+Capture baselines **before** dispatching the experiment. A native runtime entry
+uses `kind: native_sqlite`, `path`, `session`, and `baseline_seq` (the session's
+current maximum event sequence). A Codex entry uses `kind: codex_usage`, `path`
+(its session JSONL), `session`, `baseline_offset` (current byte length), and
+`baseline_totals` (the last `token_count.info.total_token_usage`). These readers
+are optional measurement adapters; other ACP implementations need not expose
+their internals. Without one, provider usage is reported as unavailable.
+
+`efficiency.json` reports admission reasons, decision holds/wakes, sampled idle
+intervals, provider usage and capacity waits. Native runtime events expose
+model-request attempts; Codex exposes usage updates, which are not assumed to
+map one-to-one to requests. Missing or failed requests are not guessed.
+Cached tokens remain separate from totals;
+these are not dollar estimates. A held decision is **not** automatically counted
+as an avoided LLM request: that causal claim needs a suitable comparison run.
+
+`task_work_turns` and `acp_turns_started` are separate: a read-only reply after
+delivery can start an ACP turn without spending another construction turn.
+Metadata-filtered evidence is counted separately from batches that did or did
+not call a decision model. Eligible branches in a partly filtered batch can
+still call the model, so filtered-event counts are not request savings. The
+collector also retains connection permission snapshots. When journal coverage
+changes, it re-reads retained journal entries from the original experiment start,
+deduplicates by journal cursor, and preserves provider measurement baselines.
+Entries already removed by journal retention cannot be recovered.
+
 Reports contain private run material and belong outside the repository. A model
 classification or agent-reported completion does not establish artifact quality
 or a successful collaboration; inspect the world and participation separately.
@@ -204,6 +248,12 @@ The observer's `latest.json` includes remaining budgets and attention signals;
 `attention-changes.jsonl` records changes in blockers, interruptions, disconnects,
 long turns, inactivity and review needs. A legitimate evidence wait is informational,
 not a stall. This recorder does not steer, retry, restart or complete agents.
+Both reports include `deadline_passed` and `last_work_report` independently of
+the task's current authority status. Thus a deadline can end authority while
+the preceding delivery-for-review report remains inspectable. This uses the
+latest task-bound structured work receipt, not chat prose or a stale review
+timestamp. It never turns an agent report into independent acceptance; a later
+rework report supersedes the earlier delivery report.
 
 ## Development and verification
 
