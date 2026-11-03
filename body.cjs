@@ -14,6 +14,7 @@ const watchBridge=require('./watch-bridge.cjs');
 const crafting=require('./crafting.cjs');
 const containers=require('./containers.cjs');
 const {boundedAction}=require('./action-deadline.cjs');
+const presence=require('./presence.cjs');
 const mineflayer = require('mineflayer');
 const { pathfinder, goals } = require('mineflayer-pathfinder');
 const { Vec3 } = require('vec3');
@@ -274,7 +275,9 @@ function mcpServer(){
   });return m;
 }
 async function json(req){let data='';for await(const b of req){data+=b;if(data.length>16384)throw Error('Request too large');}return data?JSON.parse(data):{};}
+const presenceHandler=presence.createHandler({token:cfg.presence_token,snapshot,label:cfg.world_label||'Minecraft'});
 const server=http.createServer(async(req,res)=>{
+  if(req.url==='/presence/mcp')return presenceHandler(req,res);
   const auth=req.headers.authorization||'';const contextRequest=req.url==='/context/v1/query';
   const secret=contextRequest?cfg.context_token:cfg.token;
   if(!secret){res.writeHead(403);return res.end();}

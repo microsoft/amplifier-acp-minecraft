@@ -270,6 +270,29 @@ See the runtime's [assessment](https://github.com/microsoft/amplifier-constellat
 and [watch](https://github.com/microsoft/amplifier-constellation-runtime/blob/main/docs/watches.md)
 contracts. Disabling these optional helpers leaves ordinary ACP operation available.
 
+### Public game presence in another experience
+
+An optional `/presence/mcp` endpoint lets an authorized Slack, editor or browser
+session inspect the same player's live game status and recent public chat.
+Set a separate long random `presence_token` in this player's private config and
+optionally a friendly `world_label`. Supply the endpoint as an ordinary HTTP MCP
+server with `Authorization: Bearer <presence_token>`. It is also compatible with
+Instance's optional installation-owned tool connections when that client has
+the explicit `tools:use` grant. Keep its header in the installation's secret store.
+
+This credential exposes only `minecraft_status` and `minecraft_recent_activity`.
+It cannot start tasks, wake the controller, move, stop, or build. Original request
+text, private whispers, control credentials, and raw action receipts are excluded.
+Progress remains an agent report. The full game tools and their active-turn
+authorization stay on the separate `/mcp` endpoint; never give its control token
+to another experience as a substitute for read access.
+
+The owner chooses which clients may see these public world observations. This
+does not promote a shared Slack room into an owner-private context or make other
+conversation providers visible. A remote reader still needs a trusted route to
+the loopback endpoint. New work and action requests continue through the game's
+existing human request and task controls.
+
 Read-only experiment helpers require explicit player directory names:
 
 ```sh
