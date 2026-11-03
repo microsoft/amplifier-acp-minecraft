@@ -24,6 +24,9 @@ class Watches:
             return
         self.next_poll=time.monotonic()+self.config.get('interval_seconds',5)
         prepared=await self.call({'operation':'prepare','observe_only':self.config.get('mode','shadow')!='advisory'})
+        if prepared and prepared.get('filtered_events'):
+            self.log('watch_filtered',evaluator='message_metadata',events=prepared['filtered_events'],
+                     model_called=bool(prepared.get('request')))
         if prepared and prepared.get('receipts'):
             self.log('watch_evaluated',evaluator='predicate',elapsed_ms=0,receipts=prepared['receipts'])
         if not prepared or 'request' not in prepared:

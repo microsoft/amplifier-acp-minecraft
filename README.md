@@ -177,6 +177,33 @@ the current generation. The legacy `/inbox` consumes messages immediately and
 should not be used before connection setup. Observers use `/state`.
 Control credentials stay in the private installation.
 
+## Current connection permissions
+
+Each normally admitted ACP turn includes the adapter's current permission policy:
+its revision, session scope and tools eligible for one-call approval. The list
+comes from the same allowlist used to answer ACP permission callbacks. This lets
+an agent distinguish an old adapter denial from the current connection policy
+after a tool has been added or repaired. It does not wake an idle agent, replace
+its session, add a task or renew a budget.
+
+The snapshot is context, not an approval token. Each callback still checks the
+session, tool metadata, live turn status and replay state. Human Stop or a new
+denial takes precedence, and an uncertain prior operation still needs inspection.
+The adapter owns this connection-specific policy; agent implementations remain
+free to reason about capability changes without Minecraft-specific runtime code.
+
+## Action timeouts
+
+A movement action has a 60-second limit. On timeout the body cancels the old
+action generation and waits briefly for its worker to settle. A settled movement
+failure leaves the existing turn available for inspection and a progress report;
+it does not retry the route, count as arrival, or renew any budget. Human Stop and
+disconnect still close the turn. Other action timeouts retain conservative
+closed-turn behavior. If cancellation has not settled, the turn closes and the
+body remains busy until cleanup actually finishes, preventing overlapping actions.
+Failure receipts identify timeout, worker settlement and whether the turn remained
+open. An uncertain receipt remains uncertain even if its worker has returned.
+
 ## Optional context, decisions and watches
 
 The optional `agent-instance.context/1` provider makes recent public game events,
@@ -220,6 +247,24 @@ environment fact without a model call: for example `environment:self`, pointer
 and positions use the containing block (floor), including negative coordinates.
 Use `any_of` for semantic peer reports. Predicates and semantic conditions are
 alternatives; their receipts and model-call counts remain separate.
+
+Message projection requires a helper supporting `responsibility-watch-v7`.
+Upgrade the helper before this adapter. The bridge supplies the server-observed
+author, the first explicit `@recipient`, and the visible `tell` convention:
+`[FYI]` means `update`, `[ACK]` means `ack`, and an addressed message without a
+marker has the default `request` intent. Unaddressed chat has no inferred intent;
+later mentions and quoted addresses are not recipients. These are routing facts,
+not a claim that the message actually satisfies a request or completion condition.
+
+Agents may use a string `any_of` branch as before, or an object such as
+`{"condition":"Lena asks Bea for help", "message":{"authors":["Lena"],
+"recipients":["Bea"],"intents":["request"]}}`. Exact filters avoid decision calls
+for wrong recipients or message types before semantic evaluation. Completion
+watches should allow updates and need not require a direct recipient. The
+`watch_filtered` receipt records filtered evidence and whether other eligible
+evidence still called the model. It is separate from a semantic hold, a pending
+notification, or a gate that actually admits a planner turn. Saved watches are
+preserved, not silently converted or rearmed by the upgrade.
 
 See the runtime's [assessment](https://github.com/microsoft/amplifier-constellation-runtime/blob/main/docs/assessment.md)
 and [watch](https://github.com/microsoft/amplifier-constellation-runtime/blob/main/docs/watches.md)
