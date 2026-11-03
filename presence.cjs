@@ -19,7 +19,8 @@ function status(snapshot, label) {
     coverage:'Observed game state; progress and completion are agent reports. This connection is read-only.'};
 }
 function activity(snapshot, limit, label) {
-  const events=(snapshot.public_chat||snapshot.events||[]).filter(e=>!e.whisper&&['chat','chat_sent'].includes(e.kind));
+  const events=(snapshot.public_chat||snapshot.events||[]).filter(e=>!e.whisper&&
+    ['chat','chat_sent'].includes(e.kind)&&!(e.kind==='chat'&&e.username==='Operator'));
   return {world:label,observed_at:new Date().toISOString(),username:snapshot.username,
     messages:events.slice(-limit).map(e=>({id:e.id,at:e.time,actor:e.username||snapshot.username,
       text:String(e.message||e.sent||'').slice(0,4000)})),
