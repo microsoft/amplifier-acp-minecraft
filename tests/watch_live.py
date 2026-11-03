@@ -22,16 +22,17 @@ async def main(a):
             for order in ('original','reversed'):
                 store=temp/(case['name']+'-'+order+'.json')
                 env={'scope':'replay','task':{'id':'test','goal':case['goal'],'status':'waiting',
-                    'deadline_ms':int(time.time()*1000)+600000,'remaining_turns':10},'events':[]}
-                trigger={'any_of':case['any_of']} if 'any_of' in case else {'condition':case['condition']}
+                    'deadline_ms':int(time.time()*1000)+600000,'remaining_turns':10},'events':case.get('initial_events',[])}
+                trigger={key:case[key] for key in ('any_of','condition','predicate') if key in case}
                 env['action']={'operation':'arm','spec':{'label':case['name'],**trigger,
-                    'kinds':case.get('kinds',['message']),'ttl_seconds':300}}
+                    'initial_check':case.get('initial_check','new_events'),'kinds':case.get('kinds',['message']),'ttl_seconds':300}}
                 await local(a.runtime,store,env)
                 env['events']=case['events'];env['action']={'operation':'prepare'}
                 prepared=await local(a.runtime,store,env)
                 if prepared.get('policy'):policy=prepared['policy']
                 if 'request' not in prepared:
-                    rows.append({'case':case['name'],'order':order,'wake':False,'pass':not case['wake'],'skipped':prepared['skip']});continue
+                    wake=any(r.get('wake') for r in prepared.get('receipts',[]))
+                    rows.append({'case':case['name'],'order':order,'wake':wake,'pass':wake==case['wake'],'skipped':prepared.get('skip'),'receipts':prepared.get('receipts',[]),'decision_calls':0});continue
                 req=copy.deepcopy(prepared['request'])
                 if order=='reversed':
                     for q in req['questions']:q['choices'].reverse()
@@ -42,10 +43,11 @@ async def main(a):
                 branch_wakes=[x.get('choice')=='wake' and x.get('probabilities',{}).get('wake',0)>=0.5 for x in result['answers']]
                 passed=wake==case['wake'] and ('branch_wakes' not in case or branch_wakes==case['branch_wakes'])
                 row={'case':case['name'],'order':order,'expected_wake':case['wake'],'wake':wake,'branch_wakes':branch_wakes,'pass':passed,
-                     'elapsed_ms':elapsed,'request':req,'result':result,'receipts':resolved['receipts']}
+                     'elapsed_ms':elapsed,'request':req,'result':result,'receipts':resolved['receipts'],'decision_calls':1}
                 rows.append(row);print(json.dumps({k:row[k] for k in ('case','order','wake','pass','elapsed_ms')}),flush=True)
-    summary={'policy':policy,'passed':sum(r['pass'] for r in rows),'count':len(rows),
-             'median_ms':statistics.median(r['elapsed_ms'] for r in rows if 'elapsed_ms' in r),'cases':rows}
+    times=[r['elapsed_ms'] for r in rows if 'elapsed_ms' in r]
+    summary={'policy':policy,'passed':sum(r['pass'] for r in rows),'count':len(rows),'decision_calls':sum(r['decision_calls'] for r in rows),
+             'median_ms':statistics.median(times) if times else None,'cases':rows}
     a.out.write_text(json.dumps(summary,indent=2));a.out.chmod(0o600)
     print(json.dumps({k:v for k,v in summary.items() if k!='cases'}))
 

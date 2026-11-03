@@ -94,7 +94,7 @@ The hourly limit defers further calls without consuming queued messages or
 renewing the task's deadline. State survives controller restarts.
 
 Stop cancels work and revokes the current action lease. Interrupted work requires
-review. Clean model turn limits can continue only when tools have settled and
+inspection. Clean model turn limits can continue only when tools have settled and
 the body is idle, within the existing task budget. `review` means the agent has
 reported completion; it is not independent verification of the world.
 
@@ -103,6 +103,20 @@ use `/resume-reviewed` for an idle blocked task after inspecting its receipts
 and current state. Supply its task ID, current generation and a concrete reason.
 The original request, deadline and remaining budget are preserved. Stopped,
 expired, exhausted or active tasks cannot be resumed through this operation.
+
+With `automatic_recovery: true` and a current runtime helper, `/continuation`
+evaluates durable action receipts and fresh world observations. It can resume an
+interrupted responsibility only when every recorded action settled successfully,
+the body is idle, and the original budget remains. Partial or uncertain effects
+still require review. At most two automatic reconciliations are allowed per task;
+none replay the old prompt or actions. Reconciliation is recorded as evidence.
+The generic advice policy lives in the runtime; game observations, receipts and
+enforcement live here. The setting is off unless explicitly enabled.
+
+When less than two minutes remain, the controller saves a budget checkpoint
+instead of starting a turn too short to do useful work. A peer request may still
+receive an inspection or reply, but cannot authorize mutations after work stops
+or expires. Only a fresh routed human request can authorize a new responsibility.
 
 Each turn permits at most 24 mutating calls over 220 seconds; builds and gathers
 also have per-action limits. Structured permission metadata can approve only a
@@ -120,7 +134,7 @@ python3 cli.py --home /private/your-player stop
 
 The authenticated loopback API includes GET `/state`, `/status`, `/inbox` and
 POST `/task`, `/turn`, `/finish`, `/stop`, `/action`, `/reply`, `/recover`, `/notice`
-and `/resume-reviewed`. POST `/mcp` serves the scoped game tools. `/inbox` consumes
+and `/resume-reviewed`, `/continuation`. POST `/mcp` serves the scoped game tools. `/inbox` consumes
 messages and is reserved for the single controller; observers use `/state`.
 Control credentials stay in the private installation.
 
@@ -159,8 +173,14 @@ bounded conditions through `attention_watch`, `attention_watches` and
 `attention_cancel`. The adapter supplies public messages, tool receipts and
 world observations. A matching watch may wake only an authorized waiting task;
 otherwise it becomes advice at a normal turn boundary. Stop, expiry and stale
-observations prevent a wake. Existing observations are baselined when registering
-a watch, so agents should also check whether the condition is already satisfied.
+observations prevent a wake. The tool defaults to `initial_check: current_state`,
+so conditions already satisfied when registering are not lost. `new_events`
+retains the older baseline behavior. An exact `predicate` can inspect a projected
+environment fact without a model call: for example `environment:self`, pointer
+`/inventory_counts/oak_log`, `op: gte`, `value: 12`. Inventory stacks are aggregated,
+and positions use the containing block (floor), including negative coordinates.
+Use `any_of` for semantic peer reports. Predicates and semantic conditions are
+alternatives; their receipts and model-call counts remain separate.
 
 See the runtime's [assessment](https://github.com/microsoft/amplifier-constellation-runtime/blob/main/docs/assessment.md)
 and [watch](https://github.com/microsoft/amplifier-constellation-runtime/blob/main/docs/watches.md)
@@ -169,14 +189,21 @@ contracts. Disabling these optional helpers leaves ordinary ACP operation availa
 Read-only experiment helpers require explicit player directory names:
 
 ```sh
-python3 ops/observe_run.py --root /private/workshop --players builder-one builder-two --out /private/observation --once
-python3 ops/analyze_experiment.py --root /private/workshop --players builder-one builder-two --briefs /private/run.json --out /private/results.json
+python3 ops/observe_run.py --root /private/workshop --players builder-one builder-two --out /private/observations --once
+python3 ops/analyze_experiment.py --root /private/workshop --players builder-one builder-two --briefs /private/run.json --observations /private/observations --out /private/results.json
 python3 ops/watch_report.py --root /private/workshop --players builder-one builder-two --briefs /private/run.json --out /private/watch-results.json
 ```
 
 Reports contain private run material and belong outside the repository. A model
 classification or agent-reported completion does not establish artifact quality
 or a successful collaboration; inspect the world and participation separately.
+Use the observer's persisted events for long-run analysis: the player's own
+history retains only its latest 1000 events. Reports identify their evidence
+coverage; recorder gaps or a late start can still leave missing observations.
+The observer's `latest.json` includes remaining budgets and attention signals;
+`attention-changes.jsonl` records changes in blockers, interruptions, disconnects,
+long turns, inactivity and review needs. A legitimate evidence wait is informational,
+not a stall. This recorder does not steer, retry, restart or complete agents.
 
 ## Development and verification
 

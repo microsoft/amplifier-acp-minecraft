@@ -109,9 +109,10 @@ async function operate(name,a={}){
     const result=name==='work_begin'?history.begin(a):history.report(a);if(name==='work_begin')turnUntil=Math.min(turnUntil,result.deadline);
     record('work_status',{task_id:result.id,status:result.status,goal:result.goal,progress:result.progress.at(-1)});return result;
   }
+  if(!['chat','tell'].includes(name)&&!history.data.turn?.may_mutate)throw Error('A peer message does not authorize game actions after a responsibility stops. You may inspect and reply; a new human request is needed for more work.');
   if(!['chat','tell'].includes(name)&&turnUntil-Date.now()<95000)throw Error('Wrap up this turn now: use work_report to save progress and continue in the next turn. No more game mutations this turn.');
   if(++actions>24)throw Error('This turn reached its 24-action budget; save progress with work_report');
-  busy=true;const epoch=generation;let timer;
+  busy=true;const epoch=generation;const actionId=crypto.randomUUID();history.actionStarted(actionId);record('action_started',{action_id:actionId,action:name,arguments:a});let timer;
   const check=()=>{if(epoch!==generation||Date.now()>turnUntil)throw Error('Action cancelled');};
   const go=async(p,r=2,exactHeight=false)=>{check();const goal=exactHeight?new spatial.FeetGoal(p.x,p.y,p.z,r):new goals.GoalNear(p.x,p.y,p.z,r);await spatial.gotoWithProgress(bot,goal);await delay(250);check();if(!goal.isEnd(bot.entity.position.floored()))throw Error('Movement ended without reaching the requested destination; inspect current position');};
   async function place(p,item,supportFace,facing){
@@ -212,14 +213,14 @@ async function operate(name,a={}){
       }
       throw Error('Unknown action');
     })(),new Promise((_,reject)=>{timer=setTimeout(()=>{stop();reject(Error('Action timed out; unfinished movement stopped'));},60000);})]);
-    const r=record('action_result',{action:name,arguments:a,result});receipts.push(r);if(receipts.length>100)receipts.shift();return result;
-  }catch(e){record('action_failed',{action:name,arguments:a,error:e.message});throw e;}
+    history.actionSettled(actionId,!result?.error);const r=record('action_result',{action_id:actionId,action:name,arguments:a,result});receipts.push(r);if(receipts.length>100)receipts.shift();return result;
+  }catch(e){history.actionSettled(actionId,false);record('action_failed',{action_id:actionId,action:name,arguments:a,error:e.message});throw e;}
   finally{clearTimeout(timer);busy=false;}
 }
 const xyz={x:z.number().int(),y:z.number().int(),z:z.number().int()};
 const support_face=z.enum(['north','south','east','west','up','down']).optional();
 const definitions={
-  attention_watch:['Ask the fast attention service to watch NEW evidence under your current responsibility. Put each alternative trigger in a separate any_of entry: one observable outcome per entry, not a long AND/OR sentence. Any matching entry requests inspection; successful results count, even if no fix is needed. Choose the evidence kinds needed; message watches ignore movement and inventory changes. At most 3 outstanding, one notification each, 30–1800 seconds. It can wake your existing waiting task for inspection; it cannot execute actions, prove completion, or create work. Inspect the trigger before acting. Cancel when no longer needed.',{label:z.string().min(1).max(120),any_of:z.array(z.string().min(1).max(600)).min(1).max(4),kinds:z.array(z.enum(['message','tool','environment'])).min(1).max(3),ttl_seconds:z.number().int().min(30).max(1800)}],
+  attention_watch:['Watch evidence for your current responsibility. initial_check=current_state checks facts already present and then monitors changes; new_events ignores facts present at registration. Use a predicate for exact current facts (no model call): event_id=environment:self, path=/inventory_counts/oak_log, op=gte, value=20, kinds=[environment]. Use any_of for semantic peer reports, one alternative per entry. Supply predicate OR any_of, not both. A one-shot notification requests inspection, never new authority. At most 3 watches, TTL 30–1800 seconds.',{label:z.string().min(1).max(120),initial_check:z.enum(['current_state','new_events']).default('current_state'),any_of:z.array(z.string().min(1).max(600)).min(1).max(4).optional(),predicate:z.object({event_id:z.string().min(1).max(160),path:z.string().min(1).max(256),op:z.enum(['eq','gte','lte']),value:z.union([z.number(),z.string().max(600),z.boolean()])}).optional(),kinds:z.array(z.enum(['message','tool','environment'])).min(1).max(3),ttl_seconds:z.number().int().min(30).max(1800)}],
   attention_watches:['Inspect your own attention watches, expiry and pending evidence. Completed or stopped responsibilities cancel outstanding watches.',{}],
   attention_cancel:['Cancel one of your own watches that is no longer useful.',{id:z.string().uuid()}],
   entities:['Find nearby loaded animals, players or dropped items, including sheep color, age and wool state. Empty results cover loaded surroundings only. Use exact entity id and uuid when shearing.',{name:z.string().max(80).optional(),radius:z.number().int().min(1).max(48).default(32)}],
@@ -280,6 +281,18 @@ const server=http.createServer(async(req,res)=>{
     if(req.method==='GET'&&req.url==='/state')result=snapshot();
     else if(req.method==='GET'&&req.url==='/watch-context')result=watchContext();
     else if(req.method==='POST'&&req.url==='/watch')result=await watchOperation(await json(req));
+    else if(req.method==='POST'&&req.url==='/continuation'){
+      const a=await json(req);if(a.generation!==generation||busy||Date.now()<turnUntil)throw Error('Continuation observation changed');
+      if(history.budgetCheckpoint()){record('budget_checkpoint',{task_id:history.task().id});result={action:'checkpoint'};}
+      else if(cfg.automatic_recovery&&cfg.decision_attention?.command&&history.task()?.status==='needs_review'&&ready){
+        const epoch=generation,taskId=history.task().id;
+        result=await watchBridge.invoke(cfg.decision_attention.command,path.dirname(process.argv[2]),{...history.recoveryFacts(),idle:true,observation_current:true},'continuation');
+        if(result.action==='inspect_then_continue'){
+          if(epoch!==generation||busy||Date.now()<turnUntil||history.task()?.id!==taskId)throw Error('Recovery superseded');
+          const task=history.reconcile({position:bot.entity.position.clone(),health:bot.health});record('receipt_reconciliation',{task_id:task.id,attempt:task.recovery_attempts});
+        }
+      }else result={action:'hold'};
+    }
     else if(req.method==='GET'&&req.url==='/status')result={ready,busy,turn_active:Date.now()<turnUntil,task:history.task()};
     else if(req.method==='GET'&&req.url==='/inbox')result=inbox.splice(0,8);
     else if(req.method==='POST'&&req.url==='/recover'){history.recover();stop();result={task:history.task()};}
@@ -287,7 +300,7 @@ const server=http.createServer(async(req,res)=>{
       const a=await json(req);
       if(a.expected_generation!==undefined&&a.expected_generation!==generation)throw Error('Turn was superseded by Stop or a connection change');
       if(a.continuation&&history.task()?.status!=='running')throw Error('Task is no longer running');
-      history.startTurn();stop();turnUntil=Math.min(Date.now()+240000,history.task()?.status==='running'?history.task().deadline:Infinity);actions=0;replies=0;result={active:true};}
+      if(history.budgetCheckpoint()&&a.continuation)throw Error('Task budget saved for review');history.startTurn({peerOnly:!!a.peer_only});stop();turnUntil=Math.min(Date.now()+240000,history.task()?.status==='running'?history.task().deadline:Infinity);actions=0;replies=0;result={active:true};}
     else if(req.method==='POST'&&req.url==='/notice'){
       const a=await json(req);const notices={budget:'I am waiting for hourly capacity. I will resume while the task remains authorized and within its deadline.',paused:'My game turn was interrupted. Progress so far is saved; ask me to inspect it and continue.'};
       if(!notices[a.kind])throw Error('Unknown status notice');

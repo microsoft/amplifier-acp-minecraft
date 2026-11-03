@@ -6,6 +6,7 @@ creates a task. Only an explicitly waiting, previously authorized task can wake.
 """
 import asyncio
 import hashlib
+import math
 import json
 import os
 from pathlib import Path
@@ -17,7 +18,7 @@ def observation(state):
     task = state.get('task') or {}
     since = task.get('wait_started_at') or ((task.get('progress') or [{}])[-1].get('at')) or ''
     def position(p):
-        return {k: round(v) for k,v in (p or {}).items()}
+        return {k: math.floor(v) for k,v in (p or {}).items()}
     return {
         'player': state.get('username'), 'task_id': task.get('id'),
         'goal': (task.get('goal') or '')[:700], 'wait_for': task.get('wait_for'),

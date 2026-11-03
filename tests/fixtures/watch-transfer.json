@@ -1,0 +1,386 @@
+[
+  {
+    "name": "inventory-already-enough",
+    "goal": "Finish the authorized visitor kiosk",
+    "initial_check": "current_state",
+    "predicate": {
+      "event_id": "inventory",
+      "path": "/wood",
+      "op": "gte",
+      "value": 12
+    },
+    "kinds": [
+      "environment"
+    ],
+    "initial_events": [
+      {
+        "id": "inventory",
+        "kind": "environment",
+        "source": "trusted host observation",
+        "content": {
+          "wood": 12
+        }
+      }
+    ],
+    "events": [
+      {
+        "id": "inventory",
+        "kind": "environment",
+        "source": "trusted host observation",
+        "content": {
+          "wood": 12
+        }
+      }
+    ],
+    "wake": true
+  },
+  {
+    "name": "inventory-crosses-threshold",
+    "goal": "Finish the authorized visitor kiosk",
+    "initial_check": "current_state",
+    "predicate": {
+      "event_id": "inventory",
+      "path": "/wood",
+      "op": "gte",
+      "value": 12
+    },
+    "kinds": [
+      "environment"
+    ],
+    "initial_events": [
+      {
+        "id": "inventory",
+        "kind": "environment",
+        "source": "trusted host observation",
+        "content": {
+          "wood": 11
+        }
+      }
+    ],
+    "events": [
+      {
+        "id": "inventory",
+        "kind": "environment",
+        "source": "trusted host observation",
+        "content": {
+          "wood": 13
+        }
+      }
+    ],
+    "wake": true
+  },
+  {
+    "name": "inventory-wrong-type",
+    "goal": "Finish the authorized visitor kiosk",
+    "initial_check": "current_state",
+    "predicate": {
+      "event_id": "inventory",
+      "path": "/wood",
+      "op": "gte",
+      "value": 12
+    },
+    "kinds": [
+      "environment"
+    ],
+    "initial_events": [
+      {
+        "id": "inventory",
+        "kind": "environment",
+        "source": "trusted host observation",
+        "content": {
+          "wood": 0
+        }
+      }
+    ],
+    "events": [
+      {
+        "id": "inventory",
+        "kind": "environment",
+        "source": "trusted host observation",
+        "content": {
+          "wood": "13"
+        }
+      }
+    ],
+    "wake": false
+  },
+  {
+    "name": "ci-already-complete",
+    "goal": "Review the existing release",
+    "initial_check": "current_state",
+    "predicate": {
+      "event_id": "build:7",
+      "path": "/state",
+      "op": "eq",
+      "value": "passed"
+    },
+    "kinds": [
+      "environment"
+    ],
+    "initial_events": [
+      {
+        "id": "build:7",
+        "kind": "environment",
+        "source": "trusted host observation",
+        "content": {
+          "state": "passed"
+        }
+      }
+    ],
+    "events": [
+      {
+        "id": "build:7",
+        "kind": "environment",
+        "source": "trusted host observation",
+        "content": {
+          "state": "passed"
+        }
+      }
+    ],
+    "wake": true
+  },
+  {
+    "name": "ci-new-events-preserved",
+    "goal": "Review the existing release",
+    "initial_check": "new_events",
+    "predicate": {
+      "event_id": "build:7",
+      "path": "/state",
+      "op": "eq",
+      "value": "passed"
+    },
+    "kinds": [
+      "environment"
+    ],
+    "initial_events": [
+      {
+        "id": "build:7",
+        "kind": "environment",
+        "source": "trusted host observation",
+        "content": {
+          "state": "passed"
+        }
+      }
+    ],
+    "events": [
+      {
+        "id": "build:7",
+        "kind": "environment",
+        "source": "trusted host observation",
+        "content": {
+          "state": "passed"
+        }
+      }
+    ],
+    "wake": false
+  },
+  {
+    "name": "booking-free-space",
+    "goal": "Prepare the already authorized workshop",
+    "initial_check": "current_state",
+    "predicate": {
+      "event_id": "capacity",
+      "path": "/free",
+      "op": "gte",
+      "value": 4
+    },
+    "kinds": [
+      "environment"
+    ],
+    "initial_events": [
+      {
+        "id": "capacity",
+        "kind": "environment",
+        "source": "trusted host observation",
+        "content": {
+          "free": 3
+        }
+      }
+    ],
+    "events": [
+      {
+        "id": "capacity",
+        "kind": "environment",
+        "source": "trusted host observation",
+        "content": {
+          "free": 4
+        }
+      }
+    ],
+    "wake": true
+  },
+  {
+    "name": "booking-no-free-space",
+    "goal": "Prepare the already authorized workshop",
+    "initial_check": "current_state",
+    "predicate": {
+      "event_id": "capacity",
+      "path": "/free",
+      "op": "gte",
+      "value": 4
+    },
+    "kinds": [
+      "environment"
+    ],
+    "initial_events": [
+      {
+        "id": "capacity",
+        "kind": "environment",
+        "source": "trusted host observation",
+        "content": {
+          "free": 3
+        }
+      }
+    ],
+    "events": [
+      {
+        "id": "capacity",
+        "kind": "environment",
+        "source": "trusted host observation",
+        "content": {
+          "free": 3
+        }
+      }
+    ],
+    "wake": false
+  },
+  {
+    "name": "peer-finished",
+    "goal": "Coordinate the authorized visitor guide review",
+    "initial_check": "current_state",
+    "any_of": [
+      "Morgan reports completing the visitor guide review, including when no changes are needed.",
+      "Morgan explicitly cancels their visitor guide review responsibility."
+    ],
+    "kinds": [
+      "message"
+    ],
+    "initial_events": [],
+    "events": [
+      {
+        "id": "message:1",
+        "kind": "message",
+        "source": "public peer message",
+        "content": "Morgan: I completed the visitor guide review. The route labels are clear; no edits are needed."
+      }
+    ],
+    "wake": true
+  },
+  {
+    "name": "peer-finished-already",
+    "goal": "Coordinate the authorized visitor guide review",
+    "initial_check": "current_state",
+    "any_of": [
+      "Morgan reports completing the visitor guide review, including when no changes are needed.",
+      "Morgan explicitly cancels their visitor guide review responsibility."
+    ],
+    "kinds": [
+      "message"
+    ],
+    "initial_events": [
+      {
+        "id": "message:1",
+        "kind": "message",
+        "source": "public peer message",
+        "content": "Morgan: I completed the visitor guide review. The route labels are clear; no edits are needed."
+      }
+    ],
+    "events": [
+      {
+        "id": "message:1",
+        "kind": "message",
+        "source": "public peer message",
+        "content": "Morgan: I completed the visitor guide review. The route labels are clear; no edits are needed."
+      }
+    ],
+    "wake": true
+  },
+  {
+    "name": "peer-not-finished",
+    "goal": "Coordinate the authorized visitor guide review",
+    "initial_check": "current_state",
+    "any_of": [
+      "Morgan reports completing the visitor guide review, including when no changes are needed.",
+      "Morgan explicitly cancels their visitor guide review responsibility."
+    ],
+    "kinds": [
+      "message"
+    ],
+    "initial_events": [],
+    "events": [
+      {
+        "id": "message:1",
+        "kind": "message",
+        "source": "public peer message",
+        "content": "Morgan: I have not started the visitor guide review yet. I will report back later."
+      }
+    ],
+    "wake": false
+  },
+  {
+    "name": "peer-cancelled",
+    "goal": "Coordinate the authorized visitor guide review",
+    "initial_check": "current_state",
+    "any_of": [
+      "Morgan reports completing the visitor guide review, including when no changes are needed.",
+      "Morgan explicitly cancels their visitor guide review responsibility."
+    ],
+    "kinds": [
+      "message"
+    ],
+    "initial_events": [],
+    "events": [
+      {
+        "id": "message:1",
+        "kind": "message",
+        "source": "public peer message",
+        "content": "Morgan: I am cancelling my visitor guide review; I cannot take it on this week."
+      }
+    ],
+    "wake": true
+  },
+  {
+    "name": "irrelevant-message",
+    "goal": "Coordinate the authorized visitor guide review",
+    "initial_check": "current_state",
+    "any_of": [
+      "Morgan reports completing the visitor guide review, including when no changes are needed.",
+      "Morgan explicitly cancels their visitor guide review responsibility."
+    ],
+    "kinds": [
+      "message"
+    ],
+    "initial_events": [],
+    "events": [
+      {
+        "id": "message:1",
+        "kind": "message",
+        "source": "public peer message",
+        "content": "Taylor: The lunch order arrived and the coffee is ready."
+      }
+    ],
+    "wake": false
+  },
+  {
+    "name": "quoted-completion",
+    "goal": "Coordinate the authorized visitor guide review",
+    "initial_check": "current_state",
+    "any_of": [
+      "Morgan reports completing the visitor guide review, including when no changes are needed.",
+      "Morgan explicitly cancels their visitor guide review responsibility."
+    ],
+    "kinds": [
+      "message"
+    ],
+    "initial_events": [],
+    "events": [
+      {
+        "id": "message:1",
+        "kind": "message",
+        "source": "public peer message",
+        "content": "Morgan: The draft button text says \"review completed\" but I have not done the visitor guide review."
+      }
+    ],
+    "wake": false
+  }
+]
