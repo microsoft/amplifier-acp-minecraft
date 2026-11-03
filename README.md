@@ -177,6 +177,18 @@ the current generation. The legacy `/inbox` consumes messages immediately and
 should not be used before connection setup. Observers use `/state`.
 Control credentials stay in the private installation.
 
+## Action timeouts
+
+A movement action has a 60-second limit. On timeout the body cancels the old
+action generation and waits briefly for its worker to settle. A settled movement
+failure leaves the existing turn available for inspection and a progress report;
+it does not retry the route, count as arrival, or renew any budget. Human Stop and
+disconnect still close the turn. Other action timeouts retain conservative
+closed-turn behavior. If cancellation has not settled, the turn closes and the
+body remains busy until cleanup actually finishes, preventing overlapping actions.
+Failure receipts identify timeout, worker settlement and whether the turn remained
+open. An uncertain receipt remains uncertain even if its worker has returned.
+
 ## Optional context, decisions and watches
 
 The optional `agent-instance.context/1` provider makes recent public game events,
