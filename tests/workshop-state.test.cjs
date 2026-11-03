@@ -153,3 +153,37 @@ test('recovery rejects active, stopped, reviewed, expired, or exhausted work',t=
   assert.throws(()=>s.resumeReviewed({task_id:task.id,reason:'checked'}));assert.equal(task.status,'needs_review');
  }
 });
+
+test('deadline checkpoint prevents empty turns and preserves original authorization',t=>{
+ const s=fixture(t);const task=s.begin({request_id:request(s),goal:'library'});task.deadline=Date.now()+100000;
+ const {id,deadline,turns,max_turns}=task;assert.throws(()=>s.startTurn(),/Insufficient time/);
+ assert.equal(task.status,'budget_exhausted');assert.equal(task.id,id);assert.equal(task.deadline,deadline);assert.equal(task.turns,turns);assert.equal(task.max_turns,max_turns);
+ assert.equal(s.budgetCheckpoint(),false);assert.equal(task.progress.filter(p=>p.kind==='budget_checkpoint').length,1);
+});
+test('bounded receipt recovery never replays or extends uncertain work',t=>{
+ for(const result of ['succeeded','uncertain','pending']){
+  const s=fixture(t);const task=s.begin({request_id:request(s),goal:'library'});s.startTurn();s.actionStarted('a');
+  if(result!=='pending')s.actionSettled('a',result==='succeeded');s.finish(true);
+  const {id,deadline,turns}=task;
+  if(result==='succeeded'){
+   s.reconcile({position:{x:1,y:65,z:1}});assert.equal(task.status,'running');assert.equal(task.recovery_attempts,1);
+   assert.equal(task.id,id);assert.equal(task.deadline,deadline);assert.equal(task.turns,turns);
+   s.startTurn();s.finish(true);s.reconcile({});s.startTurn();s.finish(true);assert.throws(()=>s.reconcile({}),/review/);
+  }else {assert.throws(()=>s.reconcile({}),/review/);assert.equal(task.status,'needs_review');}
+ }
+});
+test('stop revokes paused recovery and legacy receipts do not justify automatic continuation',t=>{
+ const s=fixture(t);s.begin({request_id:request(s),goal:'library'});s.startTurn();delete s.data.turn.actions;s.finish(true);
+ assert.equal(s.recoveryFacts().receipts_complete,false);assert.throws(()=>s.reconcile({}));
+ s.stop();assert.equal(s.task().status,'stopped');assert.throws(()=>s.resumeReviewed({task_id:s.task().id,reason:'previous receipts'}));
+});
+
+test('peer replies cannot authorize mutations after work stops or expires',t=>{
+ for(const status of ['stopped','blocked','needs_review','review','budget_exhausted']){
+  const s=fixture(t);const task=s.begin({request_id:request(s),goal:'library'});task.status=status;
+  s.startTurn({peerOnly:true});assert.equal(s.data.turn.may_mutate,false);assert.equal(task.status,status);
+ }
+ const s=fixture(t);s.startTurn({peerOnly:true});assert.equal(s.data.turn.may_mutate,false);s.finish();
+ s.startTurn();assert.equal(s.data.turn.may_mutate,true);
+ s.begin({request_id:request(s),goal:'library'});s.report({status:'running',summary:'progress'});s.finish();s.startTurn({peerOnly:true});assert.equal(s.data.turn.may_mutate,true);
+});

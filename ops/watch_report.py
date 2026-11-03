@@ -22,11 +22,12 @@ def report(root,since,until=None,players=()):
                 v=json.loads(line)
                 if v.get('kind','').startswith('watch_'):events.append(v)
             except ValueError:pass
-        rows=[e for e in events if e['kind']=='watch_evaluated']
+        rows=[e for e in events if e['kind']=='watch_evaluated' and e.get('evaluator')!='predicate']
+        exact=[e for e in events if e['kind']=='watch_evaluated' and e.get('evaluator')=='predicate']
         path=root/name/'watches.json';state=json.loads(path.read_text()) if path.exists() else {'watches':[]}
         result['players'][name]={
             'watches':[{k:w.get(k) for k in ['id','task_id','spec','status','notification']} for w in state['watches'] if since_ms<=w['created_ms']<until_ms],
-            'decision_calls':len(rows),'median_ms':statistics.median(e['elapsed_ms'] for e in rows) if rows else None,
+            'exact_predicate_matches':len(exact),'decision_calls':len(rows),'median_ms':statistics.median(e['elapsed_ms'] for e in rows) if rows else None,
             'input_tokens':sum((e['result'].get('usage') or {}).get('input_tokens',0) for e in rows),
             'judgments':[{k:r.get(k) for k in ['id','label','wake','shadow','discarded']} for e in rows for r in e.get('receipts',[])],
             'wake_deliveries':sum(e['kind']=='watch_applied' and e.get('application')=='wake' for e in events),

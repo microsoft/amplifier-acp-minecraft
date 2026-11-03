@@ -10,7 +10,7 @@ class WorkshopState {
  recover(){
   if(this.data.turn){
    if(['running','waiting'].includes(this.data.task?.status))this.data.task.status='needs_review';
-   this.data.turn=null;this.save();
+   this.data.last_turn={...this.data.turn,interrupted:true};this.data.turn=null;this.save();
   }
  }
  save(){fs.writeFileSync(this.file+'.tmp',JSON.stringify(this.data),{mode:0o600});fs.renameSync(this.file+'.tmp',this.file);}
@@ -24,16 +24,38 @@ class WorkshopState {
   const task={id:crypto.randomUUID(),goal,request_id,requested_by:source.username,request:source.message,status:'running',turns:1,max_turns:this.maxTurns,deadline:Date.now()+this.maxSeconds*1000,progress:[],started_at:new Date().toISOString()};
   this.data.accepted_requests=[...(this.data.accepted_requests||[]),request_id].slice(-1000);
   if(this.data.task)this.data.task_history=[...(this.data.task_history||[]),this.data.task].slice(-10);
-  this.data.task=task;this.save();return task;
+  this.data.task=task;if(this.data.turn)this.data.turn.task_id=task.id;this.save();return task;
  }
- startTurn(){
+ startTurn({peerOnly=false}={}){
   const task=this.task();
   if(['running','waiting'].includes(task?.status)){
+   if(task.deadline-Date.now()<120000){this.budgetCheckpoint();throw Error('Insufficient time for another useful turn; progress saved');}
    task.status='running';
    if(task.turns>=task.max_turns){task.status='budget_exhausted';this.save();throw Error('Task turn budget exhausted');}
    task.turns++;
   }
-  this.data.turn={started_at:new Date().toISOString(),task_id:task?.id||null,progress_revision:task?.progress_revision||0};this.save();
+  this.data.turn={started_at:new Date().toISOString(),task_id:task?.id||null,progress_revision:task?.progress_revision||0,actions:[],may_mutate:!peerOnly||['running','waiting'].includes(task?.status)};this.save();
+ }
+ actionStarted(id){if(this.data.turn){this.data.turn.actions.push({id,status:'pending'});this.save();}}
+ actionSettled(id,success){const a=this.data.turn?.actions?.find(a=>a.id===id);if(a){a.status=success?'succeeded':'uncertain';this.save();}}
+ recoveryFacts(){
+  const task=this.task(),turn=this.data.last_turn;
+  return {status:task?.status||'none',remaining_ms:Math.max(0,(task?.deadline||0)-Date.now()),remaining_turns:Math.max(0,(task?.max_turns||0)-(task?.turns||0)),minimum_turn_ms:120000,
+   receipts_complete:!!(turn?.interrupted&&turn.task_id===task?.id&&Array.isArray(turn.actions)&&turn.actions.every(a=>a.status!=='pending')),
+   actions_succeeded:!!turn?.actions?.every(a=>a.status==='succeeded'),recovery_attempts:task?.recovery_attempts||0};
+ }
+ budgetCheckpoint(){
+  const task=this.task();if(task&&['running','waiting','needs_review'].includes(task.status)&&task.deadline-Date.now()<120000){
+   this.appendProgress(task,{at:new Date().toISOString(),kind:'budget_checkpoint',summary:'Progress saved: less than two minutes remain, so no new work turn will start. A fresh authorization is required to continue.'});
+   task.status='budget_exhausted';task.wait_for=null;this.save();return true;
+  }return false;
+ }
+ reconcile(observation){
+  const f=this.recoveryFacts();const task=this.task();
+  if(this.data.turn||f.status!=='needs_review'||f.remaining_ms<120000||!f.remaining_turns||!f.receipts_complete||!f.actions_succeeded||f.recovery_attempts>=2)throw Error('Interrupted work requires operator review');
+  task.recovery_attempts=f.recovery_attempts+1;
+  this.appendProgress(task,{at:new Date().toISOString(),kind:'receipt_reconciliation',summary:'Controller inspected settled successful action receipts and current world state. Continue by observing; do not replay prior actions.',observation});
+  task.status='running';task.wait_for=null;task.wait_started_at=null;this.save();return task;
  }
  appendProgress(task,entry){
   task.progress.push(entry);task.progress=task.progress.slice(-30);
@@ -69,6 +91,7 @@ class WorkshopState {
    else if(turn?.task_id===task.id&&turn.progress_revision===(task.progress_revision||0))task.status='blocked';
    else if(task.turns>=task.max_turns)task.status='budget_exhausted';
   }
+  if(turn)this.data.last_turn={...turn,interrupted:!!error};
   this.data.turn=null;this.save();
  }
  wake(task_id){
@@ -84,7 +107,7 @@ class WorkshopState {
   this.appendProgress(task,{at:new Date().toISOString(),kind:'operator_recovery',summary:reason,previous_status:task.status});
   task.status='running';task.wait_for=null;task.wait_started_at=null;this.save();return task;
  }
- stop(){if(['running','waiting'].includes(this.data.task?.status))this.data.task.status='stopped';this.data.turn=null;this.save();}
+ stop(){if(['running','waiting','blocked','needs_review'].includes(this.data.task?.status))this.data.task.status='stopped';this.data.turn=null;this.save();}
  query(q,cfg,live){
   const owner=q.access?.mode==='owner';
   if(!owner&&(q.access?.mode!=='grant'||!cfg.context_grant||q.access.grant!==cfg.context_grant))throw Error('Invalid conversation grant');

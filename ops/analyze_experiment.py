@@ -39,6 +39,9 @@ def analyze(root, started_at, players):
         report['players'][name]={
             'task_status':task.get('status'),'goal':task.get('goal'),
             'latest_progress':task.get('progress',[])[-1:],
+            'receipt_recoveries':sum(e['kind']=='receipt_reconciliation' for e in events),
+            'operator_recoveries':sum(e['kind']=='operator_recovery' for e in events),
+            'budget_checkpoints':sum(e['kind']=='budget_checkpoint' for e in events),
             'tool_results':sum(e['kind']=='action_result' for e in events),
             'failures':failures,'repeated_failed_attempts':repeats,
             'public_messages':sum(e['kind']=='chat_sent' or (e['kind']=='action_result' and e.get('action') in ('tell','chat')) for e in events),

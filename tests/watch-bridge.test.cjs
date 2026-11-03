@@ -13,3 +13,8 @@ test('watch projection scopes to current responsibility, excludes whispers and s
  assert.equal(c.events[0].kind,'message');assert.equal(c.events[1].kind,'tool');
  assert.equal(c.events[2].content.position.x,1);assert.ok(!JSON.stringify(c).includes('private'));
 });
+test('environment facts use containing blocks including negative coordinates and aggregate inventory stacks',()=>{
+ const c=context({username:'One'},{task:()=>null,data:{events:[]}},{ready:true,position:{x:-0.2,y:65,z:67.9},inventory:[{name:'oak_log',count:12},{name:'oak_log',count:8}],players:[{name:'Peer',position:{x:-3.5,y:64,z:2.9}}]});
+ assert.deepEqual(c.events[0].content.position,{x:-1,y:65,z:67});assert.equal(c.events[0].content.inventory_counts.oak_log,20);
+ assert.equal(c.events[1].content[0].position.x,-4);
+});
