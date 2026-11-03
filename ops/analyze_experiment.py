@@ -7,16 +7,39 @@ from pathlib import Path
 import statistics
 
 
-def analyze(root, started_at, players):
+def recorded_events(home, name, started_at, observations):
+    """Prefer the recorder's durable history over the player's bounded buffer."""
+    data=json.loads((home/'workshop.json').read_text())
+    rows=[];invalid=0
+    source=observations/(name+'-events.jsonl') if observations else None
+    if source and source.exists():
+        for line in source.read_text().splitlines():
+            try:rows.append(json.loads(line))
+            except ValueError:invalid+=1  # A concurrently appended last line may be incomplete.
+    rows.extend(data.get('events',[]))
+    by_id={}
+    for event in rows:
+        if not isinstance(event,dict) or not all(k in event for k in ('id','time','kind')):
+            invalid+=1;continue
+        if event['time']>=started_at:by_id[event['id']]=event
+    events=sorted(by_id.values(),key=lambda e:e['time'])
+    coverage={'source':'observer_and_recent_buffer' if source and source.exists() else 'recent_buffer_only',
+              'events':len(events),'earliest':events[0]['time'] if events else None,
+              'latest':events[-1]['time'] if events else None,'invalid_records':invalid,
+              'complete_run':'not_assumed; observer downtime or late start can leave gaps'}
+    return data,events,coverage
+
+
+def analyze(root, started_at, players, observations=None):
     since=datetime.fromisoformat(started_at).timestamp()
     report={'since':started_at,'players':{},'limitations':[
         'Task progress is agent-reported; inspect artifacts independently.',
         'Repeated failures are exact action/argument matches, not a semantic loop detector.',
         'Assessment recommendations do not establish that they caused a later action.',
-        'A before/after run with different goals is observational, not a controlled comparison.']}
+        'A before/after run with different goals is observational, not a controlled comparison.',
+        'Counts cover captured evidence only. The recent buffer holds at most 1000 events; use observer records for longer runs.']}
     for name in players:
-        home=root/name; data=json.loads((home/'workshop.json').read_text())
-        events=[e for e in data.get('events',[]) if e.get('time','') >= started_at]
+        home=root/name;data,events,coverage=recorded_events(home,name,started_at,observations)
         failures=[]; repeats=0; seen=set()
         for e in events:
             if e['kind'] not in ('action_failed','action_result'):continue
@@ -37,6 +60,7 @@ def analyze(root, started_at, players):
         choices=Counter(f"{a['name']}:{a.get('choice',a['type'])}" for r in assessment for a in r['result']['answers'])
         task=data.get('task') or {}
         report['players'][name]={
+            'event_coverage':coverage,
             'task_status':task.get('status'),'goal':task.get('goal'),
             'latest_progress':task.get('progress',[])[-1:],
             'receipt_recoveries':sum(e['kind']=='receipt_reconciliation' for e in events),
@@ -55,7 +79,8 @@ def analyze(root, started_at, players):
 if __name__=='__main__':
     p=argparse.ArgumentParser();p.add_argument('--root',type=Path,required=True)
     p.add_argument('--briefs',type=Path,required=True);p.add_argument('--out',type=Path,required=True)
+    p.add_argument('--observations',type=Path,help='Directory recorded by observe_run.py; preserves events evicted from player history')
     p.add_argument('--players',nargs='+',required=True)
-    a=p.parse_args();r=analyze(a.root,json.loads(a.briefs.read_text())['started_at'],a.players)
+    a=p.parse_args();r=analyze(a.root,json.loads(a.briefs.read_text())['started_at'],a.players,a.observations)
     a.out.write_text(json.dumps(r,indent=2));a.out.chmod(0o600)
     print(json.dumps({n:{k:v for k,v in s.items() if k not in ('latest_progress','failures','goal')} for n,s in r['players'].items()}))

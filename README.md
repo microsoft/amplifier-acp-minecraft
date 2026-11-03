@@ -189,14 +189,17 @@ contracts. Disabling these optional helpers leaves ordinary ACP operation availa
 Read-only experiment helpers require explicit player directory names:
 
 ```sh
-python3 ops/observe_run.py --root /private/workshop --players builder-one builder-two --out /private/observation --once
-python3 ops/analyze_experiment.py --root /private/workshop --players builder-one builder-two --briefs /private/run.json --out /private/results.json
+python3 ops/observe_run.py --root /private/workshop --players builder-one builder-two --out /private/observations --once
+python3 ops/analyze_experiment.py --root /private/workshop --players builder-one builder-two --briefs /private/run.json --observations /private/observations --out /private/results.json
 python3 ops/watch_report.py --root /private/workshop --players builder-one builder-two --briefs /private/run.json --out /private/watch-results.json
 ```
 
 Reports contain private run material and belong outside the repository. A model
 classification or agent-reported completion does not establish artifact quality
 or a successful collaboration; inspect the world and participation separately.
+Use the observer's persisted events for long-run analysis: the player's own
+history retains only its latest 1000 events. Reports identify their evidence
+coverage; recorder gaps or a late start can still leave missing observations.
 The observer's `latest.json` includes remaining budgets and attention signals;
 `attention-changes.jsonl` records changes in blockers, interruptions, disconnects,
 long turns, inactivity and review needs. A legitimate evidence wait is informational,
