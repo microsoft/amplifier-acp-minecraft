@@ -123,7 +123,7 @@ class Client:
                     update_call = params.get('toolCall', {})
                     call = {**self.tool_calls.get(update_call.get('toolCallId'), {}), **update_call}
                     raw = call.get('rawInput') or {}
-                    allowed = {'observe','survey','inspect','find','chat','move','follow','gather','craft','place','build','give','stop','work_begin','work_report','work_reopen','map','plan_route','dig','set_open','tell','work_note','inventory','entities','shear','furnace','attention_watch','attention_watches','attention_cancel','read_sign','write_sign'}
+                    allowed = {'observe','survey','inspect','find','chat','move','follow','gather','craft','place','build','give','stop','work_begin','work_report','work_reopen','map','plan_route','dig','set_open','tell','work_note','inventory','entities','shear','furnace','container','attention_watch','attention_watches','attention_cancel','read_sign','write_sign'}
                     # Only this session's registered game server, using structured
                     # tool metadata; a friendly display title never grants access.
                     valid = (params.get('sessionId') == self.session and isinstance(raw, dict)

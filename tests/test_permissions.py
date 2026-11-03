@@ -13,7 +13,7 @@ class Permissions(unittest.IsolatedAsyncioTestCase):
  async def test_wrong_session_denied(self):self.assertEqual((await self.check('wrong_session'))['outcome'],'cancelled')
  async def test_stopped_turn_denied(self):self.assertEqual((await self.check('game',False))['outcome'],'cancelled')
  async def test_survival_tools_use_same_scoped_permission_boundary(self):
-  for tool in ('entities','shear','furnace','attention_watch','attention_watches','attention_cancel','read_sign','write_sign'):
+  for tool in ('entities','shear','furnace','container','attention_watch','attention_watches','attention_cancel','read_sign','write_sign'):
    self.assertEqual(await self.check('game:'+tool),{'outcome':'selected','optionId':'once'})
    self.assertEqual((await self.check('game:'+tool,False))['outcome'],'cancelled')
 
