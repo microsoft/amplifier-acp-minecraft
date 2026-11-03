@@ -59,7 +59,7 @@ function hear(username,message,whisper=false){
   lastHumanAt=Date.now();
   record('chat_routing',{username,route:route||'context_only'});
   if(!route)return;
-  if(/\b(stop|pause)\b/i.test(message)){stop();history.stop();inbox.length=0;record('stopped_by_player',{username});bot.chat('Stopped.');return;}
+  if(/\b(stop|pause)\b/i.test(message)){stop();inbox.length=0;history.stop();record('stopped_by_player',{username});bot.chat('Stopped.');return;}
   if(inbox.length<8){inbox.push({id:e.id,username,message,whisper,source:'human'});history.save();}
 }
 bot.on('chat',(u,m)=>hear(u,m));bot.on('whisper',(u,m)=>hear(u,m,true));
