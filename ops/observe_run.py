@@ -4,6 +4,25 @@ from pathlib import Path
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
 from adapter import control
 
+def task_evidence(task, history, now_ms):
+    """Keep a historical report separate from authority and artifact acceptance.
+
+    Expiry can overwrite `review`; reviewed_at can survive subsequent rework.
+    Read the latest task-bound work_status receipt instead of guessing from that
+    timestamp or a chat message. This is a report, not a derived current status.
+    """
+    report = None
+    if task.get('id'):
+        for event in history.get('events', []):
+            if event.get('kind') == 'work_status' and event.get('task_id') == task['id']:
+                report = {'event_id': event.get('id'), 'at': event.get('time'),
+                          'status': event.get('status'),
+                          'summary': (event.get('progress') or {}).get('summary'),
+                          'independent_acceptance': False}
+    deadline = task.get('deadline')
+    return {'deadline_passed': now_ms > deadline if isinstance(deadline, (int, float)) else None,
+            'last_work_report': report}
+
 def signals(state,history,now_ms):
     """Explain attention needs from receipts; never infer completion from prose."""
     task=state.get('task') or {};status=task.get('status');result=[]
@@ -13,6 +32,10 @@ def signals(state,history,now_ms):
             'budget_exhausted':'The authorized time or turn budget has ended.',
             'review':'The agent reported delivery; independent review is still needed.'}
     if status in labels:result.append({'code':status,'level':'warning','text':labels[status]})
+    report = task_evidence(task, history, now_ms)['last_work_report']
+    if status == 'budget_exhausted' and report and report['status'] == 'review':
+        result.append({'code':'delivery_reported','level':'warning',
+                       'text':'The last recorded agent report was delivery for review. Authority has ended; independent review is still needed.'})
     turn=history.get('turn') or {}
     try:age=(now_ms-datetime.datetime.fromisoformat(turn['started_at'].replace('Z','+00:00')).timestamp()*1000)/1000
     except (KeyError,ValueError,TypeError):age=0
@@ -41,6 +64,7 @@ def sample(root,names,out):
             task=s.get('task') or {}
             result['players'][name]={k:s.get(k) for k in ('ready','busy','turn_active','position','inventory','health')}
             result['players'][name]['task']={k:task.get(k) for k in ('id','goal','status','turns','max_turns','deadline','wait_for')}
+            result['players'][name].update(task_evidence(task,history,time.time()*1000))
             result['players'][name]['latest_progress']=task.get('progress',[])[-1:]
             result['players'][name]['new_events']=len(new)
             result['players'][name]['signals']=signals(s,history,time.time()*1000)

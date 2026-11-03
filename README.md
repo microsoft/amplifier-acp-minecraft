@@ -228,6 +228,16 @@ Cached tokens remain separate from totals;
 these are not dollar estimates. A held decision is **not** automatically counted
 as an avoided LLM request: that causal claim needs a suitable comparison run.
 
+`task_work_turns` and `acp_turns_started` are separate: a read-only reply after
+delivery can start an ACP turn without spending another construction turn.
+Metadata-filtered evidence is counted separately from batches that did or did
+not call a decision model. Eligible branches in a partly filtered batch can
+still call the model, so filtered-event counts are not request savings. The
+collector also retains connection permission snapshots. When journal coverage
+changes, it re-reads retained journal entries from the original experiment start,
+deduplicates by journal cursor, and preserves provider measurement baselines.
+Entries already removed by journal retention cannot be recovered.
+
 Reports contain private run material and belong outside the repository. A model
 classification or agent-reported completion does not establish artifact quality
 or a successful collaboration; inspect the world and participation separately.
@@ -238,6 +248,12 @@ The observer's `latest.json` includes remaining budgets and attention signals;
 `attention-changes.jsonl` records changes in blockers, interruptions, disconnects,
 long turns, inactivity and review needs. A legitimate evidence wait is informational,
 not a stall. This recorder does not steer, retry, restart or complete agents.
+Both reports include `deadline_passed` and `last_work_report` independently of
+the task's current authority status. Thus a deadline can end authority while
+the preceding delivery-for-review report remains inspectable. This uses the
+latest task-bound structured work receipt, not chat prose or a stale review
+timestamp. It never turns an agent report into independent acceptance; a later
+rework report supersedes the earlier delivery report.
 
 ## Development and verification
 

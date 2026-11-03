@@ -14,12 +14,19 @@ import statistics
 import subprocess
 import time
 
+if __package__:
+    from .observe_run import task_evidence
+else:
+    from observe_run import task_evidence
+
 KINDS = {"initialized", "session_loaded", "turn_started", "turn_completed",
          "turn_error", "watch_evaluated", "watch_applied", "watch_error",
          "watch_bridge_error", "agent_assessment", "assessment_applied",
          "assessment_discarded", "assessment_error", "adapter_error",
          "connection_retry_wait", "session_load_progress", "budget_wait",
-         "budget_resumed", "usage", "continuation_policy"}
+         "budget_resumed", "usage", "continuation_policy", "watch_filtered",
+         "permission_context_supplied"}
+JOURNAL_KINDS_VERSION = 2
 
 
 def stamp(value):
@@ -144,6 +151,16 @@ def journal_summary(events, now):
                 receipts = event.get("receipts", [])
                 if receipts:
                     counts["semantic_wake_results" if any(r.get("wake") for r in receipts) else "semantic_hold_results"] += 1
+        if kind == "watch_filtered":
+            # Filtering 19 pieces of evidence is not 19 avoided model calls.
+            # An eligible branch in the same batch may still call a decision model.
+            amount = event.get("events", 0)
+            if isinstance(amount, int) and not isinstance(amount, bool) and amount >= 0:
+                counts["metadata_filtered_events"] += amount
+            called = event.get("model_called")
+            suffix = ("with_model_call" if called is True else "without_model_call"
+                      if called is False else "model_call_unknown")
+            counts["metadata_filter_batches_" + suffix] += 1
         if kind in ("watch_applied", "assessment_applied") and event.get("application") == "wake":
             wake = "semantic_or_exact_watch" if kind == "watch_applied" else "waiting_assessment"
         if kind == "turn_started":
@@ -202,8 +219,14 @@ def collect_journal(run, players, since, state):
     command = ["journalctl", "--user", "--no-pager", "--all", "-o", "json"]
     for name in players:
         command += ["-u", f"minecraft-agent@{name}.service"]
-    command += ["--after-cursor", state["journal_cursor"]] if state.get("journal_cursor") else ["--since", "@"+str(since)]
+    # A schema upgrade re-reads retained journals from the original run start.
+    # Keep provider baselines intact and deduplicate by system journal cursor;
+    # advancing a previous version's cursor already skipped these new kinds.
+    current_schema = state.get("journal_kinds_version") == JOURNAL_KINDS_VERSION
+    command += (["--after-cursor", state["journal_cursor"]]
+                if current_schema and state.get("journal_cursor") else ["--since", "@"+str(since)])
     result = subprocess.run(command, check=True, text=True, capture_output=True, timeout=30)
+    seen = {row.get("journal_cursor") for row in read_lines(run/"decisions-and-turns.jsonl")}
     with (run/"decisions-and-turns.jsonl").open("a") as output:
         for line in result.stdout.splitlines():
             entry = json.loads(line)
@@ -212,10 +235,12 @@ def collect_journal(run, players, since, state):
                 row = json.loads(entry.get("MESSAGE", ""))
             except ValueError:
                 continue
-            if row.get("kind") in KINDS:
+            if row.get("kind") in KINDS and entry["__CURSOR"] not in seen:
                 row["player"] = entry["_SYSTEMD_USER_UNIT"].removeprefix("minecraft-agent@").removesuffix(".service")
                 row["journal_cursor"] = entry["__CURSOR"]
                 output.write(json.dumps(row)+"\n")
+                seen.add(entry["__CURSOR"])
+    state["journal_kinds_version"] = JOURNAL_KINDS_VERSION
 
 
 def measure(run, root):
@@ -230,6 +255,8 @@ def measure(run, root):
     result = {"at": datetime.now(timezone.utc).isoformat(), "players": {}, "llm_savings_estimated": False,
               "limitations": ["A held decision is not automatically an avoided LLM request: there is no randomized LLM-first control.",
                               "Active-turn decision advice is separated from pre-wake decisions.",
+                              "Filtered evidence counts are not avoided model requests; eligible branches may still call a decision model.",
+                              "The last work report is historical agent-reported evidence, not current authority or independent acceptance.",
                               "Provider usage is optional engine-specific evidence; ACP remains the connection boundary.",
                               "Token totals are not dollar costs; cached input is reported separately."]}
     for name in manifest["players"]:
@@ -246,6 +273,9 @@ def measure(run, root):
         task = data.get("task") or {}
         watch = json.loads((root/name/"watches.json").read_text()) if (root/name/"watches.json").exists() else {}
         result["players"][name] = {"task_id":task.get("id"),"status":task.get("status"),"turns":task.get("turns"),
+                                    "task_work_turns":task.get("turns"),
+                                    "acp_turns_started":summary["counts"].get("turn_started",0),
+                                    **task_evidence(task,data,now*1000),
                                     "scheduling":summary,"idle":idle,
                                     "models":{k:v for k,v in model.items() if k != "receipts"},
                                     "watch_calls_in_rolling_hour":sum(t > (now-3600)*1000 for t in watch.get("calls",[]))}
