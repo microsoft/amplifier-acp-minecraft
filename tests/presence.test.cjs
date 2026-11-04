@@ -10,6 +10,7 @@ const snapshot={username:'Builder',ready:true,position:{x:3,y:64,z:5},
       observation:{recent_actions:[{arguments:{message:'Private action input'}}]}}]},
   public_chat:[{id:'public',kind:'chat',username:'Player',message:'Hello'},
     {id:'operator',kind:'chat',username:'Operator',message:'Private management request',whisper:false},
+    {id:'control',kind:'chat',username:'ControlAlias',message:'Private control with explicit provenance',provenance:'operator_control',whisper:false},
     {id:'private',kind:'chat',username:'Player',message:'Private whisper',whisper:true},
     {id:'receipt',kind:'action_result',result:{secret:'Do not expose raw receipts'}}],
   token:'never-public',receipts:[{private:true}]};
@@ -27,6 +28,7 @@ test('activity filters private messages and action receipts before slicing',()=>
  const result=activity(snapshot,20,'Workshop');assert.deepEqual(result.messages.map(e=>e.id),['public']);
  assert.ok(!JSON.stringify(result).includes('Private whisper'));
  assert.ok(!JSON.stringify(result).includes('Private management request'));
+ assert.ok(!JSON.stringify(result).includes('Private control'));
 });
 test('real MCP boundary exposes only observation tools and cannot begin work',async t=>{
  let reads=0;const before=JSON.stringify(snapshot);

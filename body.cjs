@@ -15,6 +15,7 @@ const crafting=require('./crafting.cjs');
 const containers=require('./containers.cjs');
 const {boundedAction}=require('./action-deadline.cjs');
 const presence=require('./presence.cjs');
+const {isPublicChatEvent}=require('./public-chat.cjs');
 const mineflayer = require('mineflayer');
 const { pathfinder, goals } = require('mineflayer-pathfinder');
 const { Vec3 } = require('vec3');
@@ -38,14 +39,14 @@ const routeHuman=conversationRouter(cfg.username,{aliases:cfg.aliases||{}});
 const participation=new (require('./participation.cjs').Participation)(history,cfg);
 const participationProposal=()=>participation.proposal(Object.keys(bot.players));
 const delay=ms=>new Promise(r=>setTimeout(r,ms));
-function record(kind,data={}) { const e=history.record({seq:++sequence,time:new Date().toISOString(),kind,...data});events.push(e);if(events.length>200)events.shift(); console.log(JSON.stringify(e)); return e; }
+function record(kind,data={}) { const e=history.record({seq:++sequence,time:new Date().toISOString(),kind,...(kind==='chat_sent'?{provenance:'minecraft_public_chat'}:{}),...data});events.push(e);if(events.length>200)events.shift(); console.log(JSON.stringify(e)); return e; }
 const screenshots=cfg.screenshots?.enabled?new (require('./screenshots.cjs').Screenshots)({bot,
  directory:cfg.screenshots.directory||path.join(path.dirname(process.argv[2]),'screenshots'),
  browserPath:cfg.screenshots.browser_path,world:cfg.world_label||'Minecraft',isReady:()=>ready,
  onSaved:info=>record('screenshot_saved',{capture_id:info.id,path:info.path,sha256:info.sha256,bytes:info.bytes,camera:info.camera})}):null;
 function cancelAction(){ generation++;bot.pathfinder.setGoal(null);bot.clearControlStates();try{bot.stopDigging();}catch{} }
 function stop(){ turnUntil=0;cancelAction(); }
-bot.on('spawn',()=>{ready=true;const m=new spatial.SpatialMovements(bot);m.canDig=false;m.allow1by1towers=false;m.allowParkour=false;m.allowFreeMotion=false;m.scafoldingBlocks=[];m.maxDropDown=2; /* upstream measures to landing FLOOR: 2 permits a one-block feet descent */m.liquidCost=20;bot.pathfinder.setMovements(m);record('spawn',{position:bot.entity.position});});
+bot.on('spawn',()=>{ready=true;spatial.alignPlayerCollision(bot);const m=new spatial.SpatialMovements(bot);m.canDig=false;m.allow1by1towers=false;m.allowParkour=false;m.allowFreeMotion=false;m.scafoldingBlocks=[];m.maxDropDown=2; /* upstream measures to landing FLOOR: 2 permits a one-block feet descent */m.liquidCost=20;bot.pathfinder.setMovements(m);record('spawn',{position:bot.entity.position});});
 bot.on('end',reason=>{ready=false;stop();record('disconnected',{reason});setTimeout(()=>process.exit(shuttingDown?0:1),1000);});
 bot.on('error',e=>record('connection_error',{message:e.message}));
 bot.on('kicked',reason=>record('kicked',{reason}));
@@ -63,14 +64,14 @@ function hear(username,message,whisper=false){
     agentWakeTimes=agentWakeTimes.filter(t=>t>Date.now()-3600000);
     const eligible=!!(cfg.agent_dialogue && ((participation.enabled&&!whisper)||intent==='request') && Date.now()-lastHumanAt<(cfg.agent_dialogue_window_seconds||2400)*1000 && agentWakeTimes.length<Math.min(60,Math.max(1,cfg.peer_wakes_per_hour||4)) && inbox.length<8);
     const accepted=eligible&&direct&&(!participation.enabled||whisper);
-    const e=record('chat',{username,message,whisper,source:'agent',intent,accepted});
+    const e=record('chat',{username,message,whisper,provenance:whisper?'minecraft_whisper':'minecraft_public_chat',source:'agent',intent,accepted});
     record('chat_routing',{username,route:direct&&intent!=='request'?'peer_'+intent:accepted?'peer_direct':direct?'peer_budget_or_window':'context_only'});
     if(participation.enabled&&eligible&&!whisper){participation.queue(e);}
     else if(accepted){agentWakeTimes.push(Date.now());inbox.push({id:e.id,username,message,source:'agent'});history.save();}
     return;
   }
   const semantic=participation.enabled&&!whisper;
-  const e=record('chat',{username,message,whisper,source:'human',accepted:!!route&&!semantic});
+  const e=record('chat',{username,message,whisper,provenance:whisper?'minecraft_whisper':'minecraft_public_chat',source:'human',accepted:!!route&&!semantic});
   lastHumanAt=Date.now();
   record('chat_routing',{username,route:semantic?'participation_pending':route||'context_only'});
   if(route&&/\b(stop|pause)\b/i.test(message)){stop();inbox.length=0;history.data.participation_pending=[];history.stop();history.save();record('stopped_by_player',{username});bot.chat('Stopped.');return;}
@@ -88,7 +89,7 @@ function snapshot(){
     terrain:spatial.localMap(bot,3),
     players:Object.values(bot.players).map(p=>({name:p.username,position:p.entity?.position})),
     nearby_blocks:blocks.map(p=>({name:bot.blockAt(p)?.name,position:p})),
-    public_chat:history.data.events.filter(e=>!e.whisper&&['chat','chat_sent'].includes(e.kind)).slice(-20),
+    public_chat:history.data.events.filter(isPublicChatEvent).slice(-20),
     events:history.data.events.filter(e=>!e.whisper).slice(-35),task:history.task(),receipts:receipts.slice(-15),remaining_actions:Math.max(0,24-actions)};
 }
 function watchContext(){
@@ -363,7 +364,7 @@ const server=http.createServer(async(req,res)=>{
     else if(req.method==='POST'&&req.url==='/task'){
       const a=await json(req);if(typeof a.text!=='string'||!a.text.trim()||a.text.length>12000||inbox.length>=8)throw Error('Task must contain 1–12000 characters and the queue must have space');
       const reviewers=a.reviewers||[];if(!Array.isArray(reviewers)||reviewers.length>8||reviewers.some(n=>typeof n!=='string'||!(cfg.bot_names||[]).includes(n)||n===cfg.username))throw Error('Reviewers must be configured peers other than this player');
-      lastHumanAt=Date.now();const e=record('chat',{username:'Operator',message:a.text,source:'human',accepted:true,whisper:false,reviewers:[...new Set(reviewers)]});inbox.push({id:e.id,username:'Operator',message:a.text,source:'human'});history.save();result={queued:true,request_id:e.id};}
+      lastHumanAt=Date.now();const e=record('chat',{username:'Operator',message:a.text,provenance:'operator_control',source:'human',accepted:true,whisper:false,reviewers:[...new Set(reviewers)]});inbox.push({id:e.id,username:'Operator',message:a.text,source:'human'});history.save();result={queued:true,request_id:e.id};}
     else if(req.method==='POST'&&req.url==='/action'){const a=await json(req);if(!definitions[a.name])throw Error('Unknown action');const args=z.object(definitions[a.name][1]).strict().parse(a.arguments||{});result=await operate(a.name,args);}
     else {res.writeHead(404);return res.end();}
     res.writeHead(200,{'Content-Type':'application/json'});res.end(JSON.stringify(result));

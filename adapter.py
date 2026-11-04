@@ -27,7 +27,7 @@ def save(path, value):
     tmp=path.with_suffix('.tmp');tmp.write_text(json.dumps(value,indent=2));os.chmod(tmp,0o600);tmp.replace(path)
 
 
-async def capacity_gate(calls,state,request,observe,waiting,*,now=None,sleep=asyncio.sleep):
+async def capacity_gate(calls,state,request,observe,waiting,*,now=None,sleep=asyncio.sleep,while_waiting=None):
     """Rate limits wait before consuming messages; never cancel or renew a task."""
     now=time.time() if now is None else now
     calls[:]=[t for t in calls if t>now-3600]
@@ -43,6 +43,8 @@ async def capacity_gate(calls,state,request,observe,waiting,*,now=None,sleep=asy
     if has_work and not waiting.get('notified'):
         await request('/notice',{'kind':'budget'})
         waiting['notified']=True
+    if while_waiting:
+        await while_waiting()
     await sleep(min(10,delay))
     return False
 
@@ -72,6 +74,12 @@ async def run(home):
     conversation_attention=ConversationAttention(observe) if (cfg.get('conversation_attention') or {}).get('enabled') else None
     async def connect():
         nonlocal client, connection_failures
+        # Both attention and prompt delivery can follow an idle endpoint restart.
+        # Reload before either request, and before reserving any work or inbox.
+        # A disconnect after a prompt starts remains interrupted; never replay it.
+        if client is not None and client.transport_closed():
+            observe('connection_closed_before_turn',session_id=client.session)
+            await client.close();client=None
         if client is not None:return
         client=Client(endpoint,observe);await client.start()
         client.permission_active=lambda: control(cfg,'/status').get('turn_active',False)
@@ -84,6 +92,39 @@ async def run(home):
         await client.open_session(previous)
         save(home/'session.json',{'binding':identity,'session':client.session})
         connection_failures=0
+
+    async def observe_attention(state):
+        watch_managed=False
+        notifications=[]
+        if watches:
+            await watches.poll()
+            notifications=await watches.pending()
+            watch_managed=await watches.managed()
+        if notifications and (state.get('task') or {}).get('status')=='waiting':
+            await request('/wake',{'task_id':state['task']['id'],'generation':state['generation']})
+            observe('watch_applied',application='wake',ids=[n['id'] for n in notifications])
+            state=await request('/state')
+        elif not watch_managed and await attention.consider(state):
+            fresh=await request('/state')
+            if state_signature(fresh)==state_signature(state) and fresh.get('generation')==state.get('generation'):
+                await request('/wake',{'task_id':state['task']['id'],'generation':state['generation']})
+                observe('assessment_applied',application='wake',task_id=state['task']['id'],fingerprint=state_signature(state))
+                state=await request('/state')
+            else:
+                observe('assessment_discarded',reason='observation_changed_before_wake',fingerprint=state_signature(state))
+        return state
+
+    async def observe_capacity_wait():
+        # Planner capacity does not suspend bounded attention. A delivery may
+        # satisfy an authored watch before it expires, even while no ACP turn
+        # can start. Waking marks existing work ready; capacity still blocks it.
+        fresh=await request('/state')
+        task=fresh.get('task') or {}
+        if (not fresh.get('busy') and not fresh.get('turn_active')
+            and task.get('status')=='waiting' and task.get('deadline',0)>time.time()*1000
+            and task.get('turns',0)<task.get('max_turns',0)):
+            await observe_attention(fresh)
+
     # A controller restart must not replay an uncertain in-flight task.
     while True:
         turn_started=False
@@ -92,6 +133,7 @@ async def run(home):
         except Exception:
             await asyncio.sleep(2)
     while True:
+        turn_started=False
         try:
             state=await request('/state')
             if not state.get('ready'):
@@ -105,31 +147,14 @@ async def run(home):
                     observe('continuation_policy',**continuation)
                 last_continuation=continuation_key
                 state=await request('/state')
-            if not await capacity_gate(calls,state,request,observe,budget_waiting):continue
+            if not await capacity_gate(calls,state,request,observe,budget_waiting,while_waiting=observe_capacity_wait):continue
             messages=await request('/inbox/peek')
             if not messages and conversation_attention and await request('/participation'):
                 await connect()
                 await conversation_attention.consider(request,client)
                 messages=await request('/inbox/peek')
             if not messages:
-                watch_managed=False
-                notifications=[]
-                if watches:
-                    await watches.poll()
-                    notifications=await watches.pending()
-                    watch_managed=await watches.managed()
-                if notifications and (state.get('task') or {}).get('status')=='waiting':
-                    await request('/wake',{'task_id':state['task']['id'],'generation':state['generation']})
-                    observe('watch_applied',application='wake',ids=[n['id'] for n in notifications])
-                    state=await request('/state')
-                elif not watch_managed and await attention.consider(state):
-                    fresh=await request('/state')
-                    if state_signature(fresh)==state_signature(state) and fresh.get('generation')==state.get('generation'):
-                        await request('/wake',{'task_id':state['task']['id'],'generation':state['generation']})
-                        observe('assessment_applied',application='wake',task_id=state['task']['id'],fingerprint=state_signature(state))
-                        state=await request('/state')
-                    else:
-                        observe('assessment_discarded',reason='observation_changed_before_wake',fingerprint=state_signature(state))
+                state=await observe_attention(state)
                 if (state.get('task') or {}).get('status')!='running':
                     await asyncio.sleep(1);continue
                 messages=[{'source':'continuation','message':'Continue the accepted game task. Inspect current world state and progress before acting.'}]

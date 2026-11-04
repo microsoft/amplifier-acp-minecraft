@@ -1,5 +1,12 @@
 const {Vec3}=require('vec3');
 const {goals,Movements}=require('mineflayer-pathfinder');
+function alignPlayerCollision(bot){
+ // Minecraft EntityDimensions stores width as a float, then divides by 2f.
+ // Prismarine's 0.3 double is slightly narrower. A sprint-jump can therefore
+ // clip a block edge on the server and trigger repeated position corrections.
+ // Keep upstream/custom dimensions if they no longer have the affected value.
+ if(bot.physics.playerHalfWidth===0.3)bot.physics.playerHalfWidth=Math.fround(0.6)/2;
+}
 function openPassage(b){return !!b?.getProperties?.().open&&/(?:_door|_fence_gate)$/.test(b.name)&&!(b.shapes||[]).some(s=>s[0]<.8&&s[3]>.2&&s[2]<.8&&s[5]>.2);}
 class SpatialMovements extends Movements {
  getBlock(...args){const b=super.getBlock(...args);if(openPassage(b)){b.safe=true;b.physical=false;b.height=b.position.y;}return b;}
@@ -110,4 +117,4 @@ async function gotoWithProgress(bot,goal,{stallMs=8000,pollMs=500}={}){
   })]);finished=true;
  }finally{clearInterval(timer);if(!finished){bot.pathfinder.setGoal(null);bot.clearControlStates();}}
 }
-module.exports={survey,openPassage,SpatialMovements,cell,supported,footing,FeetGoal,route,localMap,digGuard,harvestTool,gotoWithProgress,placementSupport,normalizePassages};
+module.exports={alignPlayerCollision,survey,openPassage,SpatialMovements,cell,supported,footing,FeetGoal,route,localMap,digGuard,harvestTool,gotoWithProgress,placementSupport,normalizePassages};

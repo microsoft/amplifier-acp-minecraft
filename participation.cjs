@@ -1,10 +1,12 @@
 // Map this player's public conversation to the shared agent participation policy.
 // Private messages, world geometry and provider-specific questions stay out.
 const crypto=require('node:crypto');
+const {isPublicChatEvent}=require('./public-chat.cjs');
 class Participation {
  constructor(history,cfg){this.history=history;this.cfg=cfg;}
  get enabled(){return this.cfg.conversation_attention?.enabled===true;}
  queue(event){
+  if(!isPublicChatEvent(event))return;
   const data=this.history.data;
   data.participation_pending=[...(data.participation_pending||[]),event.id].slice(-8);
   this.history.save();
@@ -12,9 +14,9 @@ class Participation {
  proposal(players){
   const data=this.history.data;
   const pending=new Set(data.participation_pending||[]);
-  const fresh=data.events.filter(e=>pending.has(e.id)&&!e.whisper&&Date.now()-Date.parse(e.time)<600000);
+  const fresh=data.events.filter(e=>pending.has(e.id)&&isPublicChatEvent(e)&&Date.now()-Date.parse(e.time)<600000);
   if(!fresh.length)return null;
-  const chat=data.events.filter(e=>!e.whisper&&['chat','chat_sent'].includes(e.kind)).slice(-24);
+  const chat=data.events.filter(isPublicChatEvent).slice(-24);
   const names=[...new Set([this.cfg.username,...chat.map(e=>e.username||this.cfg.username),...players])].slice(0,64);
   const participants=names.map(name=>({id:name,name,is_agent:name===this.cfg.username||(this.cfg.bot_names||[]).includes(name),role:''}));
   const context={conversation_id:this.cfg.conversation_id||'minecraft:workshop',
@@ -33,6 +35,7 @@ class Participation {
   if(!proposal||result.signature!==proposal.signature)throw Error('Conversation changed during participation assessment');
   if(!['engage','hold'].includes(result.action))throw Error('Invalid participation action');
   const ids=new Set(proposal.ids),data=this.history.data;
+  if([...ids].some(id=>!data.events.some(e=>e.id===id&&isPublicChatEvent(e))))throw Error('Participation evidence is not public game chat');
   if(result.action==='engage'){
    if(inbox.length+ids.size>8)throw Error('Conversation inbox is full; retry after processing queued messages');
    for(const e of data.events.filter(e=>ids.has(e.id))){

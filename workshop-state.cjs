@@ -1,6 +1,7 @@
 // Experience-owned history and bounded work; independent of any agent runtime.
 const fs=require('node:fs');
 const crypto=require('node:crypto');
+const {isPublicChatEvent}=require('./public-chat.cjs');
 class WorkshopState {
  constructor(file,{maxTurns=12,maxSeconds=2400}={}){
   this.file=file;this.maxTurns=maxTurns;this.maxSeconds=maxSeconds;
@@ -131,12 +132,16 @@ class WorkshopState {
   const id=cfg.conversation_id||'minecraft:workshop';
   if(q.conversation_id&&q.conversation_id!==id)throw Error('Conversation is not available');
   const observed_at=new Date().toISOString();
-  const original=this.task();const task=original?{...original,progress:original.progress.slice(-8)}:null;
+  const original=this.task();
+  const task=original?{...(owner?original:Object.fromEntries(
+   ['id','goal','status','turns','max_turns','deadline','wait_for'].filter(k=>original[k]!==undefined).map(k=>[k,original[k]]))),
+   progress:original.progress.slice(-8).map(p=>owner?p:{at:p.at,summary:String(p.summary||'').slice(0,2000)})}:null;
   const current={id,conversation_id:id,label:`Minecraft — ${cfg.username}`,surface:'minecraft',updated_at:this.data.events.at(-1)?.time,coverage:'Recent game chat and actual action receipts; task completion is agent-reported',activity:{...live,task},observed_at};
   if(q.operation==='authorize')return {owner:false,conversation_id:id,actor_id:`minecraft:${cfg.username}`,surface:'minecraft',label:current.label,observed_at};
   if(q.operation==='list')return {items:[current],complete:true,observed_at};
   const limit=Math.max(1,Math.min(40,Number(q.limit)||20));
-  const events=this.data.events.filter(e=>owner||!e.whisper);
+  const events=this.data.events.filter(e=>owner||(!e.whisper&&
+   (!['chat','chat_sent'].includes(e.kind)||isPublicChatEvent(e))));
   const messages=events.slice(-limit).map(e=>({id:e.id,at:e.time,actor:e.username||cfg.username,text:(e.message||e.sent||JSON.stringify(e)).slice(0,4000),label:e.kind}));
   if(q.operation==='read'||q.operation==='orientation')return {conversation_id:id,current,messages,complete:events.length<=limit,observed_at};
   throw Error('Unsupported context operation');

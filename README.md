@@ -107,12 +107,21 @@ without model calls. Agent tools expose no arbitrary shell, RCON, teleport or
 item creation. Operator-only RCON helpers live under `ops/`.
 
 Movement verifies arrival height and reports obstruction or stalled progress.
+The body's vanilla player collision width matches Minecraft's float dimensions;
+this prevents edge-overlap corrections during sprint-jumps onto full blocks.
+It does not relax server collision checks or grant new movement capabilities.
 For level activities that prohibit jumping, select `mode: "walk_only"` for both
 `plan_route` and `move`; ordinary pathfinding permits other traversal strategies.
 Digging checks footing and adjacent liquids. Crafting and placement refresh the
 server inventory. Sign writes verify the server's text echo and can reject stale
 edits with `expected_lines`. Item drops remain physical world interactions:
 another nearby player may collect them, so verify the recipient's inventory.
+
+`tests/movement_live.py --node /path/to/node --properties /path/to/server.properties
+--out /path/to/results.json` checks climbs, descents and blocked head clearance
+through the body against a loopback-only disposable `movement-fixture` or
+`container-fixture` world. Use `--port` for its translation proxy. The fixture
+creates test geometry and must never target a shared world. It uses no model.
 
 `container` inspects ordinary chests (single/double) and barrels, or deposits and
 withdraws 1–64 ordinary supply items. It checks reach without moving, uses
@@ -133,9 +142,13 @@ that world; it does not use a model or modify the workshop world.
 
 A routed human request can authorize `work_begin`. The agent reports progress
 with `work_report`, choosing running, waiting, blocked, or review. Defaults are
-12 model turns and 40 minutes per task, with 30 model turns per player per hour.
-The hourly limit defers further calls without consuming queued messages or
-renewing the task's deadline. State survives controller restarts.
+12 ACP turns and 40 minutes per task, with 30 ACP turns per player per hour.
+The hourly limit defers planner starts without consuming queued messages or
+renewing the task's deadline. Bounded attention checks continue while authorized
+work is waiting, so a delivery can be noticed before its watch expires. A wake
+marks that existing task ready; it does not bypass planner capacity or start an
+ACP prompt. Watch expirations and decision-service quotas still apply, and no
+expired watch is revived. State survives controller restarts.
 
 Stop cancels work and revokes the current action lease. Interrupted work requires
 inspection. Clean model turn limits can continue only when tools have settled and
@@ -158,10 +171,14 @@ blocked or interrupted tasks cannot use this path. Agents must judge scope;
 the adapter checks the named relationship, evidence and remaining authority.
 
 Queued messages survive body restarts and remain queued while ACP connects or
-loads history. A failed connection does not consume a work turn or an hourly
-model call. Session loading permits up to three minutes of replay with a separate
+loads history. A failed connection does not consume a work turn or the hourly
+ACP turn allowance. Session loading permits up to three minutes of replay with a separate
 30-second inactivity limit; replay never approves tools. Reconnection preserves
 the saved session or reports a failure rather than silently replacing it.
+If the local ACP process or pipe has closed between turns, the controller
+reconnects and loads that saved session before reserving another turn. This check
+makes no model or protocol request. A disconnect after a turn starts still uses
+interrupted-turn recovery; prompts and uncertain actions are not blindly replayed.
 
 `work_note` records a reassessment without renewing authority. An operator may
 use `/resume-reviewed` for an idle blocked task after inspecting its receipts
@@ -452,7 +469,14 @@ that older configuration still serves separately commissioned domain-condition
 watches/assessments. A migration must remove the old `participate` helper path.
 
 Human questions to the room and implicit follow-ups can now be considered without
-matching a name. Private whispers remain outside public evidence. Peer exchange
+matching a name. Public evidence excludes whispers and private `/task` management
+briefs, including older Operator records without provenance. New chat records
+carry transport-assigned provenance; a real game player named Operator remains
+eligible. The same public-chat boundary applies to attention candidates, context
+messages, participants derived from messages, presence and task-condition watch
+evidence. Private control briefs retain their local authorization path; shared
+context exports include task summaries rather than original requests or nested
+private observations. Peer exchange
 budgets, the human-activity window, Stop, action leases and task deadlines still
 apply. Without the host capability, this opt-in mode uses bounded ordinary ACP
 response opportunities; it does not claim cheap pre-LLM filtering. Disable the
@@ -466,3 +490,9 @@ permissions are still checked independently. Streaming ACP text is received by
 the client; final replies remain bounded game messages, and explicit chat tools
 can deliver intentional progress during work. Raw reasoning/tool output is not
 broadcast.
+
+Known closed ACP transports reconnect and load the saved session before either
+an attention request or ordinary turn reservation. A failed reload preserves
+queued input and planner allowance. Disconnects after a prompt starts remain
+interrupted and are not automatically replayed. Planner capacity waits retain the
+separate bounded task-watch observation described above.
