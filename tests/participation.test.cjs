@@ -79,3 +79,43 @@ test('explicit public game provenance permits a real player named Operator',()=>
   assert.equal(p.context.trigger_id,e.id);assert.equal(p.context.messages[0].text,'Public hello');
  }finally{f.close();}
 });
+test('delivery preflight reflects inbox, peer budget and human-window changes without consuming evidence',()=>{
+ const f=fixture();try{
+  const now=Date.now();
+  const e=f.history.record({kind:'chat',source:'agent',username:'Lead',message:'Could you check this?',
+   provenance:'minecraft_public_chat',whisper:false,time:new Date(now).toISOString()});
+  f.p.queue(e);const p=f.p.proposal([]),pending=[...f.history.data.participation_pending],task=JSON.stringify(f.history.task());
+  assert.deepEqual(f.p.deliveryStatus(p,[],{lastHumanAt:now-2400001},now),{eligible:false,reason_code:'peer_window_expired'});
+  assert.deepEqual(f.p.deliveryStatus(p,[],{lastHumanAt:now,agentWakeTimes:Array(4).fill(now)},now),{eligible:false,reason_code:'peer_budget_exhausted'});
+  assert.deepEqual(f.p.deliveryStatus(p,Array(8).fill({}),{lastHumanAt:now},now),{eligible:false,reason_code:'inbox_full'});
+  assert.deepEqual(f.p.deliveryStatus(p,[],{lastHumanAt:now,agentWakeTimes:Array(4).fill(now-3600001)},now),{eligible:true});
+  assert.deepEqual(f.history.data.participation_pending,pending);assert.equal(f.inbox.length,0);
+  assert.equal(JSON.stringify(f.history.task()),task);
+ }finally{f.close();}
+});
+test('stale or invalid participation replies have stable codes without accepting input',()=>{
+ const f=fixture();try{
+  f.chat('Question');const p=f.p.proposal([]);
+  assert.throws(()=>f.p.apply(p,{signature:'stale',action:'engage'},[]),{code:'source_changed',status:409});
+  assert.throws(()=>f.p.apply(p,{signature:p.signature,action:'invalid'},[]),{code:'invalid_action',status:400});
+  assert.throws(()=>f.p.apply(p,{signature:p.signature,action:'engage'},Array(8).fill({})),{code:'inbox_full',status:429});
+  assert.equal(f.inbox.length,0);assert.equal(f.history.data.participation_pending.length,1);
+ }finally{f.close();}
+});
+test('a possibly accepted delivery cannot reuse its source even with a retained stale snapshot',()=>{
+ for(const action of ['engage','hold']){
+  const f=fixture();try{
+   const e=f.chat('Could you help?'),p=f.p.proposal([]),task=JSON.stringify(f.history.task());
+   const offer={id:'host-event',ticket:'host-ticket'};
+   const payload={signature:p.signature,action,offer};
+   f.p.apply(p,payload,f.inbox); // Treat the reply as lost.
+   assert.throws(()=>f.p.apply(p,payload,f.inbox),{code:'source_changed',status:409});
+   assert.equal(f.inbox.length,action==='engage'?1:0);
+   const restored=new WorkshopState(f.history.file),again=new Participation(restored,f.p.cfg);
+   assert.equal(again.proposal([]),null);
+   assert.throws(()=>again.apply(p,payload,restored.data.inbox),{code:'source_changed',status:409});
+   assert.equal(JSON.stringify(restored.task()),task);
+   if(action==='engage')assert.deepEqual(restored.data.inbox.map(m=>m.id),[e.id]);
+  }finally{f.close();}
+ }
+});

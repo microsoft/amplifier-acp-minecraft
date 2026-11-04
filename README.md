@@ -508,3 +508,38 @@ an attention request or ordinary turn reservation. A failed reload preserves
 queued input and planner allowance. Disconnects after a prompt starts remain
 interrupted and are not automatically replayed. Planner capacity waits retain the
 separate bounded task-watch observation described above.
+
+Participation diagnostics distinguish source fetch, host evaluation, offer
+validation and local delivery. Local delivery rejections report a bounded HTTP
+status and a fixed reason code (for example `source_changed`, `inbox_full`,
+`peer_budget_exhausted` or `peer_window_expired`). Unknown responses remain
+`unknown`; logs do not include raw error bodies, credentials or conversation
+text. Host reasons use a fixed diagnostic vocabulary; event IDs and source
+signatures are logged only as fingerprints. An evaluation request, a queued
+offer and an admitted ACP turn are separate events and must not be counted
+interchangeably.
+
+Before requesting evaluation, the adapter checks the body's current inbox and
+existing peer delivery limits. These are transport admission/capacity checks;
+the adapter does not classify relevance, choose engage/hold, or call a decision
+provider. While local delivery is blocked, it retains fresh pending
+evidence and checks those local facts without calling an evaluator. The body
+rechecks them on delivery; preflight is not permission. Other failures back off
+an unchanged proposal for 10, 20, 40, 80, then at most 120 seconds. Changed source
+evidence is eligible immediately, and cleared local constraints are rechecked
+without renewing any task. Each retry fetches current pending evidence and asks
+Instance for a new result, preserving the source's original trigger and timestamp.
+Instance can return `hold/duplicate`; the adapter honors it. Expired offers are
+discarded, and no rejected offer is cached or replayed. Existing pending-message
+expiration and task budgets remain unchanged.
+
+A timeout, malformed delivery reply or unrecognized failure leaves the delivery
+outcome `unknown` and `queued: null`, rather than claiming rejection or success.
+The next attempt reads pending source facts again. The body revalidates and
+consumes the pending message IDs together with saving the inbox, so a delayed
+duplicate request or retained snapshot cannot accept those messages again,
+including after reload. An already accepted message remains in the existing
+inbox path; it is not posted again. A fresh unrelated message remains eligible.
+This protects local queue admission, not exactly-once ACP execution or game
+effects: interrupted prompts still require receipt-based inspection and are
+never replayed by this retry mechanism.
