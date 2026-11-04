@@ -438,3 +438,31 @@ trademarks or logos is subject to and must follow
 [Microsoft's Trademark & Brand Guidelines](https://www.microsoft.com/legal/intellectualproperty/trademarks/usage/general).
 Use of Microsoft trademarks or logos in modified versions of this project must not cause confusion or imply Microsoft sponsorship.
 Any use of third-party trademarks or logos are subject to those third-party's policies.
+
+### Instance-owned conversation attention
+
+Set `conversation_attention: {"enabled": true}` to submit fresh public game chat
+as audience-local facts to an endpoint advertising
+`com.microsoft.amplifier.attention` v1. Set `conversation_id` to the same source
+ID used by the session's context grant. Instance owns the evaluator, credentials,
+uncertainty preference, deduplication and budgets. The adapter rechecks the source
+snapshot and uses a one-use offer with the next ordinary ACP prompt. Provider
+configuration in `decision_attention` is **not** used for social participation;
+that older configuration still serves separately commissioned domain-condition
+watches/assessments. A migration must remove the old `participate` helper path.
+
+Human questions to the room and implicit follow-ups can now be considered without
+matching a name. Private whispers remain outside public evidence. Peer exchange
+budgets, the human-activity window, Stop, action leases and task deadlines still
+apply. Without the host capability, this opt-in mode uses bounded ordinary ACP
+response opportunities; it does not claim cheap pre-LLM filtering. Disable the
+mode to retain legacy directed-message routing. No model call is made merely
+because the world is idle.
+
+Offers queued in the body are not admitted ACP turns. Expired, disconnected or
+used offers cannot be reused; interruption can lose an opportunity and does not
+authorize replay. The next fresh message provides a new opportunity. Game action
+permissions are still checked independently. Streaming ACP text is received by
+the client; final replies remain bounded game messages, and explicit chat tools
+can deliver intentional progress during work. Raw reasoning/tool output is not
+broadcast.

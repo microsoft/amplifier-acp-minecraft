@@ -35,6 +35,8 @@ let lastHumanAt=Date.parse(history.data.events.filter(e=>e.kind==='chat'&&e.sour
 let agentWakeTimes=[],lastNoticeAt=0;
 const events=[], inbox=history.data.inbox||(history.data.inbox=[]), receipts=[];
 const routeHuman=conversationRouter(cfg.username,{aliases:cfg.aliases||{}});
+const participation=new (require('./participation.cjs').Participation)(history,cfg);
+const participationProposal=()=>participation.proposal(Object.keys(bot.players));
 const delay=ms=>new Promise(r=>setTimeout(r,ms));
 function record(kind,data={}) { const e=history.record({seq:++sequence,time:new Date().toISOString(),kind,...data});events.push(e);if(events.length>200)events.shift(); console.log(JSON.stringify(e)); return e; }
 const screenshots=cfg.screenshots?.enabled?new (require('./screenshots.cjs').Screenshots)({bot,
@@ -59,17 +61,21 @@ function hear(username,message,whisper=false){
     const direct=addressed(message,bot.username,false);
     const intent=peerIntent(message,bot.username);
     agentWakeTimes=agentWakeTimes.filter(t=>t>Date.now()-3600000);
-    const accepted=!!(cfg.agent_dialogue && direct && intent==='request' && Date.now()-lastHumanAt<(cfg.agent_dialogue_window_seconds||2400)*1000 && agentWakeTimes.length<Math.min(60,Math.max(1,cfg.peer_wakes_per_hour||4)) && inbox.length<8);
+    const eligible=!!(cfg.agent_dialogue && ((participation.enabled&&!whisper)||intent==='request') && Date.now()-lastHumanAt<(cfg.agent_dialogue_window_seconds||2400)*1000 && agentWakeTimes.length<Math.min(60,Math.max(1,cfg.peer_wakes_per_hour||4)) && inbox.length<8);
+    const accepted=eligible&&direct&&(!participation.enabled||whisper);
     const e=record('chat',{username,message,whisper,source:'agent',intent,accepted});
     record('chat_routing',{username,route:direct&&intent!=='request'?'peer_'+intent:accepted?'peer_direct':direct?'peer_budget_or_window':'context_only'});
-    if(accepted){agentWakeTimes.push(Date.now());inbox.push({id:e.id,username,message,source:'agent'});history.save();}
+    if(participation.enabled&&eligible&&!whisper){participation.queue(e);}
+    else if(accepted){agentWakeTimes.push(Date.now());inbox.push({id:e.id,username,message,source:'agent'});history.save();}
     return;
   }
-  const e=record('chat',{username,message,whisper,source:'human',accepted:!!route});
+  const semantic=participation.enabled&&!whisper;
+  const e=record('chat',{username,message,whisper,source:'human',accepted:!!route&&!semantic});
   lastHumanAt=Date.now();
-  record('chat_routing',{username,route:route||'context_only'});
+  record('chat_routing',{username,route:semantic?'participation_pending':route||'context_only'});
+  if(route&&/\b(stop|pause)\b/i.test(message)){stop();inbox.length=0;history.data.participation_pending=[];history.stop();history.save();record('stopped_by_player',{username});bot.chat('Stopped.');return;}
+  if(semantic){participation.queue(e);return;}
   if(!route)return;
-  if(/\b(stop|pause)\b/i.test(message)){stop();inbox.length=0;history.stop();record('stopped_by_player',{username});bot.chat('Stopped.');return;}
   if(inbox.length<8){inbox.push({id:e.id,username,message,whisper,source:'human'});history.save();}
 }
 bot.on('chat',(u,m)=>hear(u,m));bot.on('whisper',(u,m)=>hear(u,m,true));
@@ -320,6 +326,17 @@ const server=http.createServer(async(req,res)=>{
     }
     else if(req.method==='GET'&&req.url==='/status')result={ready,busy,turn_active:Date.now()<turnUntil,task:history.task()};
     else if(req.method==='GET'&&req.url==='/inbox/peek')result=inbox.slice(0,8);
+    else if(req.method==='GET'&&req.url==='/participation')result=participation.enabled?participationProposal():null;
+    else if(req.method==='POST'&&req.url==='/participation'){
+      if(!participation.enabled)throw Error('Conversation attention is not enabled');
+      const a=await json(req),proposal=participationProposal();
+      const peerCount=proposal?proposal.ids.filter(id=>history.data.events.find(e=>e.id===id)?.source==='agent').length:0;
+      agentWakeTimes=agentWakeTimes.filter(t=>t>Date.now()-3600000);
+      if(a.action==='engage'&&peerCount&&(Date.now()-lastHumanAt>=(cfg.agent_dialogue_window_seconds||2400)*1000||agentWakeTimes.length+peerCount>Math.min(60,Math.max(1,cfg.peer_wakes_per_hour||4))))throw Error('Peer participation budget or human-activity window expired');
+      result=participation.apply(proposal,a,inbox);
+      if(result.queued)for(let i=0;i<peerCount;i++)agentWakeTimes.push(Date.now());
+      record('participation_delivery',result);
+    }
     else if(req.method==='GET'&&req.url==='/inbox'){result=inbox.splice(0,8);history.save();}
     else if(req.method==='POST'&&req.url==='/recover'){history.recover();stop();result={task:history.task()};}
     else if(req.method==='POST'&&req.url==='/turn'){
@@ -342,7 +359,7 @@ const server=http.createServer(async(req,res)=>{
     else if(req.method==='POST'&&req.url==='/finish'){const a=await json(req);if(ready)history.checkpoint({position:bot.entity.position.clone(),health:bot.health,recent_actions:receipts.slice(-8)});history.finish(!!a.error||busy,!!a.budget_limited&&!busy);stop();result={stopped:true};}
     else if(req.method==='POST'&&req.url==='/wake'){const a=await json(req);if(a.generation!==generation||Date.now()<turnUntil)throw Error('Observation superseded or turn already active');result=history.wake(a.task_id);record('attention_wake',{task_id:a.task_id});}
     else if(req.method==='POST'&&req.url==='/resume-reviewed'){const a=await json(req);if(!ready||busy||Date.now()<turnUntil||a.generation!==generation)throw Error('Recovery review superseded or player not idle');result=history.resumeReviewed(a);record('operator_recovery',{task_id:result.id,reason:a.reason});}
-    else if(req.method==='POST'&&req.url==='/stop'){stop();inbox.length=0;history.stop();result={stopped:true};}
+    else if(req.method==='POST'&&req.url==='/stop'){stop();inbox.length=0;history.data.participation_pending=[];history.stop();history.save();result={stopped:true};}
     else if(req.method==='POST'&&req.url==='/task'){
       const a=await json(req);if(typeof a.text!=='string'||!a.text.trim()||a.text.length>12000||inbox.length>=8)throw Error('Task must contain 1–12000 characters and the queue must have space');
       const reviewers=a.reviewers||[];if(!Array.isArray(reviewers)||reviewers.length>8||reviewers.some(n=>typeof n!=='string'||!(cfg.bot_names||[]).includes(n)||n===cfg.username))throw Error('Reviewers must be configured peers other than this player');

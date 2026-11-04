@@ -21,6 +21,37 @@ test('question marks and punctuation address the player without matching name pr
  for(const text of ['BuilderOne?','BuilderOne…','BuilderOne. Are you there?'])assert.equal(addressed(text,'BuilderOne'),true);
  for(const text of ['BuilderOne2?','BuilderOne_helper?'])assert.equal(addressed(text,'BuilderOne'),false);
 });
+test('natural sentence-end and embedded addresses work without an at-sign',()=>{
+ for(const text of ['what are you working on, builderone', 'how about you, BuilderOne?',
+   '  How is it going, BUILDERONE?!  ', 'Can you, BuilderOne, check the roof?',
+   'Are you there — BuilderOne?', 'How is it going,\u00a0BuilderOne?']){
+  assert.equal(addressed(text,'BuilderOne',false),true,text);
+ }
+ for(const text of ['how about you, BuilderOne2?', 'how about you, BuilderOne_helper?',
+   'BuilderTwo, ask BuilderOne to check the roof.', 'I am waiting for BuilderOne.',
+   'The bridge was built by BuilderOne.', 'Mail player@BuilderOne.example']){
+  assert.equal(addressed(text,'BuilderOne',false),false,text);
+ }
+});
+test('a trailing address transfers focus and only the addressee gets the follow-up',()=>{
+ const one=conversationRouter('BuilderOne'),two=conversationRouter('BuilderTwo');
+ const event={username:'VisitorOne',participants:['BuilderOne','BuilderTwo'],now:1000};
+ const send=message=>[one({...event,message}),two({...event,message})];
+ assert.deepEqual(send('hi'),[null,null]);
+ assert.deepEqual(send('what are you working on, builderone'),['direct',null]);
+ assert.deepEqual(send('how about you, buildertwo?'),[null,'direct']);
+ assert.deepEqual(send('Can you show me?'),[null,'followup']);
+});
+test('trailing aliases and surrounding whitespace preserve routing boundaries',()=>{
+ const aliases={BuilderTwo:['Codex']};
+ const one=conversationRouter('BuilderOne',{aliases}),two=conversationRouter('BuilderTwo',{aliases});
+ const event={username:'VisitorOne',participants:['BuilderOne','BuilderTwo'],now:1000};
+ assert.equal(one({...event,message:'BuilderOne, hello'}),'direct');
+ assert.equal(one({...event,message:'How about you, codex?'}),null);
+ assert.equal(two({...event,message:'How about you, codex?'}),'direct');
+ assert.equal(one({...event,message:'  Team, hello  '}),'group');
+ assert.equal(one({...event,message:'What next?'}),null);
+});
 test('synthetic workshop dialogue keeps follow-ups with the addressed agent',()=>{
  const pony=conversationRouter('BuilderOne'),alpha=conversationRouter('BuilderTwo');
  const messages=["BuilderOne, help design a bridge.", 'Start with a materials list.',
