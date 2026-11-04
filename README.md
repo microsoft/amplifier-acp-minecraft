@@ -107,12 +107,21 @@ without model calls. Agent tools expose no arbitrary shell, RCON, teleport or
 item creation. Operator-only RCON helpers live under `ops/`.
 
 Movement verifies arrival height and reports obstruction or stalled progress.
+The body's vanilla player collision width matches Minecraft's float dimensions;
+this prevents edge-overlap corrections during sprint-jumps onto full blocks.
+It does not relax server collision checks or grant new movement capabilities.
 For level activities that prohibit jumping, select `mode: "walk_only"` for both
 `plan_route` and `move`; ordinary pathfinding permits other traversal strategies.
 Digging checks footing and adjacent liquids. Crafting and placement refresh the
 server inventory. Sign writes verify the server's text echo and can reject stale
 edits with `expected_lines`. Item drops remain physical world interactions:
 another nearby player may collect them, so verify the recipient's inventory.
+
+`tests/movement_live.py --node /path/to/node --properties /path/to/server.properties
+--out /path/to/results.json` checks climbs, descents and blocked head clearance
+through the body against a loopback-only disposable `movement-fixture` or
+`container-fixture` world. Use `--port` for its translation proxy. The fixture
+creates test geometry and must never target a shared world. It uses no model.
 
 `container` inspects ordinary chests (single/double) and barrels, or deposits and
 withdraws 1–64 ordinary supply items. It checks reach without moving, uses
