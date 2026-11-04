@@ -5,6 +5,8 @@ test('watch projection scopes to current responsibility, excludes whispers and s
  const history={task:()=>task,data:{events:[
   {id:'old',kind:'chat',time:'2026-11-02T14:59:00Z',message:'old'},
   {id:'private',kind:'chat',time:'2026-11-02T15:01:00Z',message:'private',whisper:true},
+  {id:'control',kind:'chat',username:'ControlAlias',time:'2026-11-02T15:01:00Z',message:'private management',provenance:'operator_control'},
+  {id:'legacy-control',kind:'chat',username:'Operator',time:'2026-11-02T15:01:00Z',message:'private legacy management'},
   {id:'new',kind:'chat',time:'2026-11-02T15:02:00Z',message:'Ready to inspect',username:'Peer',source:'agent'},
   {id:'action',kind:'action_failed',time:'2026-11-02T15:03:00Z',action:'move',error:'No path'}]}};
  const c=context({username:'One'},history,{ready:true,position:{x:1.1,y:64,z:5},health:20,inventory:[],players:[]});

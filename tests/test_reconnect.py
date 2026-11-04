@@ -18,10 +18,11 @@ FIXTURE = Path(__file__).with_name('reconnect_fixture.py')
 class Reconnect(unittest.IsolatedAsyncioTestCase):
     async def exercise(self, scenario):
         """Run the real scheduling loop and real ACP subprocesses against a body fixture."""
-        clients, paths, finishes, sleeps = [], [], [], []
+        clients, paths, finishes, sleeps, attention_posts = [], [], [], [], []
+        social = scenario.startswith('attention-')
         task = {'id': 'accepted-task', 'status': 'running', 'turns': 12,
                 'max_turns': 45, 'deadline': 9999999999999}
-        messages = [{'id': str(i), 'source': 'human', 'message': 'Continue accepted work'} for i in (1, 2)]
+        messages = [{'id': str(i), 'source': 'human', 'message': 'Continue accepted work'} for i in ((1,) if social else (1, 2))]
         active = False
         reserved = 0
         real_sleep = asyncio.sleep
@@ -45,6 +46,12 @@ class Reconnect(unittest.IsolatedAsyncioTestCase):
                 return {'action': 'continue'}
             if path == '/inbox/peek':
                 return messages[:1]
+            if path == '/participation':
+                if payload is None:
+                    return {'signature': 'fresh', 'occurred_at': 123, 'context': {'conversation_id': 'fixture'}} if finishes and not attention_posts else None
+                attention_posts.append(payload)
+                messages.append({'id': '2', 'source': 'human', 'message': 'A new public question', 'attention_offer': payload['offer']})
+                return {'queued': True}
             if path == '/turn':
                 self.assertEqual(payload['message_ids'], [messages[0]['id']])
                 messages.pop(0)
@@ -55,6 +62,8 @@ class Reconnect(unittest.IsolatedAsyncioTestCase):
             if path == '/finish':
                 active = False
                 finishes.append(dict(payload))
+                if social:
+                    task['status'] = 'waiting'
                 # Let the asyncio process monitor receive the fixture's exit before
                 # another scheduling iteration, like a completed idle service restart.
                 if scenario != 'keep-open':
@@ -66,13 +75,17 @@ class Reconnect(unittest.IsolatedAsyncioTestCase):
 
         async def sleep(delay):
             sleeps.append(delay)
-            if scenario == 'reload-fails' and finishes:
+            if scenario in ('reload-fails', 'attention-reload-fails') and finishes:
+                raise asyncio.CancelledError()
+            if social and finishes and not attention_posts and delay == 1:
+                # An attention transport failure must not silently strand the event.
                 raise asyncio.CancelledError()
             await real_sleep(0)
 
         with tempfile.TemporaryDirectory() as tmp:
             home = Path(tmp)
-            (home / 'config.json').write_text(json.dumps({'control_port': 1, 'token': 'fixture'}))
+            (home / 'config.json').write_text(json.dumps({'control_port': 1, 'token': 'fixture',
+                                                        'conversation_attention': {'enabled': social}}))
             (home / 'endpoint.json').write_text(json.dumps({
                 'command': [sys.executable, str(FIXTURE), tmp, scenario], 'cwd': tmp}))
             output = io.StringIO()
@@ -86,7 +99,7 @@ class Reconnect(unittest.IsolatedAsyncioTestCase):
             events = [json.loads(line) for line in output.getvalue().splitlines()]
         return {'frames': frames, 'calls': calls, 'session': session, 'events': events,
                 'paths': paths, 'finishes': finishes, 'sleeps': sleeps, 'reserved': reserved,
-                'messages': messages, 'task': task}
+                'messages': messages, 'task': task, 'attention_posts': attention_posts}
 
     async def test_closed_endpoint_reloads_before_reserving_another_turn(self):
         result = await self.exercise('close-between')
@@ -129,3 +142,29 @@ class Reconnect(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(result['finishes'][0]['error'])
         self.assertEqual(sum(v['method'] == 'session/prompt' for v in result['frames']), 1)
         self.assertEqual([m['id'] for m in result['messages']], ['2'])
+
+    async def test_closed_endpoint_reloads_before_attention_then_reserves_one_offered_turn(self):
+        result = await self.exercise('attention-close')
+        methods = [v['method'] for v in result['frames']]
+        self.assertEqual(methods, ['initialize', 'session/new', 'session/prompt',
+                                  'initialize', 'session/load', '_amplifier/attention', 'session/prompt'])
+        self.assertEqual(len(result['attention_posts']), 1)
+        self.assertEqual(result['reserved'], 2)
+        self.assertEqual(len(result['calls']), 2)
+        self.assertTrue(all(not r['error'] for r in result['finishes']))
+        self.assertEqual(result['frames'][-1]['session'], 'durable-session')
+        self.assertEqual(result['frames'][-1]['meta']['com.microsoft.amplifier.attention'],
+                         {'id': 'offer', 'ticket': 'fixture-ticket'})
+        self.assertEqual(result['task']['turns'], 14)
+        self.assertEqual(result['task']['max_turns'], 45)
+
+    async def test_failed_reload_before_attention_preserves_candidate_and_budget(self):
+        result = await self.exercise('attention-reload-fails')
+        self.assertEqual(len(result['attention_posts']), 0)
+        self.assertEqual(result['reserved'], 1)
+        self.assertEqual(len(result['calls']), 1)
+        self.assertEqual(len(result['finishes']), 1)
+        self.assertNotIn('_amplifier/attention', [v['method'] for v in result['frames']])
+        self.assertEqual(result['task']['turns'], 13)
+        errors = [e for e in result['events'] if e['kind'] == 'adapter_error']
+        self.assertEqual([e['phase'] for e in errors], ['connection_or_scheduling'])

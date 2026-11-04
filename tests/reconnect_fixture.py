@@ -16,17 +16,24 @@ for line in sys.stdin:
     method = value.get('method')
     with (root / 'requests.jsonl').open('a') as log:
         log.write(json.dumps({'launch': launch, 'method': method,
-                              'session': value.get('params', {}).get('sessionId')}) + '\n')
+                              'session': value.get('params', {}).get('sessionId'),
+                              'meta': value.get('params', {}).get('_meta')}) + '\n')
     if method == 'initialize':
-        send({'id': value['id'], 'result': {'protocolVersion': 1,
-              'agentCapabilities': {'loadSession': True, 'mcpCapabilities': {'http': True}}}})
+        result = {'protocolVersion': 1,
+                  'agentCapabilities': {'loadSession': True, 'mcpCapabilities': {'http': True}}}
+        if scenario.startswith('attention-'):
+            result['_meta'] = {'com.microsoft.amplifier.attention': {
+                'version': 1, 'enabled': True, 'method': '_amplifier/attention'}}
+        send({'id': value['id'], 'result': result})
     elif method == 'session/new':
         send({'id': value['id'], 'result': {'sessionId': 'durable-session'}})
     elif method == 'session/load':
-        if scenario == 'reload-fails':
+        if scenario in ('reload-fails', 'attention-reload-fails'):
             send({'id': value['id'], 'error': {'code': -32000, 'message': 'Fixture reload failure'}})
         else:
             send({'id': value['id'], 'result': {}})
+    elif method == '_amplifier/attention':
+        send({'id': value['id'], 'result': {'action': 'engage', 'id': 'offer', 'ticket': 'fixture-ticket'}})
     elif method == 'session/prompt':
         if scenario == 'during-prompt':
             send({'method': 'session/update', 'params': {'sessionId': 'durable-session',

@@ -12,6 +12,7 @@ from acp_client import Client, turn_disposition
 from attention import Attention, fingerprint
 from assessment import Assessment, POLICY, signature
 from watches import Watches
+from conversation_attention import ConversationAttention
 
 
 def control(cfg, path, payload=None):
@@ -70,6 +71,27 @@ async def run(home):
     async def request(path,payload=None):
         return await asyncio.to_thread(control,cfg,path,payload)
     watches=Watches(home,cfg['decision_attention'],request,observe) if cfg.get('agent_watches') else None
+    conversation_attention=ConversationAttention(observe) if (cfg.get('conversation_attention') or {}).get('enabled') else None
+    async def connect():
+        nonlocal client, connection_failures
+        # Both attention and prompt delivery can follow an idle endpoint restart.
+        # Reload before either request, and before reserving any work or inbox.
+        # A disconnect after a prompt starts remains interrupted; never replay it.
+        if client is not None and client.transport_closed():
+            observe('connection_closed_before_turn',session_id=client.session)
+            await client.close();client=None
+        if client is not None:return
+        client=Client(endpoint,observe);await client.start()
+        client.permission_active=lambda: control(cfg,'/status').get('turn_active',False)
+        if not client.info.get('agentCapabilities',{}).get('mcpCapabilities',{}).get('http'):
+            raise RuntimeError('This adapter requires an ACP endpoint supporting HTTP MCP')
+        previous=None
+        if (home/'session.json').exists():
+            stored=json.loads((home/'session.json').read_text())
+            if stored.get('binding')==identity:previous=stored.get('session')
+        await client.open_session(previous)
+        save(home/'session.json',{'binding':identity,'session':client.session})
+        connection_failures=0
 
     async def observe_attention(state):
         watch_managed=False
@@ -127,6 +149,10 @@ async def run(home):
                 state=await request('/state')
             if not await capacity_gate(calls,state,request,observe,budget_waiting,while_waiting=observe_capacity_wait):continue
             messages=await request('/inbox/peek')
+            if not messages and conversation_attention and await request('/participation'):
+                await connect()
+                await conversation_attention.consider(request,client)
+                messages=await request('/inbox/peek')
             if not messages:
                 state=await observe_attention(state)
                 if (state.get('task') or {}).get('status')!='running':
@@ -135,24 +161,11 @@ async def run(home):
                 await asyncio.sleep(3)
                 newer=await request('/inbox/peek')
                 if newer:messages=newer
-            # An idle endpoint may have restarted since the preceding turn.
-            # Reload before reserving work or consuming inbox/rate-limit budget.
-            # A later disconnect still takes the interrupted-turn path; no replay.
-            if client is not None and client.transport_closed():
-                observe('connection_closed_before_turn',session_id=client.session)
-                await client.close();client=None
-            if client is None:
-                client=Client(endpoint,observe);await client.start()
-                client.permission_active=lambda: control(cfg,'/status').get('turn_active',False)
-                if not client.info.get('agentCapabilities',{}).get('mcpCapabilities',{}).get('http'):
-                    raise RuntimeError('This adapter requires an ACP endpoint supporting HTTP MCP')
-                previous=None
-                if (home/'session.json').exists():
-                    stored=json.loads((home/'session.json').read_text())
-                    if stored.get('binding')==identity:previous=stored.get('session')
-                await client.open_session(previous)
-                save(home/'session.json',{'binding':identity,'session':client.session})
-                connection_failures=0
+            await connect()
+            offers=[m['attention_offer'] for m in messages if m.get('attention_offer')]
+            attention_offer=offers[0] if offers else None
+            if offers and any(offer!=attention_offer for offer in offers):
+                raise RuntimeError('Mixed attention offers cannot share a turn')
             await request('/turn',{'expected_generation':state.get('generation'),'continuation':all(m.get('source')=='continuation' for m in messages),'peer_only':all(m.get('source')=='agent' for m in messages),'message_ids':[m['id'] for m in messages if m.get('id')]})
             turn_started=True
             state=await request('/state')  # The new turn resets action/time budgets.
@@ -204,7 +217,7 @@ Your final response is automatically posted into game chat; avoid duplicating it
 This is a shared public room. Never disclose private information learned on another surface.
 '''+json.dumps({'messages':messages,'world':state,'agent_assessment':assessment,'attention_notifications':watch_notifications})
             calls.append(time.time());save(calls_path,calls)
-            pending=asyncio.create_task(client.prompt(prompt,220))
+            pending=asyncio.create_task(client.prompt(prompt,220,attention_offer=attention_offer))
             try:
                 while not pending.done():
                     await asyncio.wait({pending},timeout=1)

@@ -164,7 +164,7 @@ class Client:
                     self.tool_calls[tid] = {**self.tool_calls.get(tid, {}), **{k:v for k,v in item.items() if v is not None}}
                 await update(item)
 
-    async def prompt(self, text, timeout, on_chunk=None):
+    async def prompt(self, text, timeout, on_chunk=None, attention_offer=None):
         parts, final_parts, characters = [], [], 0
         self.tool_calls = {}
         permissions = self.permission_context()
@@ -203,6 +203,7 @@ class Client:
         try:
             result = await asyncio.wait_for(self.request("session/prompt", {
                 "sessionId": self.session, "prompt": [{"type": "text", "text": permission_text}, {"type": "text", "text": text}],
+                **({"_meta":{"com.microsoft.amplifier.attention":attention_offer}} if attention_offer else {}),
             }, update), timeout)
             unsettled=[tid for tid,call in self.tool_calls.items() if call.get('status') not in ('completed','failed')]
             return {"text": "".join(parts), "final_text": "".join(final_parts), "stop_reason": result.get("stopReason", "unknown"), 'unsettled_tools':unsettled}

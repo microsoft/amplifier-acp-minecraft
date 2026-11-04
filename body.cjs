@@ -15,6 +15,7 @@ const crafting=require('./crafting.cjs');
 const containers=require('./containers.cjs');
 const {boundedAction}=require('./action-deadline.cjs');
 const presence=require('./presence.cjs');
+const {isPublicChatEvent}=require('./public-chat.cjs');
 const mineflayer = require('mineflayer');
 const { pathfinder, goals } = require('mineflayer-pathfinder');
 const { Vec3 } = require('vec3');
@@ -35,8 +36,10 @@ let lastHumanAt=Date.parse(history.data.events.filter(e=>e.kind==='chat'&&e.sour
 let agentWakeTimes=[],lastNoticeAt=0;
 const events=[], inbox=history.data.inbox||(history.data.inbox=[]), receipts=[];
 const routeHuman=conversationRouter(cfg.username,{aliases:cfg.aliases||{}});
+const participation=new (require('./participation.cjs').Participation)(history,cfg);
+const participationProposal=()=>participation.proposal(Object.keys(bot.players));
 const delay=ms=>new Promise(r=>setTimeout(r,ms));
-function record(kind,data={}) { const e=history.record({seq:++sequence,time:new Date().toISOString(),kind,...data});events.push(e);if(events.length>200)events.shift(); console.log(JSON.stringify(e)); return e; }
+function record(kind,data={}) { const e=history.record({seq:++sequence,time:new Date().toISOString(),kind,...(kind==='chat_sent'?{provenance:'minecraft_public_chat'}:{}),...data});events.push(e);if(events.length>200)events.shift(); console.log(JSON.stringify(e)); return e; }
 const screenshots=cfg.screenshots?.enabled?new (require('./screenshots.cjs').Screenshots)({bot,
  directory:cfg.screenshots.directory||path.join(path.dirname(process.argv[2]),'screenshots'),
  browserPath:cfg.screenshots.browser_path,world:cfg.world_label||'Minecraft',isReady:()=>ready,
@@ -59,17 +62,21 @@ function hear(username,message,whisper=false){
     const direct=addressed(message,bot.username,false);
     const intent=peerIntent(message,bot.username);
     agentWakeTimes=agentWakeTimes.filter(t=>t>Date.now()-3600000);
-    const accepted=!!(cfg.agent_dialogue && direct && intent==='request' && Date.now()-lastHumanAt<(cfg.agent_dialogue_window_seconds||2400)*1000 && agentWakeTimes.length<Math.min(60,Math.max(1,cfg.peer_wakes_per_hour||4)) && inbox.length<8);
-    const e=record('chat',{username,message,whisper,source:'agent',intent,accepted});
+    const eligible=!!(cfg.agent_dialogue && ((participation.enabled&&!whisper)||intent==='request') && Date.now()-lastHumanAt<(cfg.agent_dialogue_window_seconds||2400)*1000 && agentWakeTimes.length<Math.min(60,Math.max(1,cfg.peer_wakes_per_hour||4)) && inbox.length<8);
+    const accepted=eligible&&direct&&(!participation.enabled||whisper);
+    const e=record('chat',{username,message,whisper,provenance:whisper?'minecraft_whisper':'minecraft_public_chat',source:'agent',intent,accepted});
     record('chat_routing',{username,route:direct&&intent!=='request'?'peer_'+intent:accepted?'peer_direct':direct?'peer_budget_or_window':'context_only'});
-    if(accepted){agentWakeTimes.push(Date.now());inbox.push({id:e.id,username,message,source:'agent'});history.save();}
+    if(participation.enabled&&eligible&&!whisper){participation.queue(e);}
+    else if(accepted){agentWakeTimes.push(Date.now());inbox.push({id:e.id,username,message,source:'agent'});history.save();}
     return;
   }
-  const e=record('chat',{username,message,whisper,source:'human',accepted:!!route});
+  const semantic=participation.enabled&&!whisper;
+  const e=record('chat',{username,message,whisper,provenance:whisper?'minecraft_whisper':'minecraft_public_chat',source:'human',accepted:!!route&&!semantic});
   lastHumanAt=Date.now();
-  record('chat_routing',{username,route:route||'context_only'});
+  record('chat_routing',{username,route:semantic?'participation_pending':route||'context_only'});
+  if(route&&/\b(stop|pause)\b/i.test(message)){stop();inbox.length=0;history.data.participation_pending=[];history.stop();history.save();record('stopped_by_player',{username});bot.chat('Stopped.');return;}
+  if(semantic){participation.queue(e);return;}
   if(!route)return;
-  if(/\b(stop|pause)\b/i.test(message)){stop();inbox.length=0;history.stop();record('stopped_by_player',{username});bot.chat('Stopped.');return;}
   if(inbox.length<8){inbox.push({id:e.id,username,message,whisper,source:'human'});history.save();}
 }
 bot.on('chat',(u,m)=>hear(u,m));bot.on('whisper',(u,m)=>hear(u,m,true));
@@ -82,7 +89,7 @@ function snapshot(){
     terrain:spatial.localMap(bot,3),
     players:Object.values(bot.players).map(p=>({name:p.username,position:p.entity?.position})),
     nearby_blocks:blocks.map(p=>({name:bot.blockAt(p)?.name,position:p})),
-    public_chat:history.data.events.filter(e=>!e.whisper&&['chat','chat_sent'].includes(e.kind)).slice(-20),
+    public_chat:history.data.events.filter(isPublicChatEvent).slice(-20),
     events:history.data.events.filter(e=>!e.whisper).slice(-35),task:history.task(),receipts:receipts.slice(-15),remaining_actions:Math.max(0,24-actions)};
 }
 function watchContext(){
@@ -95,7 +102,13 @@ async function watchOperation(action){
  return watchBridge.invoke(cfg.decision_attention.command,path.dirname(process.argv[2]),{...watchContext(),action});
 }
 function coord(a){const p=new Vec3(a.x,a.y,a.z);if(![p.x,p.y,p.z].every(Number.isInteger)||p.y< -64||p.y>319||p.distanceTo(bot.entity.position)>64)throw Error('Coordinates must be whole blocks within 64 blocks of this player');return p;}
-function speak(text){const s=text.replace(/[\r\n\x00-\x1f]/g,' ').trim();if(!s||s.startsWith('/'))throw Error('Use ordinary chat, not slash commands');bot.chat(s.slice(0,240));return {sent:s.slice(0,240)};}
+function speak(text){
+ const s=text.replace(/[\r\n\x00-\x1f]/g,' ').trim();if(!s||s.startsWith('/'))throw Error('Use ordinary chat, not slash commands');
+ const result={sent:s.slice(0,240)};bot.chat(result.sent);
+ // Record only text handed to public chat, never an attempted/failed tool input.
+ // This transport receipt is not proof of delivery to every player.
+ record('chat_sent',result);return result;
+}
 async function operate(name,a={}){
   if(!ready)throw Error('Player is not connected');
   if(name==='observe')return snapshot();
@@ -320,6 +333,17 @@ const server=http.createServer(async(req,res)=>{
     }
     else if(req.method==='GET'&&req.url==='/status')result={ready,busy,turn_active:Date.now()<turnUntil,task:history.task()};
     else if(req.method==='GET'&&req.url==='/inbox/peek')result=inbox.slice(0,8);
+    else if(req.method==='GET'&&req.url==='/participation')result=participation.enabled?participationProposal():null;
+    else if(req.method==='POST'&&req.url==='/participation'){
+      if(!participation.enabled)throw Error('Conversation attention is not enabled');
+      const a=await json(req),proposal=participationProposal();
+      const peerCount=proposal?proposal.ids.filter(id=>history.data.events.find(e=>e.id===id)?.source==='agent').length:0;
+      agentWakeTimes=agentWakeTimes.filter(t=>t>Date.now()-3600000);
+      if(a.action==='engage'&&peerCount&&(Date.now()-lastHumanAt>=(cfg.agent_dialogue_window_seconds||2400)*1000||agentWakeTimes.length+peerCount>Math.min(60,Math.max(1,cfg.peer_wakes_per_hour||4))))throw Error('Peer participation budget or human-activity window expired');
+      result=participation.apply(proposal,a,inbox);
+      if(result.queued)for(let i=0;i<peerCount;i++)agentWakeTimes.push(Date.now());
+      record('participation_delivery',result);
+    }
     else if(req.method==='GET'&&req.url==='/inbox'){result=inbox.splice(0,8);history.save();}
     else if(req.method==='POST'&&req.url==='/recover'){history.recover();stop();result={task:history.task()};}
     else if(req.method==='POST'&&req.url==='/turn'){
@@ -332,21 +356,21 @@ const server=http.createServer(async(req,res)=>{
     else if(req.method==='POST'&&req.url==='/notice'){
       const a=await json(req);const notices={budget:'I am waiting for hourly capacity. I will resume while the task remains authorized and within its deadline.',paused:'My game turn was interrupted. Progress so far is saved; ask me to inspect it and continue.'};
       if(!notices[a.kind])throw Error('Unknown status notice');
-      result={sent:false};if(ready&&Date.now()-lastNoticeAt>20000){lastNoticeAt=Date.now();result=speak(notices[a.kind]);record('chat_sent',result);}
+      result={sent:false};if(ready&&Date.now()-lastNoticeAt>20000){lastNoticeAt=Date.now();result=speak(notices[a.kind]);}
     }
     else if(req.method==='POST'&&req.url==='/reply'){
       const a=z.object({text:z.string().min(1).max(240)}).parse(await json(req));
       if(Date.now()>turnUntil||++replies>3)throw Error('Reply window is closed');
-      result=speak(a.text);record('chat_sent',result);
+      result=speak(a.text);
     }
     else if(req.method==='POST'&&req.url==='/finish'){const a=await json(req);if(ready)history.checkpoint({position:bot.entity.position.clone(),health:bot.health,recent_actions:receipts.slice(-8)});history.finish(!!a.error||busy,!!a.budget_limited&&!busy);stop();result={stopped:true};}
     else if(req.method==='POST'&&req.url==='/wake'){const a=await json(req);if(a.generation!==generation||Date.now()<turnUntil)throw Error('Observation superseded or turn already active');result=history.wake(a.task_id);record('attention_wake',{task_id:a.task_id});}
     else if(req.method==='POST'&&req.url==='/resume-reviewed'){const a=await json(req);if(!ready||busy||Date.now()<turnUntil||a.generation!==generation)throw Error('Recovery review superseded or player not idle');result=history.resumeReviewed(a);record('operator_recovery',{task_id:result.id,reason:a.reason});}
-    else if(req.method==='POST'&&req.url==='/stop'){stop();inbox.length=0;history.stop();result={stopped:true};}
+    else if(req.method==='POST'&&req.url==='/stop'){stop();inbox.length=0;history.data.participation_pending=[];history.stop();history.save();result={stopped:true};}
     else if(req.method==='POST'&&req.url==='/task'){
       const a=await json(req);if(typeof a.text!=='string'||!a.text.trim()||a.text.length>12000||inbox.length>=8)throw Error('Task must contain 1–12000 characters and the queue must have space');
       const reviewers=a.reviewers||[];if(!Array.isArray(reviewers)||reviewers.length>8||reviewers.some(n=>typeof n!=='string'||!(cfg.bot_names||[]).includes(n)||n===cfg.username))throw Error('Reviewers must be configured peers other than this player');
-      lastHumanAt=Date.now();const e=record('chat',{username:'Operator',message:a.text,source:'human',accepted:true,whisper:false,reviewers:[...new Set(reviewers)]});inbox.push({id:e.id,username:'Operator',message:a.text,source:'human'});history.save();result={queued:true,request_id:e.id};}
+      lastHumanAt=Date.now();const e=record('chat',{username:'Operator',message:a.text,provenance:'operator_control',source:'human',accepted:true,whisper:false,reviewers:[...new Set(reviewers)]});inbox.push({id:e.id,username:'Operator',message:a.text,source:'human'});history.save();result={queued:true,request_id:e.id};}
     else if(req.method==='POST'&&req.url==='/action'){const a=await json(req);if(!definitions[a.name])throw Error('Unknown action');const args=z.object(definitions[a.name][1]).strict().parse(a.arguments||{});result=await operate(a.name,args);}
     else {res.writeHead(404);return res.end();}
     res.writeHead(200,{'Content-Type':'application/json'});res.end(JSON.stringify(result));

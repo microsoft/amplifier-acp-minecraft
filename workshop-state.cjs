@@ -1,6 +1,30 @@
 // Experience-owned history and bounded work; independent of any agent runtime.
 const fs=require('node:fs');
 const crypto=require('node:crypto');
+const {isPublicChatEvent}=require('./public-chat.cjs');
+const sharedActions=new Set(['chat','tell','move','follow','dig','place','build','gather','craft','give','shear','furnace','container','write_sign','set_open']);
+const text=(value,limit)=>typeof value==='string'?value.slice(0,limit):undefined;
+function sharedProgress(progress){return {at:text(progress?.at,64),summary:text(progress?.summary,2000)||''};}
+function sharedEvent(event){
+ // This is an export projection, not a redaction of the durable owner record.
+ // New event types and new fields remain local until explicitly projected here.
+ if(!event||event.whisper||(event.provenance!==undefined&&event.provenance!=='minecraft_public_chat'))return null;
+ const base={id:text(event.id,160),time:text(event.time,64),kind:event.kind};
+ if(isPublicChatEvent(event))return {...base,username:text(event.username,160),
+  message:text(event.message,4000)??text(event.sent,4000)??''};
+ if(event.kind==='work_status')return {...base,task_id:text(event.task_id,160),
+  status:text(event.status,64),goal:text(event.goal,2000),
+  ...(event.progress?{progress:sharedProgress(event.progress)}:{})};
+ if(['action_started','action_result','action_failed'].includes(event.kind)&&sharedActions.has(event.action)){
+  // Inputs, returned payloads and exception strings may contain private text,
+  // even for a public-chat tool which never actually sent its attempted message.
+  const receipt={...base,action_id:text(event.action_id,160),action:event.action};
+  if(event.kind==='action_result')receipt.reported_error=!!event.result?.error;
+  for(const key of ['timeout','operation_settled','turn_preserved'])if(typeof event[key]==='boolean')receipt[key]=event[key];
+  return receipt;
+ }
+ return null;
+}
 class WorkshopState {
  constructor(file,{maxTurns=12,maxSeconds=2400}={}){
   this.file=file;this.maxTurns=maxTurns;this.maxSeconds=maxSeconds;
@@ -131,13 +155,19 @@ class WorkshopState {
   const id=cfg.conversation_id||'minecraft:workshop';
   if(q.conversation_id&&q.conversation_id!==id)throw Error('Conversation is not available');
   const observed_at=new Date().toISOString();
-  const original=this.task();const task=original?{...original,progress:original.progress.slice(-8)}:null;
-  const current={id,conversation_id:id,label:`Minecraft — ${cfg.username}`,surface:'minecraft',updated_at:this.data.events.at(-1)?.time,coverage:'Recent game chat and actual action receipts; task completion is agent-reported',activity:{...live,task},observed_at};
+  const original=this.task();
+  const task=original?{...(owner?original:Object.fromEntries(
+   ['id','goal','status','turns','max_turns','deadline','wait_for'].filter(k=>original[k]!==undefined).map(k=>[k,original[k]]))),
+   progress:original.progress.slice(-8).map(p=>owner?p:sharedProgress(p))}:null;
+  const coverage=owner?'Recent game chat and actual action receipts; task completion is agent-reported':
+   'Recent public chat, task summaries and action receipt metadata; raw inputs/results are owner-local and task completion is agent-reported';
+  const current={id,conversation_id:id,label:`Minecraft — ${cfg.username}`,surface:'minecraft',updated_at:this.data.events.at(-1)?.time,coverage,activity:{...live,task},observed_at};
   if(q.operation==='authorize')return {owner:false,conversation_id:id,actor_id:`minecraft:${cfg.username}`,surface:'minecraft',label:current.label,observed_at};
   if(q.operation==='list')return {items:[current],complete:true,observed_at};
   const limit=Math.max(1,Math.min(40,Number(q.limit)||20));
-  const events=this.data.events.filter(e=>owner||!e.whisper);
-  const messages=events.slice(-limit).map(e=>({id:e.id,at:e.time,actor:e.username||cfg.username,text:(e.message||e.sent||JSON.stringify(e)).slice(0,4000),label:e.kind}));
+  const events=owner?this.data.events:this.data.events.map(sharedEvent).filter(Boolean);
+  const messages=events.slice(-limit).map(e=>({id:e.id,at:e.time,actor:e.username||cfg.username,
+   text:(owner?(e.message||e.sent||JSON.stringify(e)):(e.message??JSON.stringify(e))).slice(0,4000),label:e.kind}));
   if(q.operation==='read'||q.operation==='orientation')return {conversation_id:id,current,messages,complete:events.length<=limit,observed_at};
   throw Error('Unsupported context operation');
  }

@@ -1,7 +1,12 @@
 function addressed(message,name,group=true){
+  message=message.trim();
   const n=name.replace(/[.*+?^${}()|[\]\\]/g,'\\$&');
   return new RegExp('^(?:(?:hey|hi|hello)[, ]+)?@?'+n+'(?:[^a-zA-Z0-9_]|$)','i').test(message)
-    || new RegExp('@'+n+'\\b','i').test(message)
+    || new RegExp('(?:^|[^a-zA-Z0-9_@])@'+n+'(?:[^a-zA-Z0-9_]|$)','i').test(message)
+    // A comma/dash can introduce an addressee at the end or inside a sentence:
+    // "How is it going, BuilderOne?" / "Can you, BuilderOne, check the roof?"
+    // Do not wake every named third party ("ask BuilderTwo to help").
+    || new RegExp('[,;:—–]\\s*@?'+n+'(?:\\s*[,;:—–]|\\s*[.!?…]*$)','i').test(message)
     || (group&&/^(everyone|team|agents)[,:!\s]/i.test(message));
 }
 // Each body keeps only its own conversational attention, never a shared agent brain.
@@ -10,6 +15,7 @@ function conversationRouter(name, {windowMs=600000,aliases={}}={}) {
   const matches=(message,person)=>[person,...(aliases[person]||[])].some(n=>addressed(message,n,false));
   const active=new Map();
   return ({username,message,whisper=false,participants=[],now=Date.now()})=>{
+    message=message.trim();
     for(const [person,until] of active)if(until<=now)active.delete(person);
     if(whisper){active.set(username,now+windowMs);return 'whisper';}
     if(matches(message,name)){active.set(username,now+windowMs);return 'direct';}

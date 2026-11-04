@@ -3,6 +3,21 @@ const {WorkshopState}=require('../workshop-state.cjs');
 function fixture(t,options){const dir=fs.mkdtempSync(path.join(os.tmpdir(),'minecraft-state-'));t.after(()=>fs.rmSync(dir,{recursive:true,force:true}));return new WorkshopState(path.join(dir,'state.json'),options);}
 function request(s,changes={}){s.record({kind:'chat',username:'VisitorOne',source:'human',accepted:true,whisper:false,message:'Build the inn while I am away',time:new Date().toISOString(),...changes});return s.data.events.at(-1).id;}
 const cfg={username:'BuilderOne',context_grant:'secret-grant',conversation_id:'world-one'};
+test('public context omits private management briefs and raw task provenance while owner retains them',t=>{
+ const home=fs.mkdtempSync(path.join(os.tmpdir(),'private-context-'));t.after(()=>fs.rmSync(home,{recursive:true,force:true}));
+ const s=new WorkshopState(path.join(home,'state.json'));
+ const e=s.record({kind:'chat',username:'Operator',source:'human',accepted:true,whisper:false,
+  provenance:'operator_control',time:new Date().toISOString(),message:'PRIVATE_CONTROL_SENTINEL'});
+ s.begin({request_id:e.id,goal:'Public harbor task'});
+ s.data.task.progress.push({at:new Date().toISOString(),summary:'Working on the dock',observation:{brief:'PRIVATE_CONTROL_SENTINEL'}});
+ s.record({kind:'chat',username:'Visitor',message:'Public hello',provenance:'minecraft_public_chat'});
+ const shared=s.query({operation:'read',access:{mode:'grant',grant:'secret-grant'}},cfg,{});
+ assert.ok(!JSON.stringify(shared).includes('PRIVATE_CONTROL_SENTINEL'));
+ assert.equal(shared.current.activity.task.goal,'Public harbor task');
+ assert.equal(shared.current.activity.task.progress[0].summary,'Working on the dock');
+ assert.equal(shared.messages.length,1);
+ assert.ok(JSON.stringify(s.query({operation:'read',access:{mode:'owner'}},cfg,{})).includes('PRIVATE_CONTROL_SENTINEL'));
+});
 test('context persists, reports activity, and excludes private whispers from the room',t=>{
  const s=fixture(t);request(s);request(s,{whisper:true,message:'private-whisper'});
  const fresh=new WorkshopState(s.file);assert.equal(fresh.data.events.length,2);
