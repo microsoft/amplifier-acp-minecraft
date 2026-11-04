@@ -142,9 +142,13 @@ that world; it does not use a model or modify the workshop world.
 
 A routed human request can authorize `work_begin`. The agent reports progress
 with `work_report`, choosing running, waiting, blocked, or review. Defaults are
-12 model turns and 40 minutes per task, with 30 model turns per player per hour.
-The hourly limit defers further calls without consuming queued messages or
-renewing the task's deadline. State survives controller restarts.
+12 ACP turns and 40 minutes per task, with 30 ACP turns per player per hour.
+The hourly limit defers planner starts without consuming queued messages or
+renewing the task's deadline. Bounded attention checks continue while authorized
+work is waiting, so a delivery can be noticed before its watch expires. A wake
+marks that existing task ready; it does not bypass planner capacity or start an
+ACP prompt. Watch expirations and decision-service quotas still apply, and no
+expired watch is revived. State survives controller restarts.
 
 Stop cancels work and revokes the current action lease. Interrupted work requires
 inspection. Clean model turn limits can continue only when tools have settled and
