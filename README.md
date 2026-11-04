@@ -253,11 +253,22 @@ open. An uncertain receipt remains uncertain even if its worker has returned.
 ## Optional context, decisions and watches
 
 The optional `agent-instance.context/1` provider makes recent public game events,
-actual action receipts, presence and task status discoverable through an
+action receipt metadata, presence and task status discoverable through an
 authorized context layer. It uses a separate `context_token` and a non-owner game
 audience grant. Private owner conversations do not become visible to the game.
 The history is bounded and reports its coverage. Standard ACP does not itself
 merge conversations or authorize cross-surface retrieval.
+
+Shared history uses explicit projections: public chat text, task/progress
+summaries, and action IDs, names, lifecycle stages and bounded outcome flags.
+It never serializes arbitrary local events. Tool arguments, returned payloads,
+exception strings and nested progress observations remain owner-local, including
+attempted `tell` messages. Unknown event types are omitted. An action result only
+records that the call returned; it does not independently verify task completion.
+These projections do not modify the stored history or owner access to it.
+Outgoing `chat`, public `tell`, replies and notices record the actual text handed
+to public chat separately, so shared readers can still follow the conversation.
+A failed send does not create that record; it is not proof of remote delivery.
 
 For a same-machine [Agent Instance](https://github.com/microsoft/amplifier-constellation-instance):
 
@@ -476,7 +487,8 @@ eligible. The same public-chat boundary applies to attention candidates, context
 messages, participants derived from messages, presence and task-condition watch
 evidence. Private control briefs retain their local authorization path; shared
 context exports include task summaries rather than original requests or nested
-private observations. Peer exchange
+private observations, and project action receipts without their raw inputs or
+results. Peer exchange
 budgets, the human-activity window, Stop, action leases and task deadlines still
 apply. Without the host capability, this opt-in mode uses bounded ordinary ACP
 response opportunities; it does not claim cheap pre-LLM filtering. Disable the

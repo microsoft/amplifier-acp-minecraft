@@ -102,7 +102,13 @@ async function watchOperation(action){
  return watchBridge.invoke(cfg.decision_attention.command,path.dirname(process.argv[2]),{...watchContext(),action});
 }
 function coord(a){const p=new Vec3(a.x,a.y,a.z);if(![p.x,p.y,p.z].every(Number.isInteger)||p.y< -64||p.y>319||p.distanceTo(bot.entity.position)>64)throw Error('Coordinates must be whole blocks within 64 blocks of this player');return p;}
-function speak(text){const s=text.replace(/[\r\n\x00-\x1f]/g,' ').trim();if(!s||s.startsWith('/'))throw Error('Use ordinary chat, not slash commands');bot.chat(s.slice(0,240));return {sent:s.slice(0,240)};}
+function speak(text){
+ const s=text.replace(/[\r\n\x00-\x1f]/g,' ').trim();if(!s||s.startsWith('/'))throw Error('Use ordinary chat, not slash commands');
+ const result={sent:s.slice(0,240)};bot.chat(result.sent);
+ // Record only text handed to public chat, never an attempted/failed tool input.
+ // This transport receipt is not proof of delivery to every player.
+ record('chat_sent',result);return result;
+}
 async function operate(name,a={}){
   if(!ready)throw Error('Player is not connected');
   if(name==='observe')return snapshot();
@@ -350,12 +356,12 @@ const server=http.createServer(async(req,res)=>{
     else if(req.method==='POST'&&req.url==='/notice'){
       const a=await json(req);const notices={budget:'I am waiting for hourly capacity. I will resume while the task remains authorized and within its deadline.',paused:'My game turn was interrupted. Progress so far is saved; ask me to inspect it and continue.'};
       if(!notices[a.kind])throw Error('Unknown status notice');
-      result={sent:false};if(ready&&Date.now()-lastNoticeAt>20000){lastNoticeAt=Date.now();result=speak(notices[a.kind]);record('chat_sent',result);}
+      result={sent:false};if(ready&&Date.now()-lastNoticeAt>20000){lastNoticeAt=Date.now();result=speak(notices[a.kind]);}
     }
     else if(req.method==='POST'&&req.url==='/reply'){
       const a=z.object({text:z.string().min(1).max(240)}).parse(await json(req));
       if(Date.now()>turnUntil||++replies>3)throw Error('Reply window is closed');
-      result=speak(a.text);record('chat_sent',result);
+      result=speak(a.text);
     }
     else if(req.method==='POST'&&req.url==='/finish'){const a=await json(req);if(ready)history.checkpoint({position:bot.entity.position.clone(),health:bot.health,recent_actions:receipts.slice(-8)});history.finish(!!a.error||busy,!!a.budget_limited&&!busy);stop();result={stopped:true};}
     else if(req.method==='POST'&&req.url==='/wake'){const a=await json(req);if(a.generation!==generation||Date.now()<turnUntil)throw Error('Observation superseded or turn already active');result=history.wake(a.task_id);record('attention_wake',{task_id:a.task_id});}

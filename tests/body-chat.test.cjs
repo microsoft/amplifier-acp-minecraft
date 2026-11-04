@@ -18,7 +18,7 @@ function fixture(name,semantic=false){
   return realRequire(n);
  },module:{exports:{}},console:{log(){}},Buffer,
  process:{argv:['node','body.cjs',config],on(){},exit(){assert.fail('Unexpected process exit');}},setTimeout,clearTimeout});
- vm.runInContext(fs.readFileSync(path.join(root,'body.cjs'),'utf8')+'\nmodule.exports={history,inbox};',context,{filename:'body.cjs'});
+ vm.runInContext(fs.readFileSync(path.join(root,'body.cjs'),'utf8')+'\nmodule.exports={history,inbox,operate,startFixtureTurn(){ready=true;turnUntil=Date.now()+240000;history.startTurn();}};',context,{filename:'body.cjs'});
  return {bot,...context.module.exports,task,home,async request(url,payload){
   const req=Readable.from(payload===undefined?[]:[JSON.stringify(payload)]);
   Object.assign(req,{url,method:payload===undefined?'GET':'POST',headers:{authorization:'Bearer fixture'}});
@@ -93,5 +93,26 @@ test('private task endpoint preserves authorization without becoming public atte
   assert.ok(!proposal.context.participants.some(p=>p.id==='Operator'));
   assert.ok(!JSON.stringify(proposal).includes('Private operator-only brief'));
   assert.equal(f.history.begin({request_id:control.id,goal:'Accepted private commission'}).request,control.message);
+ }finally{f.close();}
+});
+
+test('shared history includes separately recorded public sends, never failed tool inputs',async()=>{
+ const f=fixture('BuilderOne');try{
+  const sent=[];f.bot.chat=text=>sent.push(text);f.startFixtureTurn();
+  await f.operate('chat',{text:'The dock framing is ready.'});
+  await f.operate('tell',{player:'BuilderTwo',intent:'update',text:'Public supplies delivered.'});
+  await f.request('/reply',{text:'Public reply from the controller.'});
+  const canary='PRIVATE_FAILED_SEND_CANARY';
+  f.bot.chat=()=>{throw Error(canary);};
+  await assert.rejects(f.operate('tell',{player:'BuilderTwo',intent:'request',text:canary}),new RegExp(canary));
+  const publicEvents=f.history.data.events.filter(e=>e.kind==='chat_sent');
+  assert.deepEqual(publicEvents.map(e=>e.sent),sent,'each successful public send has exactly one receipt');
+  assert.ok(publicEvents.every(e=>e.provenance==='minecraft_public_chat'));
+  const cfg={username:'BuilderOne',context_grant:'fixture-grant'};
+  const shared=f.history.query({operation:'read',limit:40,access:{mode:'grant',grant:'fixture-grant'}},cfg,{});
+  assert.deepEqual(shared.messages.filter(e=>e.label==='chat_sent').map(e=>e.text),sent);
+  assert.ok(!JSON.stringify(shared).includes(canary));
+  const owner=f.history.query({operation:'read',limit:40,access:{mode:'owner'}},cfg,{});
+  assert.ok(JSON.stringify(owner).includes(canary));
  }finally{f.close();}
 });
