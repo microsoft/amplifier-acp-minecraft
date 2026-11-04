@@ -3,8 +3,11 @@
 const {once}=require('node:events');
 const {refreshInventory}=require('./inventory.cjs');
 const {click}=require('./crafting.cjs');
+const {translationMetadata}=require('./protocol-compatibility.cjs');
 const opened=new WeakMap();
-const plain=i=>i&&!i.nbt&&!i.components?.length&&!i.removedComponents?.length&&!i.metadata;
+// Keep bridge bookkeeping intact in every snapshot/click. It does not turn
+// ordinary supplies into named/enchanted items; all other components still do.
+const plain=i=>i&&!i.nbt&&(i.components||[]).every(translationMetadata)&&!i.removedComponents?.length&&!i.metadata;
 const item=i=>i?{name:i.name,count:i.count,type:i.type,metadata:i.metadata,nbt:i.nbt,
  components:i.components||[],removedComponents:i.removedComponents||[]}:null;
 const snapshot=w=>({slots:w.slots.map(item),cursor:item(w.selectedItem)});

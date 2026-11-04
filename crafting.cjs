@@ -1,6 +1,7 @@
 // Server-confirmed crafting clicks; never synthesize output or trust local predictions.
 const {once}=require('node:events');
 const {refreshInventory}=require('./inventory.cjs');
+const {inventoryBarrier}=require('./inventory-barrier.cjs');
 const counts=items=>{const n={};for(const i of items)n[i.name]=(n[i.name]||0)+i.count;return n;};
 async function click(bot,slot,button,check){
  check();const window=bot.currentWindow||bot.inventory,Item=require('prismarine-item')(bot.registry);
@@ -11,7 +12,7 @@ async function click(bot,slot,button,check){
   // An ordinary click with an intentionally stale state ID requests authoritative
   // resync after the server applies it. No client-side slot/output prediction.
   bot._client.write('window_click',{windowId:window.id,stateId:-1,slot,mouseButton:button,mode:0,changedSlots:[],cursorItem:Item.toNotch(window.selectedItem)});
-  await ack;check();
+  await ack;await inventoryBarrier(bot);check();
  }finally{clearTimeout(timer);abort.abort();await ack.catch(()=>{});}
 }
 async function parkCursor(bot,window,check){

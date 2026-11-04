@@ -20,7 +20,7 @@ test('cancelled handoff removes packet listeners and never retries a tossed stac
  const bot=new EventEmitter(),client=new EventEmitter();bot._client=client;bot.username='Sender';bot.registry=require('minecraft-data')('1.21.1');
  bot.entity={id:10,position:new Vec3(0,0,0)};bot.entities={};bot.players={Taker:{entity:{id:20,position:new Vec3(2,0,0)}}};
  bot.inventory={id:0,slots:[],type:"minecraft:inventory",selectedItem:null,items:()=>[{name:'oak_planks',count:4,type:1}]};bot.supportFeature=()=>true;
- client.write=()=>bot.emit('setWindowItems:0');bot.world={raycast:()=>null};bot.lookAt=async()=>{};let tosses=0;
+ client.write=(name,p)=>name==='ping_request'?client.emit('ping_response',p):bot.emit('setWindowItems:0');bot.world={raycast:()=>null};bot.lookAt=async()=>{};let tosses=0;
  bot.tossStack=async()=>{tosses++;};
  await assert.rejects(give(bot,{player:'Taker',item:'oak_planks',count:4},()=>{if(tosses)throw Error('Stopped');}),/Stopped/);
  assert.equal(tosses,1);assert.equal(bot.listenerCount('itemDrop'),0);assert.equal(client.listenerCount('collect'),0);

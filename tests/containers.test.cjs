@@ -1,3 +1,4 @@
+const {inventoryClient}=require('./inventory-client-fixture.cjs');
 const test=require('node:test'),assert=require('node:assert/strict');
 const {EventEmitter}=require('node:events');const {Vec3}=require('vec3');
 const {container}=require('../containers.cjs');
@@ -14,7 +15,7 @@ function fixture({size=27}={}){
  let writes=0,closes=0,mode='normal';
  bot.activateBlock=async()=>{sync();bot.currentWindow=client;bot.emit('windowOpen',client);};
  bot.closeWindow=w=>{assert.equal(w.selectedItem,null,'must never close a held cursor');closes++;bot.currentWindow=null;};
- bot._client={write:(packet,a)=>{
+ bot._client=inventoryClient((packet,a)=>{
   assert.equal(packet,'window_click');assert.equal(a.stateId,-1);
   if(a.mode===0){
    writes++;assert.ok(a.slot>=0,'must never click outside/drop');
@@ -25,7 +26,7 @@ function fixture({size=27}={}){
    if(mode==='timeout'&&writes===1)return;
   }
   sync();bot.emit(`setWindowItems:${a.windowId}`);
- }};
+ });
  const set=(slot,name,count)=>server.updateSlot(slot,new Item(bot.registry.itemsByName[name].id,count));
  return {bot,p,server,client,set,setMode:m=>{mode=m;},get writes(){return writes;},get closes(){return closes;},
   run:(operation,extra={},check=()=>{})=>container(bot,p,{expected:'chest',operation,...extra},check)};

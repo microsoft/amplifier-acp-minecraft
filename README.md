@@ -53,6 +53,28 @@ and browser origins are rejected. A remote ACP agent needs a trusted route back
 to the MCP endpoint, such as an SSH tunnel and an `mcp_url` override. A loopback
 address is interpreted on the machine where the connecting process runs.
 
+## Newer servers and crossplay
+
+The default body uses Java protocol 1.21.1. It can also join Paper 26.3 through
+ViaVersion and ViaBackwards, with the body still configured as `version: "1.21.1"`.
+This does not give the body native knowledge of newer blocks or recipes; translated
+blocks may have older appearances and newer mechanics need separate validation.
+Human clients can use the server's native version. Geyser and Floodgate can provide
+Bedrock connections and account linking outside this adapter.
+
+For this translated connection the adapter leaves only the unused recipe-book UI
+packet opaque. Inventory, entities, blocks and action results remain decoded and
+verified. Inventory clicks wait for a matching server ping response to drain late
+inventory updates before the next operation. Container transfers accept only the
+exact empty ViaBackwards bookkeeping component for ordinary supplies, preserve it
+in clicks, and continue refusing actual custom or enchanted items.
+
+Crafting, container and survival regressions can run against a disposable
+`level-name=container-fixture` world. Pass its `--properties` and `--node`, plus
+`--port` when connecting through a version proxy. Crafting and survival require an
+explicit `--log`; containers require `--out`. Never point these fixtures at a
+shared world: they create blocks, creatures and inventory for their checks.
+
 ## Optional player screenshots
 
 [Enable on-demand screenshots](docs/screenshots.md) to let an agent capture its
