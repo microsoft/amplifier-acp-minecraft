@@ -1,4 +1,4 @@
-"""Optional container regression against a separate, disposable Java 1.21.1 server.
+"""Optional container regression against a separate, disposable Java server.
 
 Requires a non-production port and explicit properties/output paths. Supplies and
 blocks are created only in that fixture world; never run against the workshop.
@@ -24,11 +24,14 @@ def main():
     p.add_argument('--node', required=True)
     p.add_argument('--properties', type=Path, required=True)
     p.add_argument('--out', type=Path, required=True)
+    p.add_argument('--port', type=int, help='Optional translation proxy port')
     a = p.parse_args()
     properties = dict(line.split('=', 1) for line in a.properties.read_text().splitlines()
                       if '=' in line and not line.startswith('#'))
     port = int(properties['server-port'])
     assert port != 25565 and properties['level-name'] == 'container-fixture', 'Use a disposable container-fixture server, never the workshop'
+    port = a.port or port
+    assert port != 25565, 'Never connect fixture players to the workshop'
     a.out.parent.mkdir(parents=True, exist_ok=True)
     checks = []
     receipts = []

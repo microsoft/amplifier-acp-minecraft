@@ -4,11 +4,18 @@ from pathlib import Path
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
 from adapter import control
 from ops.rcon import command
-p=argparse.ArgumentParser();p.add_argument('--node',required=True);p.add_argument('--properties',required=True);a=p.parse_args()
+p=argparse.ArgumentParser();p.add_argument('--node',required=True);p.add_argument('--properties',type=Path,required=True)
+p.add_argument('--port',type=int,help='Optional translation proxy port; defaults to the disposable server port')
+p.add_argument('--log',type=Path,required=True);a=p.parse_args()
+properties=dict(line.split('=',1) for line in a.properties.read_text().splitlines() if '=' in line and not line.startswith('#'))
+assert int(properties['server-port']) != 25565 and properties['level-name'] == 'container-fixture', 'Use a disposable container-fixture server, never the workshop'
+port=a.port or int(properties['server-port'])
+assert port != 25565, 'Never connect fixture players to the workshop'
+a.log.parent.mkdir(parents=True,exist_ok=True)
 def r(cmd):return command(a.properties,cmd)
 with tempfile.TemporaryDirectory() as d:
- c={'username':'CraftTester','control_port':18539,'token':secrets.token_hex(32)};f=Path(d)/'config.json';f.write_text(json.dumps(c))
- log=open('evidence/crafting-body.log','w');proc=subprocess.Popen([a.node,'body.cjs',str(f)],stdout=log,stderr=log)
+ c={'username':'CraftTester','host':'127.0.0.1','port':port,'control_port':18539,'token':secrets.token_hex(32)};f=Path(d)/'config.json';f.write_text(json.dumps(c))
+ log=open(a.log,'w');proc=subprocess.Popen([a.node,'body.cjs',str(f)],stdout=log,stderr=log)
  def act(name,**args):return control(c,'/action',{'name':name,'arguments':args})
  def inv():
   v=act('inventory');assert v['cursor'] is None;assert not any(v['crafting_grid']);return {i['name']:i['count'] for i in v['items']}

@@ -23,9 +23,11 @@ const { StreamableHTTPServerTransport } = require('@modelcontextprotocol/sdk/ser
 const { z } = require('zod');
 const { addressed, conversationRouter, peerIntent } = require('./routing.cjs');
 const cfg = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
+const version=cfg.version||'1.21.1';
 const history=new WorkshopState(path.join(path.dirname(process.argv[2]),'workshop.json'),{maxTurns:cfg.task_max_turns||12,maxSeconds:cfg.task_max_seconds||2400});
 const bot = mineflayer.createBot({host:cfg.host || '127.0.0.1',port:cfg.port || 25565,
-  username:cfg.username,version:cfg.version || '1.21.1',auth:cfg.auth || 'offline',hideErrors:true});
+  username:cfg.username,version,auth:cfg.auth || 'offline',hideErrors:true,
+  customPackets:require('./protocol-compatibility.cjs').protocolCompatibility(version)});
 bot.loadPlugin(pathfinder);
 bot.on('path_update',result=>spatial.normalizePassages(bot,result));
 let ready=false, busy=false, generation=0, turnUntil=0, actions=0, replies=0, sequence=0, shuttingDown=false;

@@ -1,3 +1,4 @@
+const {inventoryClient}=require('./inventory-client-fixture.cjs');
 const test=require('node:test'),assert=require('node:assert/strict');
 const {EventEmitter}=require('node:events');const {Vec3}=require('vec3');
 const {entities,sheepTarget,furnace}=require('../survival.cjs');
@@ -5,7 +6,7 @@ function fixture(){
  const bot=new EventEmitter();bot.registry=require('minecraft-data')('1.21.1');
  bot.entity={position:new Vec3(0,0,0)};bot.world={raycast:()=>null};bot.entities={};
  bot.supportFeature=()=>true;bot.inventory={id:0,slots:[],type:"minecraft:inventory",selectedItem:null,items:()=>[{name:'raw_iron',count:2}]};
- bot._client={write:()=>bot.emit('setWindowItems:0')};
+ bot._client=inventoryClient(()=>bot.emit('setWindowItems:0'));
  const sheep={id:1,uuid:'stable-id',name:'sheep',position:new Vec3(2,0,0),metadata:[]};
  const keys=bot.registry.entitiesByName.sheep.metadataKeys;
  sheep.metadata[keys.indexOf('wool')]=0;sheep.metadata[keys.indexOf('baby')]=false;bot.entities[1]=sheep;

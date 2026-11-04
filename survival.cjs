@@ -40,7 +40,11 @@ async function shear(bot,a,check){
  await bot.equip(tool,'hand');await refreshInventory(bot);check();
  if(bot.heldItem?.name!=='shears')throw Error('Server did not confirm held shears');
  const e=sheepTarget(bot,a),before=bot.inventory.items().filter(i=>i.name.endsWith('_wool')).reduce((n,i)=>n+i.count,0);
- await bot.activateEntity(e);
+ // Java clients try a precise hit before the general interaction. Older sheep
+ // implementations ignore the precise hit; newer translated servers need it.
+ await bot.activateEntityAt(e,e.position.offset(0,.8,0));
+ await require('./inventory-barrier.cjs').inventoryBarrier(bot);check();
+ if(describe(bot,e).sheep.sheared!==true){sheepTarget(bot,a);await bot.activateEntity(e);}
  for(let i=0;i<20;i++){await delay(100);check();if(describe(bot,e).sheep.sheared===true)break;}
  if(describe(bot,e).sheep.sheared!==true)throw Error('Server did not confirm shearing; inspect before retrying');
  const inventory=await refreshInventory(bot);check();
