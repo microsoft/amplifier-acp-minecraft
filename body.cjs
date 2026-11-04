@@ -35,6 +35,10 @@ const events=[], inbox=history.data.inbox||(history.data.inbox=[]), receipts=[];
 const routeHuman=conversationRouter(cfg.username,{aliases:cfg.aliases||{}});
 const delay=ms=>new Promise(r=>setTimeout(r,ms));
 function record(kind,data={}) { const e=history.record({seq:++sequence,time:new Date().toISOString(),kind,...data});events.push(e);if(events.length>200)events.shift(); console.log(JSON.stringify(e)); return e; }
+const screenshots=cfg.screenshots?.enabled?new (require('./screenshots.cjs').Screenshots)({bot,
+ directory:cfg.screenshots.directory||path.join(path.dirname(process.argv[2]),'screenshots'),
+ browserPath:cfg.screenshots.browser_path,world:cfg.world_label||'Minecraft',isReady:()=>ready,
+ onSaved:info=>record('screenshot_saved',{capture_id:info.id,path:info.path,sha256:info.sha256,bytes:info.bytes,camera:info.camera})}):null;
 function cancelAction(){ generation++;bot.pathfinder.setGoal(null);bot.clearControlStates();try{bot.stopDigging();}catch{} }
 function stop(){ turnUntil=0;cancelAction(); }
 bot.on('spawn',()=>{ready=true;const m=new spatial.SpatialMovements(bot);m.canDig=false;m.allow1by1towers=false;m.allowParkour=false;m.allowFreeMotion=false;m.scafoldingBlocks=[];m.maxDropDown=2; /* upstream measures to landing FLOOR: 2 permits a one-block feet descent */m.liquidCost=20;bot.pathfinder.setMovements(m);record('spawn',{position:bot.entity.position});});
@@ -269,13 +273,14 @@ const definitions={
 };
 function mcpServer(){
   const m=new McpServer({name:'minecraft-player',version:'0.1.0'});
+  require('./screenshots.cjs').registerTools(m,screenshots);
   for(const [name,[description,inputSchema]]of Object.entries(definitions).filter(([name])=>cfg.agent_watches||!name.startsWith('attention_')))m.registerTool(name,{description,inputSchema},async a=>{
     try{const result=await operate(name,a);return {content:[{type:'text',text:JSON.stringify(result)},{type:'text',text:JSON.stringify({turn_seconds_remaining:Math.max(0,Math.floor((turnUntil-Date.now()-20000)/1000)),actions_remaining:Math.max(0,24-actions),guidance:'When under 80 seconds or short of actions, call work_report with running and end this turn. The controller will continue your accepted task.'})}]};}
     catch(e){return {isError:true,content:[{type:'text',text:e.message}]};}
   });return m;
 }
 async function json(req){let data='';for await(const b of req){data+=b;if(data.length>16384)throw Error('Request too large');}return data?JSON.parse(data):{};}
-const presenceHandler=presence.createHandler({token:cfg.presence_token,snapshot,label:cfg.world_label||'Minecraft'});
+const presenceHandler=presence.createHandler({token:cfg.presence_token,snapshot,label:cfg.world_label||'Minecraft',screenshots});
 const server=http.createServer(async(req,res)=>{
   if(req.url==='/presence/mcp')return presenceHandler(req,res);
   const auth=req.headers.authorization||'';const contextRequest=req.url==='/context/v1/query';

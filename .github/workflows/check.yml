@@ -16,3 +16,8 @@ jobs:
           python-version: '3.12'
       - run: npm ci --ignore-scripts
       - run: npm test
+      - run: npm run build:screenshots
+      - run: npx playwright install --with-deps chromium
+      - run: node --test tests/screenshots.test.cjs
+        env:
+          RUN_SCREENSHOT_RENDER: '1'
