@@ -19,11 +19,11 @@ function fixture(name,semantic=false){
  },module:{exports:{}},console:{log(){}},Buffer,
  process:{argv:['node','body.cjs',config],on(){},exit(){assert.fail('Unexpected process exit');}},setTimeout,clearTimeout});
  vm.runInContext(fs.readFileSync(path.join(root,'body.cjs'),'utf8')+'\nmodule.exports={history,inbox,operate,startFixtureTurn(){ready=true;turnUntil=Date.now()+240000;history.startTurn();}};',context,{filename:'body.cjs'});
- return {bot,...context.module.exports,task,home,async request(url,payload){
+ return {bot,...context.module.exports,task,home,async request(url,payload,expectedStatus=200){
   const req=Readable.from(payload===undefined?[]:[JSON.stringify(payload)]);
   Object.assign(req,{url,method:payload===undefined?'GET':'POST',headers:{authorization:'Bearer fixture'}});
   let code,body;await handle(req,{writeHead:c=>{code=c;},end:text=>{body=text;}});
-  assert.equal(code,200,body);return JSON.parse(body);
+  assert.equal(code,expectedStatus,body);return JSON.parse(body);
  },close:()=>fs.rmSync(home,{recursive:true,force:true})};
 }
 test('real chat listeners queue sentence-end addresses and keep expired work unchanged',()=>{
@@ -114,5 +114,44 @@ test('shared history includes separately recorded public sends, never failed too
   assert.ok(!JSON.stringify(shared).includes(canary));
   const owner=f.history.query({operation:'read',limit:40,access:{mode:'owner'}},cfg,{});
   assert.ok(JSON.stringify(owner).includes(canary));
+ }finally{f.close();}
+});
+
+test('real participation route reports stable rejections and rechecks capacity after preflight',async()=>{
+ const f=fixture('BuilderOne',true);try{
+  f.bot.emit('chat','VisitorOne','How is it going?');
+  const proposal=await f.request('/participation');
+  assert.equal(proposal.delivery.eligible,true);
+  // Capacity changes after GET; the POST must reject instead of trusting preflight.
+  for(let i=0;i<8;i++)f.inbox.push({id:'existing-'+i});
+  const failure=await f.request('/participation',{signature:proposal.signature,action:'engage'},429);
+  assert.equal(failure.code,'inbox_full');assert.equal(f.inbox.length,8);
+  assert.equal((await f.request('/participation')).delivery.reason_code,'inbox_full');
+  assert.equal(f.history.data.participation_pending.length,1);
+  const stale=await f.request('/participation',{signature:'old',action:'engage'},409);
+  assert.equal(stale.code,'source_changed');
+  f.inbox.length=0;
+  const fresh=await f.request('/participation');assert.equal(fresh.delivery.eligible,true);
+  const applied=await f.request('/participation',{signature:fresh.signature,action:'engage'});
+  assert.equal(applied.queued,true);assert.equal(f.inbox.length,1);
+  assert.deepEqual(f.history.task(),f.task);
+ }finally{f.close();}
+});
+test('delayed duplicate POST after a lost reply does not enqueue accepted work twice',async()=>{
+ const f=fixture('BuilderOne',true);try{
+  const task=JSON.stringify(f.history.task());
+  f.bot.emit('chat','VisitorOne','Could you show me around?');
+  const original=await f.request('/participation');
+  const payload={signature:original.signature,action:'engage',offer:{id:'one',ticket:'one'}};
+  await f.request('/participation',payload); // Reply discarded by the controller.
+  assert.equal(await f.request('/participation'),null);
+  assert.equal((await f.request('/participation',payload,409)).code,'source_changed');
+  f.bot.emit('chat','VisitorOne','And what materials do you need?');
+  const fresh=await f.request('/participation');
+  assert.equal((await f.request('/participation',payload,409)).code,'source_changed');
+  await f.request('/participation',{signature:fresh.signature,action:'engage',offer:{id:'two',ticket:'two'}});
+  assert.equal(f.inbox.length,2);assert.equal(new Set(f.inbox.map(m=>m.id)).size,2);
+  assert.equal(f.inbox.filter(m=>m.attention_offer.id==='one').length,1);
+  assert.equal(JSON.stringify(f.history.task()),task);assert.equal(f.history.data.turn,null);
  }finally{f.close();}
 });

@@ -16,6 +16,7 @@ const containers=require('./containers.cjs');
 const {boundedAction}=require('./action-deadline.cjs');
 const presence=require('./presence.cjs');
 const {isPublicChatEvent}=require('./public-chat.cjs');
+const {Participation,ParticipationRejection}=require('./participation.cjs');
 const mineflayer = require('mineflayer');
 const { pathfinder, goals } = require('mineflayer-pathfinder');
 const { Vec3 } = require('vec3');
@@ -36,8 +37,12 @@ let lastHumanAt=Date.parse(history.data.events.filter(e=>e.kind==='chat'&&e.sour
 let agentWakeTimes=[],lastNoticeAt=0;
 const events=[], inbox=history.data.inbox||(history.data.inbox=[]), receipts=[];
 const routeHuman=conversationRouter(cfg.username,{aliases:cfg.aliases||{}});
-const participation=new (require('./participation.cjs').Participation)(history,cfg);
-const participationProposal=()=>participation.proposal(Object.keys(bot.players));
+const participation=new Participation(history,cfg);
+const participationProposal=()=>{
+ const proposal=participation.proposal(Object.keys(bot.players));
+ if(proposal)proposal.delivery=participation.deliveryStatus(proposal,inbox,{lastHumanAt,agentWakeTimes});
+ return proposal;
+};
 const delay=ms=>new Promise(r=>setTimeout(r,ms));
 function record(kind,data={}) { const e=history.record({seq:++sequence,time:new Date().toISOString(),kind,...(kind==='chat_sent'?{provenance:'minecraft_public_chat'}:{}),...data});events.push(e);if(events.length>200)events.shift(); console.log(JSON.stringify(e)); return e; }
 const screenshots=cfg.screenshots?.enabled?new (require('./screenshots.cjs').Screenshots)({bot,
@@ -335,11 +340,12 @@ const server=http.createServer(async(req,res)=>{
     else if(req.method==='GET'&&req.url==='/inbox/peek')result=inbox.slice(0,8);
     else if(req.method==='GET'&&req.url==='/participation')result=participation.enabled?participationProposal():null;
     else if(req.method==='POST'&&req.url==='/participation'){
-      if(!participation.enabled)throw Error('Conversation attention is not enabled');
+      if(!participation.enabled)throw new ParticipationRejection('disabled');
       const a=await json(req),proposal=participationProposal();
+      participation.validate(proposal,a);
       const peerCount=proposal?proposal.ids.filter(id=>history.data.events.find(e=>e.id===id)?.source==='agent').length:0;
       agentWakeTimes=agentWakeTimes.filter(t=>t>Date.now()-3600000);
-      if(a.action==='engage'&&peerCount&&(Date.now()-lastHumanAt>=(cfg.agent_dialogue_window_seconds||2400)*1000||agentWakeTimes.length+peerCount>Math.min(60,Math.max(1,cfg.peer_wakes_per_hour||4))))throw Error('Peer participation budget or human-activity window expired');
+      if(a.action==='engage'&&!proposal.delivery.eligible)throw new ParticipationRejection(proposal.delivery.reason_code);
       result=participation.apply(proposal,a,inbox);
       if(result.queued)for(let i=0;i<peerCount;i++)agentWakeTimes.push(Date.now());
       record('participation_delivery',result);
@@ -374,7 +380,9 @@ const server=http.createServer(async(req,res)=>{
     else if(req.method==='POST'&&req.url==='/action'){const a=await json(req);if(!definitions[a.name])throw Error('Unknown action');const args=z.object(definitions[a.name][1]).strict().parse(a.arguments||{});result=await operate(a.name,args);}
     else {res.writeHead(404);return res.end();}
     res.writeHead(200,{'Content-Type':'application/json'});res.end(JSON.stringify(result));
-  }catch(e){if(!res.headersSent)res.writeHead(400,{'Content-Type':'application/json'});res.end(JSON.stringify({error:e.message}));}
+  }catch(e){const participationError=e instanceof ParticipationRejection;
+    if(!res.headersSent)res.writeHead(participationError?e.status:400,{'Content-Type':'application/json'});
+    res.end(JSON.stringify({error:e.message,...(participationError?{code:e.code}:{})}));}
 });
 server.listen(cfg.control_port,'127.0.0.1',()=>record('control_ready',{port:cfg.control_port}));
 process.on('SIGTERM',()=>{shuttingDown=true;stop();bot.quit();server.close();setTimeout(()=>process.exit(),1000);});
