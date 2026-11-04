@@ -40,6 +40,11 @@ class Client:
         self.load_timeout, self.idle_timeout = load_timeout, idle_timeout
         self.replaying = False
 
+    def transport_closed(self):
+        """Known local closure only; this makes no ACP request or health promise."""
+        return (self.process is None or self.process.returncode is not None
+                or self.process.stdin.is_closing() or self.process.stdout.at_eof())
+
     async def start(self):
         # Explicit inheritance avoids carrying unrelated access tokens to agents.
         names = ("PATH", "HOME", "USER", "LANG", "SYSTEMROOT", "WINDIR", "TEMP", "TMP", "SSL_CERT_FILE", "SSL_CERT_DIR", "SSH_AUTH_SOCK")

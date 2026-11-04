@@ -76,6 +76,7 @@ async def run(home):
         except Exception:
             await asyncio.sleep(2)
     while True:
+        turn_started=False
         try:
             state=await request('/state')
             if not state.get('ready'):
@@ -116,6 +117,12 @@ async def run(home):
                 await asyncio.sleep(3)
                 newer=await request('/inbox/peek')
                 if newer:messages=newer
+            # An idle endpoint may have restarted since the preceding turn.
+            # Reload before reserving work or consuming inbox/rate-limit budget.
+            # A later disconnect still takes the interrupted-turn path; no replay.
+            if client is not None and client.transport_closed():
+                observe('connection_closed_before_turn',session_id=client.session)
+                await client.close();client=None
             if client is None:
                 client=Client(endpoint,observe);await client.start()
                 client.permission_active=lambda: control(cfg,'/status').get('turn_active',False)

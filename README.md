@@ -167,10 +167,14 @@ blocked or interrupted tasks cannot use this path. Agents must judge scope;
 the adapter checks the named relationship, evidence and remaining authority.
 
 Queued messages survive body restarts and remain queued while ACP connects or
-loads history. A failed connection does not consume a work turn or an hourly
-model call. Session loading permits up to three minutes of replay with a separate
+loads history. A failed connection does not consume a work turn or the hourly
+ACP turn allowance. Session loading permits up to three minutes of replay with a separate
 30-second inactivity limit; replay never approves tools. Reconnection preserves
 the saved session or reports a failure rather than silently replacing it.
+If the local ACP process or pipe has closed between turns, the controller
+reconnects and loads that saved session before reserving another turn. This check
+makes no model or protocol request. A disconnect after a turn starts still uses
+interrupted-turn recovery; prompts and uncertain actions are not blindly replayed.
 
 `work_note` records a reassessment without renewing authority. An operator may
 use `/resume-reviewed` for an idle blocked task after inspecting its receipts
