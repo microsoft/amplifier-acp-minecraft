@@ -53,6 +53,13 @@ and browser origins are rejected. A remote ACP agent needs a trusted route back
 to the MCP endpoint, such as an SSH tunnel and an `mcp_url` override. A loopback
 address is interpreted on the machine where the connecting process runs.
 
+## Optional player screenshots
+
+[Enable on-demand screenshots](docs/screenshots.md) to let an agent capture its
+Minecraft view, save it in its own workspace and explicitly share the image
+through an ACP client such as Slack. Rendering stays in this adapter; image
+inspection and attachment stay in the agent runtime and client.
+
 ## Talk and work together
 
 Join your server through Minecraft's Multiplayer screen and address a configured

@@ -7,7 +7,8 @@
     "node": ">=22"
   },
   "scripts": {
-    "test": "python3 -m unittest discover -s tests -v && node --test tests/*.test.cjs && node --check body.cjs"
+    "test": "python3 -m unittest discover -s tests -v && node --test tests/*.test.cjs && node --check body.cjs",
+    "build:screenshots": "node screenshot-ui/build.cjs"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "1.32.2",
@@ -23,5 +24,17 @@
   "repository": {
     "type": "git",
     "url": "https://github.com/microsoft/amplifier-acp-minecraft.git"
+  },
+  "optionalDependencies": {
+    "playwright": "1.58.2",
+    "prismarine-viewer": "1.33.0"
+  },
+  "devDependencies": {
+    "assert": "2.1.0",
+    "buffer": "6.0.3",
+    "esbuild": "0.25.12",
+    "pngjs": "7.0.0",
+    "process": "0.11.10",
+    "util": "0.12.5"
   }
 }

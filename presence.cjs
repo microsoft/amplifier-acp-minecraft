@@ -26,7 +26,7 @@ function activity(snapshot, limit, label) {
       text:String(e.message||e.sent||'').slice(0,4000)})),
     coverage:'Recent public game chat only; private conversations and complete history are not included.'};
 }
-function createHandler({token,snapshot,label='Minecraft',onError=()=>{}}) {
+function createHandler({token,snapshot,label='Minecraft',screenshots,onError=()=>{}}) {
   return async function handle(req,res) {
     if(!token){res.writeHead(403);res.end();return;}
     const supplied=Buffer.from(req.headers.authorization||'');const expected=Buffer.from('Bearer '+token);
@@ -37,6 +37,7 @@ function createHandler({token,snapshot,label='Minecraft',onError=()=>{}}) {
       let raw='';for await(const chunk of req){raw+=chunk;if(Buffer.byteLength(raw)>16384)throw Error('Request too large');}
       const value=JSON.parse(raw);
       const server=new McpServer({name:'minecraft-presence',version:'0.1.0'});
+      require('./screenshots.cjs').registerTools(server,screenshots,'minecraft_');
       const reply=value=>({content:[{type:'text',text:JSON.stringify(value)}]});
       server.registerTool('minecraft_status',{
         description:'See this same agent in its connected Minecraft world: current position, inventory, other players and bounded task progress. Does not wake a planner or change the world.',
