@@ -84,8 +84,34 @@ inspection and attachment stay in the agent runtime and client.
 
 ## Talk and work together
 
+For natural group conversation, enable `conversation_attention.enabled` and
+configure `decision_attention` with a Runtime helper supporting `participate`.
+The shared `conversation-participation-v1` policy considers recent public chat,
+participants, the agent's optional `conversation_attention.role`, and its current
+responsibility. It can admit unnamed questions to the room, implicit follow-ups,
+and useful peer contributions. A name is evidence, not a required trigger.
+An optional `conversation_attention.command` can select a separate helper binary.
+
+The adapter collects bounded public evidence and enforces admission against the
+same conversation revision. The runtime owns the social judgment and provider
+integration; the ACP agent decides how to respond after admission. A hold starts
+no ACP turn. No new chat means no decision call. Errors retry with a delay within
+the decision budget and never silently fall back to the main model. Existing
+peer-exchange limits, stop controls, task budgets and deadlines still apply.
+Private whispers retain their direct reply path and never enter public evidence.
+`participation.jsonl` records decision evidence/results; `participation_gate`
+records actual admission separately from provider advice and ACP turns.
+
+Without this optional helper, the deterministic compatibility behavior is:
+
 Join your server through Minecraft's Multiplayer screen and address a configured
-player, for example `BuilderOne, help design a bridge.` Group prefixes such as
+player, for example `BuilderOne, help design a bridge.`,
+`What are you working on, BuilderOne?`, or `Can you, BuilderOne, check the roof?`.
+Names and aliases are case-insensitive. An explicit `@BuilderOne` also works;
+merely mentioning someone (`Ask BuilderTwo to help`) does not wake them.
+This routing runs locally without a model request and applies equally to Java
+players and Bedrock players connected through a bridge such as Geyser.
+Group prefixes such as
 `Team,` address all configured agents. After a direct address, that human's
 follow-ups continue to the same player for ten minutes. Addressing a different
 player transfers conversational focus. Other chat remains observable context
