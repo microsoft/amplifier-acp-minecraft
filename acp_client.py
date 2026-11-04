@@ -9,7 +9,7 @@ import signal
 __version__ = "0.1.0"
 
 # One source for both callback enforcement and the agent-visible policy.
-GAME_TOOLS = frozenset({'observe','survey','inspect','find','chat','move','follow','gather','craft','place','build','give','stop','work_begin','work_report','work_reopen','map','plan_route','dig','set_open','tell','work_note','inventory','entities','shear','furnace','container','attention_watch','attention_watches','attention_cancel','read_sign','write_sign'})
+GAME_TOOLS = frozenset({'observe','survey','inspect','find','chat','move','follow','gather','craft','place','build','give','stop','work_begin','work_report','work_reopen','map','plan_route','dig','set_open','tell','work_note','inventory','entities','shear','furnace','container','attention_watch','attention_watches','attention_cancel','read_sign','write_sign','screenshot','screenshots','screenshot_read'})
 
 
 class ProtocolError(RuntimeError):
