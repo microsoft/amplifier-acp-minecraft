@@ -43,7 +43,7 @@ const screenshots=cfg.screenshots?.enabled?new (require('./screenshots.cjs').Scr
  onSaved:info=>record('screenshot_saved',{capture_id:info.id,path:info.path,sha256:info.sha256,bytes:info.bytes,camera:info.camera})}):null;
 function cancelAction(){ generation++;bot.pathfinder.setGoal(null);bot.clearControlStates();try{bot.stopDigging();}catch{} }
 function stop(){ turnUntil=0;cancelAction(); }
-bot.on('spawn',()=>{ready=true;const m=new spatial.SpatialMovements(bot);m.canDig=false;m.allow1by1towers=false;m.allowParkour=false;m.allowFreeMotion=false;m.scafoldingBlocks=[];m.maxDropDown=2; /* upstream measures to landing FLOOR: 2 permits a one-block feet descent */m.liquidCost=20;bot.pathfinder.setMovements(m);record('spawn',{position:bot.entity.position});});
+bot.on('spawn',()=>{ready=true;spatial.alignPlayerCollision(bot);const m=new spatial.SpatialMovements(bot);m.canDig=false;m.allow1by1towers=false;m.allowParkour=false;m.allowFreeMotion=false;m.scafoldingBlocks=[];m.maxDropDown=2; /* upstream measures to landing FLOOR: 2 permits a one-block feet descent */m.liquidCost=20;bot.pathfinder.setMovements(m);record('spawn',{position:bot.entity.position});});
 bot.on('end',reason=>{ready=false;stop();record('disconnected',{reason});setTimeout(()=>process.exit(shuttingDown?0:1),1000);});
 bot.on('error',e=>record('connection_error',{message:e.message}));
 bot.on('kicked',reason=>record('kicked',{reason}));
