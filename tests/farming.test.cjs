@@ -92,3 +92,12 @@ test('crop scan uses registry block IDs for loaded chunk palette filtering',()=>
  },blockAt:()=>assert.fail('No candidate blocks to read')};
  assert.deepEqual(observeCrops(bot).blocks,[]);
 });
+
+test('string-valued protocol block properties retain age and moisture without coercing invalid values',()=>{
+ const bot={findBlocks:()=>[new Vec3(0,63,0)],blockAt:()=>({name:'wheat',getProperties:()=>({age:'6',moisture:'7',stage:'0'})})};
+ assert.deepEqual(observeCrops(bot).blocks[0].properties,{age:6,moisture:7,stage:0});
+ for(const bad of ['',null,true,[],{},'NaN','1.5','-1',-1]){
+  bot.blockAt=()=>({name:'wheat',getProperties:()=>({age:bad})});
+  assert.deepEqual(observeCrops(bot).blocks[0].properties,{});
+ }
+});

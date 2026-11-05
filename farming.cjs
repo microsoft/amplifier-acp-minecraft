@@ -19,8 +19,12 @@ function observeCrops(bot){
   const b=bot.blockAt(p);
   if(!b||!observedCrops.has(b.name)){unavailable++;continue;}
   const properties=b.getProperties?.()||{};
+  const numbers=Object.fromEntries(['age','moisture','stage'].map(k=>{
+   const raw=properties[k];
+   return [k,typeof raw==='string'&&/^\d{1,8}$/.test(raw)?Number(raw):raw];
+  }).filter(([,v])=>Number.isSafeInteger(v)&&v>=0));
   blocks.push({name:b.name,position:{x:p.x,y:p.y,z:p.z},
-   properties:Object.fromEntries(['age','moisture','stage'].filter(k=>Number.isInteger(properties[k])).map(k=>[k,properties[k]]))});
+   properties:numbers});
  }
  blocks.sort((a,b)=>a.position.x-b.position.x||a.position.y-b.position.y||a.position.z-b.position.z||a.name.localeCompare(b.name));
  return {radius_blocks:radius,limit,coverage:'loaded_nearby_blocks',truncated:positions.length>limit,unavailable,blocks};
