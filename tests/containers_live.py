@@ -110,6 +110,31 @@ def main():
             r('clear ContainerTester'); r('give ContainerTester oak_planks[minecraft:custom_name=\'"Special"\'] 2'); time.sleep(.2)
             denied('component-bearing', **chest, operation='deposit', item='oak_planks', count=1)
             checks.append('Custom-name components are refused, not silently treated as ordinary materials')
+            selected = act('container', **chest, operation='inspect')['inventory'][0]
+            result = act('container', **chest, operation='deposit', item='oak_planks', count=1,
+                         source_slot=selected['slot'], source_item_revision=selected['item_revision'])
+            assert result['verified'], result
+            stored = next(i for i in result['contents'] if i['name'] == 'oak_planks' and i['components'])
+            remaining = next(i for i in result['inventory'] if i['name'] == 'oak_planks')
+            assert stored['count'] == 1 and remaining['count'] == 1
+            assert stored['components'] == selected['components'] == remaining['components']
+            checks.append('Explicit named partial stack preserves components in storage and original remainder')
+            fresh_turn()
+            r('clear ContainerTester')
+            r('give ContainerTester wooden_hoe[minecraft:damage=7] 1'); time.sleep(.2)
+            inspected = act('container', **chest, operation='inspect')
+            tool = next(i for i in inspected['inventory'] if i['name'] == 'wooden_hoe')
+            deposited = act('container', **chest, operation='deposit', item='wooden_hoe', count=1,
+                            source_slot=tool['slot'], source_item_revision=tool['item_revision'])
+            assert deposited['verified'], deposited
+            stored = next(i for i in deposited['contents'] if i['name'] == 'wooden_hoe')
+            assert stored['components'] == tool['components']
+            withdrawn = act('container', **chest, operation='withdraw', item='wooden_hoe', count=1,
+                            source_slot=stored['slot'], source_item_revision=stored['item_revision'])
+            assert withdrawn['verified'], withdrawn
+            returned = next(i for i in withdrawn['inventory'] if i['name'] == 'wooden_hoe')
+            assert returned['components'] == tool['components']
+            checks.append('Worn tool deposit/withdraw returns the same server-confirmed wear/components')
             report = {'checks': checks, 'receipts': receipts, 'server_port': port,
                       'server_inventory': r('data get entity ContainerTester Inventory'),
                       'server_container': r('data get block 3 81 2 Items'),

@@ -10,7 +10,7 @@ function fixture({size=27}={}){
  bot.inventory=windows.createWindow(0,'minecraft:inventory','Inventory');bot.currentWindow=null;
  bot.supportFeature=()=>true;bot.entity={position:new Vec3(0,0,0)};bot.world={raycast:()=>null};
  const p=new Vec3(1,0,0);bot.blockAt=()=>({name:'chest',position:p});
- const clone=i=>{if(!i)return null;const n=new Item(i.type,i.count,i.metadata,i.nbt);n.components=i.components.slice();return n;};
+ const clone=i=>{if(!i)return null;const n=new Item(i.type,i.count,i.metadata,i.nbt);n.components=structuredClone(i.components);n.removedComponents=structuredClone(i.removedComponents||[]);return n;};
  const sync=()=>{for(let i=0;i<server.slots.length;i++)client.updateSlot(i,clone(server.slots[i]));client.selectedItem=clone(server.selectedItem);};
  let writes=0,closes=0,mode='normal';
  bot.activateBlock=async()=>{sync();bot.currentWindow=client;bot.emit('windowOpen',client);};
@@ -19,7 +19,15 @@ function fixture({size=27}={}){
   assert.equal(packet,'window_click');assert.equal(a.stateId,-1);
   if(a.mode===0){
    writes++;assert.ok(a.slot>=0,'must never click outside/drop');
-   if(mode!=='ignore')server.acceptClick({...a,item:server.slots[a.slot]});
+   if(mode!=='ignore'){
+    const held=clone(server.selectedItem),empty=!server.slots[a.slot];
+    server.acceptClick({...a,item:server.slots[a.slot]});
+    // The real server preserves components when right-click splits a stack;
+    // prismarine-windows' local prediction constructs a fresh bare Item.
+    if(empty&&held&&server.slots[a.slot]?.type===held.type){
+     Object.assign(server.slots[a.slot],{nbt:held.nbt,components:structuredClone(held.components),removedComponents:structuredClone(held.removedComponents)});
+    }
+   }
    if(mode==='concurrent'&&writes===2)server.updateSlot(5,new Item(bot.registry.itemsByName.dirt.id,2));
    if(mode==='disconnect'&&writes===2)throw Error('Disconnected after packet send');
    if(mode==='disconnect_first'&&writes===1)throw Error('Disconnected after picking up source');
@@ -111,4 +119,83 @@ test('public cancellation during window opening is rechecked before the first it
  await assert.rejects(container(f.bot,f.p,{operation:'deposit',expected:'chest',item:'stick',count:2},()=>{},
   {beforeTransfer:()=>{checked=true;throw Error('New public cancellation');}}),/cancellation/);
  assert.equal(checked,true);assert.equal(f.writes,before);assert.equal(f.server.slots[27].count,4);
+});
+
+async function selection(f,operation,slot){
+ const view=await f.run('inspect'),source=(operation==='deposit'?view.inventory:view.contents).find(i=>i.slot===slot);
+ assert.ok(source,'inspection must expose exact window-relative source slot');
+ return {item:source.name,count:1,contents_revision:view.contents_revision,source_slot:slot,source_item_revision:source.item_revision};
+}
+function special(f,slot,name='wooden_hoe',count=1,damage=7){
+ f.set(slot,name,count);const i=f.server.slots[slot];
+ i.components=[{type:'damage',data:damage},{type:'custom_name',data:'Loan tool'}];
+ return structuredClone(i.components);
+}
+test('inspection identifies different tools and exact selected deposit/withdraw preserves components',async()=>{
+ const f=fixture(),original=special(f,27);special(f,28,'wooden_hoe',1,2);
+ const view=await f.run('inspect');assert.notEqual(view.inventory[0].item_revision,view.inventory[1].item_revision);
+ const chosen=await selection(f,'deposit',27),r=await f.run('deposit',chosen);
+ assert.equal(r.verified,true);assert.equal(f.server.slots[27],null);assert.deepEqual(f.server.slots[0].components,original);
+ assert.equal(f.server.slots[28].components[0].data,2);
+ const withdrawal=await f.run('withdraw',await selection(f,'withdraw',0));
+ assert.equal(withdrawal.verified,true);assert.deepEqual(f.server.slots[27].components,original);assert.equal(f.server.slots[0],null);
+});
+test('selected metadata stack transfers a bounded partial count and returns its unchanged remainder',async()=>{
+ const f=fixture(),components=special(f,27,'oak_planks',20);
+ const a=await selection(f,'deposit',27);a.count=5;
+ const r=await f.run('deposit',a);assert.equal(r.verified,true,JSON.stringify(r));assert.equal(r.transferred,5);
+ assert.equal(f.server.slots[0].count,5);assert.equal(f.server.slots[1],null);assert.equal(f.server.slots[27].count,15);
+ assert.deepEqual(f.server.slots[0].components,components);assert.deepEqual(f.server.slots[27].components,components);
+});
+test('selected item cannot silently change wear, count, NBT or removed components after inspection',async()=>{
+ for(const change of [i=>i.components[0].data++,i=>i.count++,i=>{i.nbt={type:'compound',name:'',value:{note:{type:'string',value:'changed'}}};},i=>i.removedComponents=['custom_name']]){
+  const f=fixture();special(f,27);const a=await selection(f,'deposit',27);change(f.server.slots[27]);
+  await assert.rejects(f.run('deposit',a),/Selected source item changed/);assert.equal(f.writes,0);
+ }
+});
+test('selection requires paired fresh fingerprints, correct direction and enough of that one stack',async()=>{
+ const f=fixture();special(f,27);special(f,28);const a=await selection(f,'deposit',27);
+ await assert.rejects(f.run('deposit',{...a,source_item_revision:undefined}),/Explicit selection/);
+ await assert.rejects(f.run('deposit',{...a,source_slot:undefined}),/Explicit selection/);
+ await assert.rejects(f.run('deposit',{...a,contents_revision:undefined}),/contents_revision/);
+ await assert.rejects(f.run('withdraw',a),/outside the source/);
+ await assert.rejects(f.run('deposit',{...a,count:2}),/Insufficient source/);
+ assert.equal(f.writes,0);
+});
+test('selected transfers never merge into pre-existing same-name or same-component stacks',async()=>{
+ const f=fixture();special(f,27,'oak_planks',10);special(f,0,'oak_planks',10);
+ for(let i=1;i<27;i++)f.set(i,'dirt',64);
+ await assert.rejects(f.run('deposit',await selection(f,'deposit',27)),/destination space/);
+ assert.equal(f.writes,0);assert.equal(f.server.slots[0].count,10);
+});
+test('selected legacy NBT and removed components survive complete server-confirmed clicks',async()=>{
+ const f=fixture();special(f,27);
+ const nbt={type:'compound',name:'',value:{note:{type:'string',value:'Keep this'}}};
+ f.server.slots[27].nbt=nbt;f.server.slots[27].removedComponents=['repair_cost'];
+ const result=await f.run('deposit',await selection(f,'deposit',27));
+ assert.equal(result.verified,true);assert.deepEqual(f.server.slots[0].nbt,nbt);assert.deepEqual(f.server.slots[0].removedComponents,['repair_cost']);
+});
+test('selected cursor recovery preserves metadata after interruption and never resends the transfer',async()=>{
+ const f=fixture(),components=special(f,27,'oak_planks',12);const a=await selection(f,'deposit',27);a.count=4;
+ f.setMode('concurrent');const result=await f.run('deposit',a);
+ assert.equal(result.verified,false);assert.equal(f.writes,2);assert.equal(f.closes,1);
+ f.setMode('normal');assert.deepEqual((await f.run('inspect')).cursor.components,components);
+ const recovered=await f.run('recover');assert.equal(recovered.recovered,true);
+ assert.equal(f.server.slots[27].count,11);assert.deepEqual(f.server.slots[27].components,components);
+ assert.equal(f.server.slots[0].count,1);assert.equal(f.server.selectedItem,null);
+});
+test('lost selected pickup acknowledgement retains unknown state and permits reviewed cursor return only',async()=>{
+ const f=fixture(),components=special(f,27);const a=await selection(f,'deposit',27);
+ f.setMode('disconnect_first');const result=await f.run('deposit',a);
+ assert.equal(result.verified,false);assert.equal(f.writes,1);assert.equal(f.closes,1);
+ f.setMode('normal');const observed=await f.run('inspect');assert.deepEqual(observed.cursor.components,components);
+ assert.equal((await f.run('recover')).recovered,true);assert.deepEqual(f.server.slots[27].components,components);
+ assert.equal(f.server.slots[0],null);assert.equal(f.writes,2);
+});
+test('selected cursor whose identity changed cannot be returned as the original item',async()=>{
+ const f=fixture();special(f,27);const a=await selection(f,'deposit',27);
+ await f.run('deposit',a,()=>{if(f.writes)throw Error('Stopped');});
+ f.server.selectedItem.components[0].data++;
+ await assert.rejects(f.run('recover'),/Cannot safely return/);
+ assert.equal(f.writes,1);assert.equal(f.closes,1);
 });
