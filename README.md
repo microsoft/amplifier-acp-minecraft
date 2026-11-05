@@ -548,6 +548,15 @@ never replayed by this retry mechanism.
 
 ### Active-turn conversation and resource freshness
 
+Background responsibility watches receive `environment:crops` observations of
+loaded crop and farmland blocks within 16 blocks of the player, capped at 64.
+These include server-observed growth age and soil moisture, with explicit limited
+coverage. The adapter reads existing chunk data without moving, growing crops,
+starting a planner, or spending an action. Unchanged observations retain stable
+content so the watch layer can skip repeated evaluation. Crop growth can now
+satisfy an agent's own waiting condition; the agent still chooses whether and
+how to harvest under its existing task limits.
+
 Public human and peer messages can now reach an already running ACP prompt.
 The adapter negotiates Instance's optional active-only awareness capability
 (`inputContinuity.awareness` v1), then uses `_session/steering` with a stable

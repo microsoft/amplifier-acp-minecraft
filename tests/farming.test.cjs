@@ -1,6 +1,6 @@
 const test=require('node:test'),assert=require('node:assert/strict');
 const {EventEmitter}=require('node:events'),{Vec3}=require('vec3');
-const {till}=require('../farming.cjs');
+const {till,observeCrops}=require('../farming.cjs');
 const {inventoryClient}=require('./inventory-client-fixture.cjs');
 function fixture(){
  const bot=new EventEmitter(),p=new Vec3(1,0,0),items=[{name:'wooden_hoe',count:1}];
@@ -57,4 +57,38 @@ test('Stop or target change during aiming never sends a hoe interaction',async()
   await assert.rejects(f.run(()=>{if(stopped)throw Error('Action cancelled');}));
   assert.equal(f.activations,0);assert.equal(f.bot.listenerCount('blockUpdate'),0);
  }
+});
+
+test('passive crop observations expose growth and hydration without unstable ordering or effects',()=>{
+ const crops=[{name:'wheat',position:new Vec3(-2,63,1),age:0},{name:'farmland',position:new Vec3(-2,62,1),moisture:7}];
+ let reverse=false;
+ const bot={findBlocks:options=>{
+  assert.equal(options.maxDistance,16);assert.equal(options.count,65);
+  assert.equal(options.matching({name:'oak_sign'}),false);
+  assert.equal(options.matching({name:'wheat'}),true);
+  return (reverse?[...crops].reverse():crops).map(b=>b.position);
+ },blockAt:p=>{const b=crops.find(b=>b.position.equals(p));return {...b,getProperties:()=>({...b,private_text:'excluded'})};}};
+ const first=observeCrops(bot);reverse=true;
+ assert.deepEqual(observeCrops(bot),first);
+ assert.equal(first.blocks[0].properties.moisture,7);assert.equal(first.blocks[1].properties.age,0);
+ assert.ok(!JSON.stringify(first).includes('private_text'));
+ crops[0].age=7;
+ assert.equal(observeCrops(bot).blocks[1].properties.age,7);
+ assert.equal(first.coverage,'loaded_nearby_blocks');assert.equal(first.truncated,false);
+});
+
+test('crop observations bound their size and retain unavailable coverage instead of inventing growth',()=>{
+ const positions=Array.from({length:65},(_,i)=>new Vec3(i%8,63,Math.floor(i/8)));
+ let reads=0;
+ const bot={findBlocks:()=>positions,blockAt:p=>{reads++;return reads===1?null:{name:'wheat',getProperties:()=>({age:3})};}};
+ const result=observeCrops(bot);
+ assert.equal(reads,64);assert.equal(result.blocks.length,63);assert.equal(result.unavailable,1);assert.equal(result.truncated,true);
+ assert.ok(result.blocks.every(b=>b.properties.age===3));
+});
+
+test('crop scan uses registry block IDs for loaded chunk palette filtering',()=>{
+ const bot={registry:{blocksByName:{wheat:{id:59},farmland:{id:60}}},findBlocks:options=>{
+  assert.deepEqual(options.matching,[59,60]);return [];
+ },blockAt:()=>assert.fail('No candidate blocks to read')};
+ assert.deepEqual(observeCrops(bot).blocks,[]);
 });
