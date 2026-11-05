@@ -84,7 +84,7 @@ inspection and attachment stay in the agent runtime and client.
 
 ## Talk and work together
 
-Join your server through Minecraft's Multiplayer screen and address a configured
+With legacy routing, join through Minecraft's Multiplayer screen and address a configured
 player, for example `BuilderOne, help design a bridge.` Group prefixes such as
 `Team,` address all configured agents. After a direct address, that human's
 follow-ups continue to the same player for ten minutes. Addressing a different
@@ -95,13 +95,14 @@ Explicit requests from configured peers can start bounded turns. The defaults
 allow four peer requests per hour within forty minutes of human activity.
 `tell(player, text, intent)` makes the recipient explicit. `intent=request` asks
 for action; `update` and `ack` add visible FYI/ACK markers and remain context
-without waking the recipient. This is a public chat convention, not a hidden
+without waking the recipient in legacy routing. With Instance attention enabled,
+the host evaluates fresh public messages instead. This is a public chat convention, not a hidden
 coordination channel or an ACP extension. Configure `aliases` consistently on
 all players when using shorter names. Private whispers are excluded from shared
 context; replies from this adapter currently appear publicly.
 
 The tools cover observation, terrain maps, route planning, movement, following,
-gathering, digging, crafting, inventory, containers, furnaces, placement, small
+gathering, digging, tilling, crafting, inventory, containers, furnaces, placement, small
 build patterns, signs, item handoffs, chat and Stop. Physics and movement run
 without model calls. Agent tools expose no arbitrary shell, RCON, teleport or
 item creation. Operator-only RCON helpers live under `ops/`.
@@ -543,3 +544,86 @@ inbox path; it is not posted again. A fresh unrelated message remains eligible.
 This protects local queue admission, not exactly-once ACP execution or game
 effects: interrupted prompts still require receipt-based inspection and are
 never replayed by this retry mechanism.
+
+
+### Active-turn conversation and resource freshness
+
+Public human and peer messages can now reach an already running ACP prompt.
+The adapter negotiates Instance's optional active-only awareness capability
+(`inputContinuity.awareness` v1), then uses `_session/steering` with a stable
+`inputId`, the current `activePromptId`, `intent: awareness` and
+`idleBehavior: promptRequired`. This updates context; it does not create a
+prompt, consume a queued attention opportunity, authorize another task, or
+extend a deadline. Instance still owns engage/hold evaluation. The same path is
+used for any backend advertising that capability; the adapter does not identify
+or special-case native versus Codex engines.
+
+The ACP transport has one reader, routing concurrent replies by request ID while
+retaining notification order. A private `awareness-receipts.json` journal records
+source IDs, prompt binding, delivery and incorporation states, without copying
+message bodies. At most 16 batches of 16 recent public messages are submitted per
+turn. Whispers, private Operator briefs and raw action receipts never enter this
+projection. Unknown delivery is not retried; a receipt query may establish later
+incorporation. Receipt failure or an unreadable journal does not authorize replay.
+Late input remains history and follows ordinary attention/inbox handling.
+
+A generic ACP endpoint need not implement steering. It receives new public
+context through MCP results and ordinary subsequent turns. Only changes are
+appended to tool results, avoiding repeated copies of an unchanged chat history.
+The `conversation` tool can explicitly read the recent bounded public context.
+No model is polled to discover messages. Injected context can cause additional
+model work inside the existing prompt: steering receipts are **not** model
+request counts or proof of cost savings.
+
+Before `chat`, `tell` or `give`, use the latest public context `revision` as
+`conversation_revision`; read `conversation` to refresh it. A stale cancellation
+or report is rejected before sending, just like a stale item handoff. Before a `container` deposit/withdrawal, also inspect
+that container and supply its `contents_revision`. The body rechecks public
+context immediately before delivery, including after asynchronous preparation;
+containers compare a fresh server contents fingerprint before the first click.
+A changed plan or contents fails with an actionable refresh message. A completed
+transfer stays completed: later corrections do not undo it or justify repeating
+it. Ambiguous or partial transfers still require inventory/container inspection.
+These are bounded checks, not locks on another player or globally atomic state.
+Content fingerprints detect changed contents, not every intervening edit that
+returns to identical contents.
+
+Automatic final replies are fenced against the public-context revision exposed
+at prompt start, supplied in a tool result, or explicitly reported incorporated
+by the endpoint. A newer unseen message suppresses that stale final; it does not
+launch an extra unbudgeted prompt. Ordinary source attention remains available.
+A message arriving after the final check is outside that check's cutoff. Tool
+context exposure means supplied evidence, not proof the model understood it.
+
+Identified ACP text is collected per `messageId` in creation order. The latest
+non-commentary answer is selected; a delayed older chunk cannot overwrite it.
+The optional `com.microsoft.amplifier.message.phase` distinguishes commentary
+from final answers. An empty final revision stays silent. Unidentified endpoints
+retain legacy append behavior; they cannot provide the same revision guarantees.
+Raw reasoning and tool details are never broadcast as final chat.
+
+### Farming and movement repair
+
+`till(x,y,z,expected)` uses one inventory hoe on an expected grass/dirt block
+within clear reach. It verifies air above, the held hoe and the target after
+aiming, and accepts only a matching server farmland update as success. It does
+not walk, clear obstacles, plant, hydrate or retry an unconfirmed interaction.
+Coarse/rooted dirt are intentionally excluded. The modern Java block-interaction
+packet is sent after the cancellation recheck; this avoids Mineflayer's hidden
+await between aiming and interaction. Ordinary player/server restrictions still
+apply. `tests/farming_live.py` is an optional no-model check against a
+loopback-only disposable `level-name=farming-fixture` server; it creates test
+supplies and must never target a shared world.
+
+Recognized movement/digging guards now include observed feet/head/floor geometry,
+a fixed reason code, repeated-failure count for the same local observation and
+specific repair suggestions. Changed arguments or observed geometry reset that
+repetition signal. Unknown failures remain unknown. Diagnostics never remove
+blocks, retry movement, relax walk-only constraints or bypass player-footing
+protection; the agent chooses the next permitted approach.
+
+Upgrade the body and controller together at a coordinated idle boundary. Preserve
+installation state, sessions, accepted work and budgets. Installing these tools
+is not permission to renew or resume a stopped task. Synthetic protocol and body
+regressions run in the normal suite; their success is not evidence of a live
+native/Codex provider run or a production-world rollout.

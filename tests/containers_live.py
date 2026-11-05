@@ -45,6 +45,10 @@ def main():
         def r(text):
             return command(a.properties, text)
         def act(name, **arguments):
+            if name == 'container' and arguments.get('operation') in ('deposit', 'withdraw'):
+                current = act('container', **{key: arguments[key] for key in ('x', 'y', 'z', 'expected')}, operation='inspect')
+                arguments['contents_revision'] = current['contents_revision']
+                arguments['conversation_revision'] = act('conversation')['revision']
             result = control(cfg, '/action', {'name': name, 'arguments': arguments})
             receipts.append({'tool': name, 'arguments': arguments, 'result': result})
             return result

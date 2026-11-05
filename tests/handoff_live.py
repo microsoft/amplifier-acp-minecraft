@@ -23,7 +23,7 @@ with tempfile.TemporaryDirectory(prefix='handoff-fixture-') as tmp:
    else:raise RuntimeError('Body not ready')
   giver,taker=cs
   def act(c,tool,**arguments):return control(c,'/action',{'name':tool,'arguments':arguments})
-  def give():return act(giver,'give',player='HandoffTaker',item='oak_planks',count=4)
+  def give():return act(giver,'give',conversation_revision=act(giver,'conversation')['revision'],player='HandoffTaker',item='oak_planks',count=4)
   def denied(text,fn):
    try:fn();raise AssertionError('Expected refusal')
    except urllib.error.HTTPError as e:assert text in e.read().decode()
