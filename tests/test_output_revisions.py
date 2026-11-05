@@ -84,6 +84,14 @@ class Revisions(unittest.IsolatedAsyncioTestCase):
     async def test_receipt_without_id_does_not_reserve_legacy_answer_order(self):
         self.assertEqual((await self.result('receipt_before_legacy'))['final_text'], 'Current answer.')
 
+    async def test_empty_receipt_or_old_chunk_preserves_latest_identified_answer(self):
+        for mode in ('receipt_after_identified', 'empty_old_after_identified'):
+            with self.subTest(mode=mode):
+                chunks = []
+                result = await self.result(mode, chunks=chunks)
+                self.assertEqual(result['final_text'], 'Supplies received.')
+                self.assertEqual(chunks, ['Need supplies.', 'Supplies received.'])
+
     async def test_receipt_after_tool_does_not_modify_selected_text(self):
         self.assertEqual((await self.result('receipt_after_tool'))['final_text'], 'Answer.')
 
