@@ -172,7 +172,7 @@ async function operate(name,a={}){
     check();bot.setControlState('sneak',true);
     try{await delay(100);check();if(facing){const [dx,dz]=directions[facing],direction=/_sign$/.test(item)?-1:1;await bot.lookAt(bot.entity.position.offset(dx*direction,1.62,dz*direction),false);check();await bot._placeBlockWithOptions(support.block,support.normal,{forceLook:'ignore',swingArm:'right'});}else await bot.placeBlock(support.block,support.normal);}finally{bot.setControlState('sneak',false);}
     await delay(180);check();
-    const actual=bot.blockAt(p)?.name;const expected=[item,...(item.endsWith('torch')?[item.replace('torch','wall_torch')]:[]),...(item.endsWith('_sign')?[item.replace('_sign','_wall_sign')]:[])];
+    const actual=bot.blockAt(p)?.name;const expected=[item,...farming.plantedBlocks(item),...(item.endsWith('torch')?[item.replace('torch','wall_torch')]:[]),...(item.endsWith('_sign')?[item.replace('_sign','_wall_sign')]:[])];
     if(!expected.includes(actual))throw Error(`Placement mismatch: expected ${item}, observed ${actual}`);if(item==='ladder'&&supportFace&&bot.blockAt(p)?.getProperties().facing!==supportFace)throw Error('Ladder was placed but facing differs from requested support_face; inspect before continuing');
     const properties=bot.blockAt(p)?.getProperties();let head;
     if(facing&&/_sign$/.test(item)){
