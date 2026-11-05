@@ -35,7 +35,7 @@ const bot = mineflayer.createBot({host:cfg.host || '127.0.0.1',port:cfg.port || 
   customPackets:require('./protocol-compatibility.cjs').protocolCompatibility(version)});
 bot.loadPlugin(pathfinder);
 bot.on('path_update',result=>spatial.normalizePassages(bot,result));
-let ready=false, busy=false, generation=0, turnUntil=0, actions=0, replies=0, sequence=0, shuttingDown=false;
+let ready=false, busy=false, activeAction=null, generation=0, turnUntil=0, actions=0, replies=0, sequence=0, shuttingDown=false;
 let lastHumanAt=Date.parse(history.data.events.filter(e=>e.kind==='chat'&&e.source==='human').at(-1)?.time)||0;
 let agentWakeTimes=[],lastNoticeAt=0;
 const events=[], inbox=history.data.inbox||(history.data.inbox=[]), receipts=[];
@@ -132,7 +132,14 @@ async function operate(name,a={}){
   if(name==='map')return spatial.localMap(bot,a.radius);
   if(name==='plan_route'){if(busy)throw Error('Wait for the current action before planning another route');return a.mode==='walk_only'?walking.plan(bot,coord(a),a.range):spatial.route(bot,coord(a),a.range);}
   if(name==='find')return bot.findBlocks({matching:b=>b.name===a.block,maxDistance:a.radius,count:12}).map(p=>({name:a.block,position:p}));
-  if(name==='stop'){stop();history.stop();return {stopped:true};}
+  if(name==='stop'){stop();history.stop();record('agent_stopped_task');return {stopped:true};}
+  if(name==='cancel_movement'){
+    if(!busy)return {cancellation_requested:false,reason:'No action is running',task_preserved:true};
+    if(!['move','follow'].includes(activeAction))throw Error('Only move/follow can be cancelled separately; wait for the current action or use Stop to halt the whole task');
+    cancelAction();record('movement_cancel_requested',{action:activeAction});
+    return {cancellation_requested:true,action:activeAction,task_preserved:true,
+      next:'Wait for the original action to settle, then inspect your position. Arrival is not confirmed; no action is replayed.'};
+  }
   if(Date.now()>turnUntil)throw Error('No active agent turn; ask the player to start one');
   if(busy)throw Error('Another action is running; wait for its result');
   if(name==='work_note'){const result=history.note(a,{position:bot.entity.position.clone(),health:bot.health,recent_actions:receipts.slice(-8)});record('work_status',{task_id:result.id,status:result.status,progress:result.progress.at(-1)});return result;}
@@ -150,7 +157,7 @@ async function operate(name,a={}){
   if(transfer||['chat','tell'].includes(name))conversation.guard(a.conversation_revision);
   if(name==='container'&&transfer&&!a.contents_revision)throw Error('Inspect this container first and supply its contents_revision. No transfer attempted.');
   if(++actions>24)throw Error('This turn reached its 24-action budget; save progress with work_report');
-  busy=true;const epoch=generation;const actionId=crypto.randomUUID();history.actionStarted(actionId);record('action_started',{action_id:actionId,action:name,arguments:a});let unfinished;
+  busy=true;activeAction=name;const epoch=generation;const actionId=crypto.randomUUID();history.actionStarted(actionId);record('action_started',{action_id:actionId,action:name,arguments:a});let unfinished;
   const check=()=>{if(epoch!==generation||Date.now()>turnUntil)throw Error('Action cancelled');};
   const go=async(p,r=2,exactHeight=false)=>{check();const goal=exactHeight?new spatial.FeetGoal(p.x,p.y,p.z,r):new goals.GoalNear(p.x,p.y,p.z,r);await spatial.gotoWithProgress(bot,goal);await delay(250);check();if(!goal.isEnd(bot.entity.position.floored()))throw Error('Movement ended without reaching the requested destination; inspect current position');};
   async function place(p,item,supportFace,facing){
@@ -256,10 +263,11 @@ async function operate(name,a={}){
       throw Error('Unknown action');
     },{cancel:()=>{if(name==='move')cancelAction();else stop();},
       onUnsettled:completion=>{unfinished=completion;stop();}});
+    if(['move','follow'].includes(name))check();
     history.actionSettled(actionId,!result?.error);const r=record('action_result',{action_id:actionId,action:name,arguments:a,result});receipts.push(r);if(receipts.length>100)receipts.shift();return result;
   }catch(e){let repair;try{repair=repairs.explain(bot,name,a,e);}catch{}if(repair)e.details={...(e.details||{}),repair};history.actionSettled(actionId,false);record('action_failed',{action_id:actionId,action:name,arguments:a,error:e.message,...(repair?{repair}:{}),
     ...(e.actionTimeout?{timeout:true,operation_settled:e.operationSettled,turn_preserved:Date.now()<turnUntil}: {})});throw e;}
-  finally{if(unfinished)unfinished.then(()=>{busy=false;});else busy=false;}
+  finally{const settled=()=>{busy=false;activeAction=null;};if(unfinished)unfinished.then(settled);else settled();}
 }
 const xyz={x:z.number().int(),y:z.number().int(),z:z.number().int()};
 const support_face=z.enum(['north','south','east','west','up','down']).optional();
@@ -305,7 +313,8 @@ const definitions={
   place:['Place an inventory block. support_face is the outward normal from support toward target (north=-z, east=+x). Optional facing supports ordinary signs (text front), beds (foot toward head), stairs (uphill direction), and furnace/blast_furnace/smoker (front). It is verified against server block properties; a mismatch requires inspection, not blind replay. For standing signs choose support_face=up; horizontal support produces a wall sign. Write text afterward with write_sign. Beds need two empty supported cells. Stair half/shape follow the clicked support and surroundings; inspect the returned properties.',{...xyz,item:z.string(),support_face,facing:z.enum(['north','south','east','west']).optional()}],
   build:['Place a small explicit list of blocks from inventory; stops and reports partial progress on failure.',{item:z.string(),support_face,blocks:z.array(z.object(xyz)).min(1).max(24)}],
   give:['Read conversation first; pass its revision as conversation_revision and reconsider any changed plan before giving. Hand over inventory items to a stationary visible player 1.8–2.5 blocks away on the same level. Never walks or chases. Observes pickup packets and server inventory; unconfirmed means inspect drops, not retry. Meet and establish readiness first.',{conversation_revision:revision,player:z.string(),item:z.string(),count:z.number().int().min(1).max(64)}],
-  stop:['Stop your movement and current work immediately.',{}]
+  cancel_movement:['Cancel only the current move/follow route; keep the existing task and turn allowance. Wait for that action to settle and inspect position before choosing another route. Does not cancel crafting, transfers or construction; no replay or budget renewal.',{}],
+  stop:['Stop movement AND end the entire current work task. Use cancel_movement to abandon a route without ending the assignment. Always stop the whole task when a human asks to stop.',{}]
 };
 function mcpServer(){
   const m=new McpServer({name:'minecraft-player',version:'0.1.0'});

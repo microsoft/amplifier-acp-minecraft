@@ -140,9 +140,9 @@ class WorkshopState {
   if(!task||task.id!==task_id||task.status!=='waiting'||task.turns>=task.max_turns)throw Error('No authorized waiting task with remaining budget');
   task.status='running';this.save();return task;
  }
- resumeReviewed({task_id,reason}){
+ resumeReviewed({task_id,reason,resume_stopped=false}){
   const task=this.task();
-  if(this.data.turn||!task||task.id!==task_id||!['blocked','needs_review'].includes(task.status))throw Error('Only an idle blocked or interrupted task can be resumed after review');
+  if(this.data.turn||!task||task.id!==task_id||(!['blocked','needs_review'].includes(task.status)&&!(task.status==='stopped'&&resume_stopped===true)))throw Error('Only an idle blocked or interrupted task can be resumed after review; stopped work requires explicit operator authorization');
   if(Date.now()>=task.deadline||task.turns>=task.max_turns)throw Error('Existing task budget exhausted; review cannot extend it');
   if(typeof reason!=='string'||!reason.trim()||reason.length>2000)throw Error('A concrete recovery review is required');
   this.appendProgress(task,{at:new Date().toISOString(),kind:'operator_recovery',summary:reason,previous_status:task.status});
