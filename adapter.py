@@ -6,7 +6,6 @@ import json
 import os
 from pathlib import Path
 import time
-import textwrap
 import urllib.request
 from conversation_awareness import Awareness
 from acp_client import Client, turn_disposition
@@ -14,6 +13,42 @@ from attention import Attention, fingerprint
 from assessment import Assessment, POLICY, signature
 from watches import Watches
 from conversation_attention import ConversationAttention
+
+
+def minecraft_reply_lines(text, limit=8, width=230):
+    """Fit the Java chat/body UTF-16 limit; make any bounded shortening visible."""
+    def prefix(value, available):
+        used=0
+        for i, char in enumerate(value):
+            used+=2 if ord(char)>0xffff else 1
+            if used>available:return value[:i]
+        return value
+    remaining=' '.join(text.split());lines=[]
+    while remaining and len(lines)<limit:
+        part=prefix(remaining,width)
+        if len(part)<len(remaining) and ' ' in part:
+            part=part.rsplit(' ',1)[0]
+        lines.append(part)
+        remaining=remaining[len(part):].lstrip()
+    truncated=bool(remaining)
+    if truncated:
+        suffix=' [Message shortened.]'
+        lines[-1]=prefix(lines[-1],width-len(suffix)).rstrip()+suffix
+    return lines,truncated
+
+
+async def deliver_final_reply(text, revision, request, observe, *, sleep=asyncio.sleep):
+    lines,truncated=minecraft_reply_lines(text)
+    sent=0
+    for line in lines:
+        if sent:await sleep(.8)
+        delivery=await request('/reply',{'text':line,'conversation_revision':revision})
+        if delivery.get('sent') is False:
+            observe('final_reply_withheld',reason='public_context_changed_before_delivery',sent_chunks=sent)
+            break
+        sent+=1
+    observe('final_reply_delivery',sent_chunks=sent,planned_chunks=len(lines),
+            shortened=truncated,all_chunks_sent=sent==len(lines))
 
 
 def control(cfg, path, payload=None):
@@ -248,11 +283,7 @@ This is a shared public room. Never disclose private information learned on anot
                 if revision is None:
                     observe('final_reply_withheld',reason='public_context_not_exposed_or_incorporated')
                 else:
-                    for line in textwrap.wrap(text,230)[:3]:
-                        delivery=await request('/reply',{'text':line,'conversation_revision':revision})
-                        if delivery.get('sent') is False:
-                            observe('final_reply_withheld',reason='public_context_changed_before_delivery')
-                            break
+                    await deliver_final_reply(text,revision,request,observe)
             observe('turn_completed',stop_reason=result['stop_reason'],disposition=disposition,
                     unsettled_tool_count=len(result.get('unsettled_tools',[])))
             if watches and disposition=='complete':

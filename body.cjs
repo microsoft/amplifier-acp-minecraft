@@ -383,7 +383,7 @@ const server=http.createServer(async(req,res)=>{
       const a=z.object({text:z.string().min(1).max(240),conversation_revision:revision}).parse(await json(req));
       if(Date.now()>turnUntil)throw Error('Reply window is closed');
       if(a.conversation_revision!==undefined&&a.conversation_revision!==conversation.snapshot().revision)result={sent:false,reason:'conversation_changed'};
-      else {if(++replies>3)throw Error('Reply window is closed');result=speak(a.text);}
+      else {if(++replies>8)throw Error('Reply window is closed');result=speak(a.text);}
     }
     else if(req.method==='POST'&&req.url==='/finish'){const a=await json(req);if(ready)history.checkpoint({position:bot.entity.position.clone(),health:bot.health,recent_actions:receipts.slice(-8)});history.finish(!!a.error||busy,!!a.budget_limited&&!busy);stop();result={stopped:true};}
     else if(req.method==='POST'&&req.url==='/wake'){const a=await json(req);if(a.generation!==generation||Date.now()<turnUntil)throw Error('Observation superseded or turn already active');result=history.wake(a.task_id);record('attention_wake',{task_id:a.task_id});}
