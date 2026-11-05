@@ -238,6 +238,11 @@ class Client:
             kind = message.get("sessionUpdate")
             if kind == "agent_message_chunk" and message.get("content", {}).get("type") == "text":
                 chunk = message["content"]["text"]
+                # Runtime steering receipts can use empty text envelopes, with
+                # no message ID. Only real text establishes answer order/phase;
+                # receipt transport and retrieval stay independent of assembly.
+                if not chunk:
+                    return
                 characters += len(chunk)
                 if characters > 250_000:
                     raise ProtocolError("ACP output exceeds the observation limit")
