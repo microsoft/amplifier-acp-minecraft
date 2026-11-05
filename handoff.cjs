@@ -25,7 +25,7 @@ function pickupTracker({item,count,origin,existing,recipient,sender}){
   }
  };
 }
-async function give(bot,a,check){
+async function give(bot,a,check,{beforeTransfer=()=>{}}={}){
  if(a.player===bot.username)throw Error('Choose another player');
  const target=bot.players[a.player]?.entity;
  const near=()=>bot.players[a.player]?.entity===target&&target&&target.position.distanceTo(bot.entity.position)<=2.5;
@@ -40,6 +40,7 @@ async function give(bot,a,check){
  if(!item)throw Error('Choose a count available in one stack; this handoff does not consolidate separate stacks');
  // Mineflayer toss(count) drops partial stacks one item at a time. Prepare
  // one exact stack using ordinary inventory clicks, then drop it once.
+ beforeTransfer();
  if(item.count!==a.count){
   const slot=bot.inventory.firstEmptyInventorySlot();if(slot===null)throw Error('An empty inventory slot is needed to prepare this exact handoff');
   await bot.transfer({window:bot.inventory,itemType:item.type,metadata:item.metadata,count:a.count,sourceStart:item.slot,sourceEnd:item.slot+1,destStart:slot,destEnd:slot+1});check();
@@ -50,6 +51,7 @@ async function give(bot,a,check){
  if(bot.world.raycast(eye,delta.scaled(1/delta.norm()),delta.norm()))throw Error('Recipient is behind a block; meet in a clear space');
  await bot.lookAt(target.position.offset(0,.2,0),false);check();
  if(!near()||!spacing()||target.position.distanceTo(initial)>.15)throw Error('Recipient moved before the handoff; nothing was dropped');
+ beforeTransfer(); // Recheck after asynchronous inventory, aim and recipient checks.
  const tracker=pickupTracker({item:a.item,count:a.count,origin:bot.entity.position.offset(0,1.32,0),existing:new Set(Object.values(bot.entities).map(e=>e.id)),recipient:target.id,sender:bot.entity.id});
  const onDrop=e=>tracker.drop(e,describe(bot,e).item),onCollect=p=>tracker.collect(p);
  bot.on('itemDrop',onDrop);bot._client.on('collect',onCollect);

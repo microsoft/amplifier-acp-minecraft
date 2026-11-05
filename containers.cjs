@@ -1,6 +1,7 @@
 // Ordinary storage, through server-confirmed clicks. No movement, item spawning,
 // optimistic inventory predictions, dropped leftovers, or automatic retries.
 const {once}=require('node:events');
+const {createHash}=require('node:crypto');
 const {refreshInventory}=require('./inventory.cjs');
 const {click}=require('./crafting.cjs');
 const {translationMetadata}=require('./protocol-compatibility.cjs');
@@ -13,7 +14,8 @@ const item=i=>i?{name:i.name,count:i.count,type:i.type,metadata:i.metadata,nbt:i
 const snapshot=w=>({slots:w.slots.map(item),cursor:item(w.selectedItem)});
 const same=(a,b)=>JSON.stringify(a)===JSON.stringify(b);
 const total=(w,start,end,name)=>w.slots.slice(start,end).reduce((n,i)=>n+(i?.name===name?i.count:0),0);
-const describe=w=>({contents:w.slots.slice(0,w.inventoryStart).flatMap((i,slot)=>i?[{slot,...item(i)}]:[]),
+const contentsRevision=w=>createHash('sha256').update(JSON.stringify(w.slots.slice(0,w.inventoryStart).map(item))).digest('hex');
+const describe=w=>({contents_revision:contentsRevision(w),contents:w.slots.slice(0,w.inventoryStart).flatMap((i,slot)=>i?[{slot,...item(i)}]:[]),
  inventory:w.items().map(item),cursor:item(w.selectedItem),source:'server window snapshot'});
 function target(bot,p,expected){
  const block=bot.blockAt(p);
@@ -53,7 +55,7 @@ function validate(a){
  if(['deposit','withdraw'].includes(a.operation)&&(!a.item||!Number.isInteger(a.count)||a.count<1||a.count>64))
   throw Error('Transfer needs an exact item name and count from 1 to 64');
 }
-async function container(bot,p,a,check){
+async function container(bot,p,a,check,{beforeTransfer=()=>{}}={}){
  validate(a);let binding,before,confirmed=0,clicks=0,lastConfirmed,unacknowledged=false;
  const deadline=Date.now()+25000;
  const guard=()=>{check();if(Date.now()>deadline)throw Error('Container operation reached its time bound');
@@ -79,6 +81,10 @@ async function container(bot,p,a,check){
    await confirmedClick(slot,0,expected);binding.sourceSlot=null;
    return {position:p,operation:a.operation,recovered:true,...describe(w)};
   }
+  if(a.contents_revision!==undefined&&a.contents_revision!==contentsRevision(w)){
+   const e=Error('Container contents changed since inspection; reconsider the handoff. No items transferred.');
+   e.details={code:'container_changed',current:describe(w)};throw e;
+  }
   if(w.selectedItem)throw Error('A previous transfer left items on the cursor; inspect then use recover before another transfer');
   const {src,dst}=ranges(w,a.operation),source=w.slots.slice(...src).filter(i=>i?.name===a.item);
   if(source.some(i=>!plain(i)))throw Error('Named, enchanted, or component-bearing items need explicit selection; this tool transfers ordinary supplies only');
@@ -86,6 +92,7 @@ async function container(bot,p,a,check){
   const sample=source[0];
   const capacity=w.slots.slice(...dst).reduce((n,i)=>n+(!i?sample.stackSize:plain(i)&&i.type===sample.type?i.stackSize-i.count:0),0);
   if(capacity<a.count)throw Error('Insufficient destination space; nothing transferred');
+  beforeTransfer(); // Last public-context check immediately before any transfer click.
   before={source:total(w,...src,a.item),destination:total(w,...dst,a.item)};
   while(confirmed<a.count){
    guard();const sourceSlot=w.slots.findIndex((i,s)=>s>=src[0]&&s<src[1]&&i?.name===a.item&&plain(i));

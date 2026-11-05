@@ -99,12 +99,12 @@ test('private task endpoint preserves authorization without becoming public atte
 test('shared history includes separately recorded public sends, never failed tool inputs',async()=>{
  const f=fixture('BuilderOne');try{
   const sent=[];f.bot.chat=text=>sent.push(text);f.startFixtureTurn();
-  await f.operate('chat',{text:'The dock framing is ready.'});
-  await f.operate('tell',{player:'BuilderTwo',intent:'update',text:'Public supplies delivered.'});
+  await f.operate('chat',{text:'The dock framing is ready.',conversation_revision:'empty'});
+  await f.operate('tell',{player:'BuilderTwo',intent:'update',text:'Public supplies delivered.',conversation_revision:'empty'});
   await f.request('/reply',{text:'Public reply from the controller.'});
   const canary='PRIVATE_FAILED_SEND_CANARY';
   f.bot.chat=()=>{throw Error(canary);};
-  await assert.rejects(f.operate('tell',{player:'BuilderTwo',intent:'request',text:canary}),new RegExp(canary));
+  await assert.rejects(f.operate('tell',{player:'BuilderTwo',intent:'request',text:canary,conversation_revision:'empty'}),new RegExp(canary));
   const publicEvents=f.history.data.events.filter(e=>e.kind==='chat_sent');
   assert.deepEqual(publicEvents.map(e=>e.sent),sent,'each successful public send has exactly one receipt');
   assert.ok(publicEvents.every(e=>e.provenance==='minecraft_public_chat'));
@@ -153,5 +153,55 @@ test('delayed duplicate POST after a lost reply does not enqueue accepted work t
   assert.equal(f.inbox.length,2);assert.equal(new Set(f.inbox.map(m=>m.id)).size,2);
   assert.equal(f.inbox.filter(m=>m.attention_offer.id==='one').length,1);
   assert.equal(JSON.stringify(f.history.task()),task);assert.equal(f.history.data.turn,null);
+ }finally{f.close();}
+});
+
+test('active conversation projection excludes whispers, private controls and nested local receipts',async()=>{
+ const f=fixture('BuilderOne',true);try{
+  await f.request('/task',{text:'PRIVATE_CONTROL'});
+  f.bot.emit('whisper','VisitorOne','PRIVATE_WHISPER');
+  f.history.record({kind:'work_status',progress:{observation:{recent_actions:[{arguments:{text:'PRIVATE_ACTION'}}]}}});
+  f.bot.emit('chat','BuilderTwo','Two sticks are in the chest.');
+  const queued=f.history.data.participation_pending.slice();f.startFixtureTurn();
+  const current=await f.request('/conversation');assert.equal(current.turn_active,true);
+  assert.equal(current.messages.length,1);assert.equal(current.messages[0].text,'Two sticks are in the chest.');
+  assert.ok(!JSON.stringify(current).includes('PRIVATE_'));
+  assert.deepEqual(f.history.data.participation_pending,queued,'reading awareness never consumes an attention opportunity');
+  assert.deepEqual(f.history.task(),f.task,'reading evidence never renews authority');
+ }finally{f.close();}
+});
+test('fresh public chat rejects an old transfer before any action reservation',async()=>{
+ const f=fixture('BuilderOne');try{
+  f.startFixtureTurn();f.bot.emit('chat','BuilderTwo','Please bring sticks.');
+  const old=await f.request('/conversation');
+  f.bot.emit('chat','BuilderTwo','The sticks arrived; do not send another stack.');
+  await assert.rejects(f.operate('give',{player:'BuilderTwo',item:'stick',count:2,conversation_revision:old.revision}),/conversation changed/);
+  await assert.rejects(f.operate('container',{operation:'deposit',item:'stick',count:2,contents_revision:'old',conversation_revision:old.revision}),/conversation changed/);
+  assert.equal(f.history.data.events.filter(e=>e.kind==='action_started').length,0);
+  assert.equal(f.history.task().turns,12);
+ }finally{f.close();}
+});
+test('late public message fences an automatic final without sending or starting a prompt',async()=>{
+ const f=fixture('BuilderOne');try{
+  const sent=[];f.bot.chat=t=>sent.push(t);f.startFixtureTurn();
+  const old=await f.request('/conversation');f.bot.emit('chat','VisitorOne','Wait, that delivery is already done.');
+  const result=await f.request('/reply',{text:'I still need that delivery.',conversation_revision:old.revision});
+  assert.equal(result.sent,false);assert.equal(result.reason,'conversation_changed');assert.equal(sent.length,0);
+  const fresh=await f.request('/conversation');await f.request('/reply',{text:'I see the newer message.',conversation_revision:fresh.revision});
+  assert.equal(sent.length,1);assert.deepEqual(f.history.task(),f.task);
+ }finally{f.close();}
+});
+test('stick deposit prevents a cancellation composed against older conversation evidence',async()=>{
+ const f=fixture('BuilderOne');try{
+  const sent=[];f.bot.chat=t=>sent.push(t);f.startFixtureTurn();
+  f.bot.emit('chat','BuilderTwo','I will bring the sticks.');
+  const old=await f.request('/conversation');
+  f.bot.emit('chat','BuilderTwo','The sticks are now in the chest.');
+  await assert.rejects(f.operate('tell',{player:'BuilderTwo',intent:'request',text:'Cancel those sticks.',conversation_revision:old.revision}),/conversation changed/);
+  await assert.rejects(f.operate('chat',{text:'Still waiting for sticks.'}),/conversation changed/);
+  assert.equal(sent.length,0);assert.equal(f.history.data.events.filter(e=>e.kind==='action_started').length,0);
+  const fresh=await f.request('/conversation');
+  await f.operate('tell',{player:'BuilderTwo',intent:'update',text:'Checking the chest before using the delivery.',conversation_revision:fresh.revision});
+  assert.equal(sent.length,1);assert.ok(sent[0].includes('Checking the chest'));
  }finally{f.close();}
 });

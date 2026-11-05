@@ -73,7 +73,7 @@ test('an unsettled move closes the turn and holds busy until cleanup actually fi
 });
 test('a non-movement timeout retains the conservative closed-turn behavior',async()=>{
  const f=fixture();try{
-  await assert.rejects(f.operate('container',{x:2,y:64,z:0,operation:'deposit',item:'oak_planks',count:1}),/timed out/);
+  await assert.rejects(f.operate('container',{conversation_revision:(await f.operate('conversation')).revision,contents_revision:'fixture',x:2,y:64,z:0,operation:'deposit',item:'oak_planks',count:1}),/timed out/);
   assert.equal(f.state().turnUntil,0);assert.equal(f.state().busy,false);
   assert.equal(f.history.data.events.at(-1).operation_settled,true);
   assert.equal(f.history.data.events.at(-1).turn_preserved,false);

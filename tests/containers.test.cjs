@@ -93,3 +93,22 @@ test('acknowledgement timeout ends the batch with no retry or leaked listener',a
  const f=fixture();f.set(27,'coal',64);f.setMode('timeout');
  const r=await f.run('deposit',{item:'coal',count:1});assert.equal(r.verified,false);assert.equal(f.writes,1);assert.equal(f.closes,0);assert.equal(f.bot.listenerCount('setWindowItems:1'),0);
 });
+
+test('a stick delivery between inspection and a competing transfer rejects the stale contents revision',async()=>{
+ const f=fixture();f.set(27,'stick',4);const inspected=await f.run('inspect');
+ f.set(0,'stick',2);const before=f.writes;
+ await assert.rejects(f.run('deposit',{item:'stick',count:2,contents_revision:inspected.contents_revision}),/contents changed/);
+ assert.equal(f.writes,before);assert.equal(f.server.slots[0].count,2);assert.equal(f.server.slots[27].count,4);
+});
+test('fresh torch handoff retains confirmed counts with a matching contents revision',async()=>{
+ const f=fixture();f.set(0,'torch',8);
+ const inspected=await f.run('inspect'),result=await f.run('withdraw',{item:'torch',count:8,contents_revision:inspected.contents_revision});
+ assert.equal(result.verified,true);assert.equal(result.after.destination,8);assert.notEqual(result.contents_revision,inspected.contents_revision);
+});
+test('public cancellation during window opening is rechecked before the first item click',async()=>{
+ const f=fixture();f.set(27,'stick',4);
+ const before=f.writes;let checked=false;
+ await assert.rejects(container(f.bot,f.p,{operation:'deposit',expected:'chest',item:'stick',count:2},()=>{},
+  {beforeTransfer:()=>{checked=true;throw Error('New public cancellation');}}),/cancellation/);
+ assert.equal(checked,true);assert.equal(f.writes,before);assert.equal(f.server.slots[27].count,4);
+});
