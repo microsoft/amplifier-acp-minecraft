@@ -2,9 +2,10 @@
 const {createHash}=require('node:crypto');
 const {Vec3}=require('vec3');
 const rules=[
+ [/non_level_start/,'non_level_start','Your actual feet are between full block levels. Inspect footprint support_contacts and adjacent slabs/stairs. If appropriate, use normal navigation to separately verified full footing, then re-plan walk_only. Do not dig supporting blocks or repeat the unchanged level-walking request.'],
  [/different_elevation/,'different_elevation','walk_only cannot change feet height. Inspect the actual feet position and floor; choose a same-height destination. Use normal navigation only if stairs/climbing fit the task.'],
  [/unsafe_start/,'unsafe_start','Inspect feet, head and floor. walk_only requires full flat footing; slabs, stairs and ladders need their appropriate navigation mode. Do not dig the block supporting a player.'],
- [/elevation changed/,'elevation_changed','Compare observed feet height with the intended level. Inspect the floor and adjacent steps/slabs or holes, then plan from the actual position; repeating the old target does not repair the route.'],
+ [/elevation changed/,'elevation_changed','Compare observed feet height with the intended level. Inspect footprint support_contacts and body_obstructions as well as the center floor: an edge can rest on a neighboring slab. Re-plan from the actual position; repeating the old target does not repair the route.'],
  [/footing or clearance changed|route changed/,'terrain_changed','Inspect the reported feet/head/floor and nearby obstacles. Re-plan from current terrain; another player may have changed the path.'],
  [/supporting a player/,'player_support','Stand on separately verified safe footing before digging. If another player is supported by this block, ask them to move; this guard must remain in force.'],
  [/Movement stalled|movement stalled/,'stalled','Inspect nearby players, closed doors and collision blocks. Try a shorter verified waypoint or wait for the obstruction to clear; do not repeat the identical path unchanged.'],
@@ -14,6 +15,34 @@ const rules=[
  [/arrival did not match|without reaching/,'arrival_mismatch','Use the returned current feet position. Inspect the intended feet/head/floor and plan a short exact-height route; the earlier movement did not prove arrival.'],
  [/Walk-only time limit/,'time_limit','Inspect the actual current position and completed progress before planning a shorter route. Do not replay the original route automatically.']
 ];
+// Center-cell observations miss contacts along the player's edges. These are
+// current loaded collision observations, not a claim about what caused motion.
+function footprint(bot,position){
+ const half=Number.isFinite(bot.physics?.playerHalfWidth)&&bot.physics.playerHalfWidth>0&&bot.physics.playerHalfWidth<=1?bot.physics.playerHalfWidth:Math.fround(.6)/2;
+ const height=Number.isFinite(bot.entity.height)&&bot.entity.height>0&&bot.entity.height<=3?bot.entity.height:1.8;
+ const support_contacts=[],body_obstructions=[],unknown=[];
+ const minX=position.x-half,maxX=position.x+half,minZ=position.z-half,maxZ=position.z+half;
+ for(let x=Math.floor(minX);x<=Math.floor(maxX);x++)for(let z=Math.floor(minZ);z<=Math.floor(maxZ);z++){
+  // Fences may support the player above their nominal one-block cell.
+  for(let y=Math.floor(position.y)-2;y<=Math.floor(position.y+height);y++){
+   const p=new Vec3(x,y,z),b=bot.blockAt(p);
+   if(!b||!Array.isArray(b.shapes)){unknown.push({position:p,reason:b?'collision_shapes_unavailable':'unloaded'});continue;}
+   const support=[],obstructions=[];
+   for(const s of b.shapes){
+    if(!Array.isArray(s)||s.length!==6||!s.every(Number.isFinite))continue;
+    if(x+s[0]>=maxX||x+s[3]<=minX||z+s[2]>=maxZ||z+s[5]<=minZ)continue;
+    const top=y+s[4],bottom=y+s[1];
+    if(Math.abs(top-position.y)<=.05)support.push(s);
+    if(top>position.y+.05&&bottom<position.y+height)obstructions.push(s);
+   }
+   const item=shapes=>({position:p,name:b.name,properties:b.getProperties?.()||{},shapes});
+   if(support.length)support_contacts.push(item(support));
+   if(obstructions.length)body_obstructions.push(item(obstructions));
+  }
+ }
+ return {half_width:half,height,support_contacts,body_obstructions,unknown,
+  coverage:'Loaded block collision shapes overlapping the current player footprint. Contacts do not prove the cause of earlier movement or that a route is safe; unloaded/missing shape data remains unknown.'};
+}
 class RepairHints {
  constructor(){this.failures=new Map();}
  explain(bot,action,args,error){
@@ -22,10 +51,10 @@ class RepairHints {
   const position=bot.entity.position.clone(),feet=position.floored();
   const block=p=>{const b=bot.blockAt(p);return {position:p,name:b?.name||'unloaded',properties:b?.getProperties?.()||{}};};
   const target=[args.x,args.y,args.z].every(Number.isInteger)?new Vec3(args.x,args.y,args.z):null;
-  const observed={position,feet:block(feet),head:block(feet.offset(0,1,0)),floor:block(feet.offset(0,-1,0)),
+  const observed={position,feet:block(feet),head:block(feet.offset(0,1,0)),floor:block(feet.offset(0,-1,0)),footprint:footprint(bot,position),
    ...(target?{target_feet:block(target),target_head:block(target.offset(0,1,0)),target_floor:block(target.offset(0,-1,0))}:{})};
   // Include observed geometry so a changed route resets the repetition signal.
-  const fingerprint=createHash('sha256').update(JSON.stringify({code:rule[1],action,target,mode:args.mode,range:args.range,expected:args.expected,feet:observed.feet,head:observed.head,floor:observed.floor,target_feet:observed.target_feet,target_head:observed.target_head,target_floor:observed.target_floor})).digest('hex');
+  const fingerprint=createHash('sha256').update(JSON.stringify({code:rule[1],action,target,mode:args.mode,range:args.range,expected:args.expected,feet:observed.feet,head:observed.head,floor:observed.floor,footprint:observed.footprint,target_feet:observed.target_feet,target_head:observed.target_head,target_floor:observed.target_floor})).digest('hex');
   const repeated=(this.failures.get(fingerprint)||0)+1;
   this.failures.delete(fingerprint);this.failures.set(fingerprint,repeated);
   if(this.failures.size>32)this.failures.delete(this.failures.keys().next().value);

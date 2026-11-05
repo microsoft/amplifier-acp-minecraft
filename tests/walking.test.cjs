@@ -48,3 +48,22 @@ test('unexpected vertical movement never reports a successful walk',async()=>{
  await assert.rejects(walking.move(bot,new Vec3(3,1,0),0,()=>{},{wait:tick}),/elevation changed/);
  assert.ok(Object.values(controls).every(v=>!v));
 });
+test('an off-center half-height start cannot advertise or begin a level walk',async()=>{
+ const {bot,calls}=moving();bot.entity.position=new Vec3(.25,1.5,.5);
+ // The center cell itself is still air above a full floor. The actual height
+ // is the missing evidence, regardless of how the adjacent contact arose.
+ assert.equal(walking.walkable(bot,bot.entity.position.floored()),true);
+ const result=walking.plan(bot,new Vec3(3,1,0));
+ assert.equal(result.status,'non_level_start');assert.equal(result.reachable,false);
+ assert.equal(result.current_feet.y,1.5);
+ let controlsCleared=0,goalsChanged=0,ticks=0;
+ bot.clearControlStates=()=>{controlsCleared++;};bot.pathfinder.setGoal=()=>{goalsChanged++;};
+ await assert.rejects(walking.move(bot,new Vec3(3,1,0),0,()=>{},{wait:async()=>{ticks++;}}),/non_level_start/);
+ assert.equal(calls.length,0);assert.equal(ticks,0);assert.equal(controlsCleared,0);assert.equal(goalsChanged,0);
+ assert.deepEqual(bot.entity.position,new Vec3(.25,1.5,.5));
+});
+test('level start tolerance remains aligned with the live height guard',()=>{
+ const bot=world(['....']);bot.entity.position.y=1.125;
+ assert.equal(walking.plan(bot,new Vec3(3,1,0)).status,'success');
+ bot.entity.position.y=1.126;assert.equal(walking.plan(bot,new Vec3(3,1,0)).status,'non_level_start');
+});

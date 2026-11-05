@@ -124,6 +124,9 @@ this prevents edge-overlap corrections during sprint-jumps onto full blocks.
 It does not relax server collision checks or grant new movement capabilities.
 For level activities that prohibit jumping, select `mode: "walk_only"` for both
 `plan_route` and `move`; ordinary pathfinding permits other traversal strategies.
+Level routes report `current_feet` and reject a fractional-height start as
+`non_level_start` before moving. A clear center cell alone is not enough when
+the player's edge is resting on a neighboring slab.
 Digging checks footing and adjacent liquids. Crafting and placement refresh the
 server inventory. Sign writes verify the server's text echo and can reject stale
 edits with `expected_lines`. Item drops remain physical world interactions:
@@ -723,7 +726,11 @@ supplies and must never target a shared world.
 Recognized movement/digging guards now include observed feet/head/floor geometry,
 a fixed reason code, repeated-failure count for the same local observation and
 specific repair suggestions. Changed arguments or observed geometry reset that
-repetition signal. Unknown failures remain unknown. Diagnostics never remove
+repetition signal. Bounded collision observations across the player's footprint
+identify current support contacts and body obstructions, including adjacent
+slabs and tall fence shapes that the center cell misses. Unloaded cells and
+missing shape data remain unknown. These contacts do not establish what caused
+earlier movement or prove a route safe. Unknown failures remain unknown. Diagnostics never remove
 blocks, retry movement, relax walk-only constraints or bypass player-footing
 protection; the agent chooses the next permitted approach.
 
