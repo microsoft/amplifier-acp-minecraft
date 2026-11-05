@@ -217,9 +217,9 @@ class Client:
                 self.active_prompt_id = None
 
     async def prompt(self, text, timeout, on_chunk=None, attention_offer=None):
-        parts, final_parts, characters = [], [], 0
+        parts, characters = [], 0
         messages = {}
-        last_unidentified = False
+        after_tool = False
         self.tool_calls = {}
         permissions = self.permission_context()
         self.observe('permission_context_supplied', **permissions)
@@ -234,7 +234,7 @@ class Client:
         )
 
         async def update(message):
-            nonlocal characters, last_unidentified
+            nonlocal characters, after_tool
             kind = message.get("sessionUpdate")
             if kind == "agent_message_chunk" and message.get("content", {}).get("type") == "text":
                 chunk = message["content"]["text"]
@@ -243,26 +243,28 @@ class Client:
                     raise ProtocolError("ACP output exceeds the observation limit")
                 parts.append(chunk)
                 message_id = message.get('messageId')
-                phase = message.get('_meta', {}).get('com.microsoft.amplifier.message', {}).get('phase')
-                if isinstance(message_id, str) and message_id:
-                    # Preserve creation order: a late chunk of an earlier draft
-                    # cannot replace a newer answer. Commentary is not a final.
-                    group = messages.setdefault(message_id, {'parts': [], 'phase': phase})
-                    group['parts'].append(chunk)
-                    if phase in ('commentary', 'final_answer'):
-                        group['phase'] = phase
-                    last_unidentified = False
-                else:
-                    if not last_unidentified:
-                        final_parts.clear()
-                    if phase != 'commentary':
-                        final_parts.append(chunk)
-                    last_unidentified = True
+                message_id = message_id if isinstance(message_id, str) else ''
+                if len(message_id) > 1024 or (message_id not in messages and len(messages) >= 1024):
+                    raise ProtocolError('ACP message identity exceeds the observation limit')
+                meta = message.get('_meta')
+                details = meta.get('com.microsoft.amplifier.message') if isinstance(meta, dict) else None
+                phase = details.get('phase') if isinstance(details, dict) else None
+                # Preserve first-observed message order, not last-chunk order.
+                # Unidentified output is one append-only legacy message; a tool
+                # or a new message ID does not erase text or finish another ID.
+                group = messages.setdefault(message_id, {'parts': [], 'phase': None})
+                if phase in ('commentary', 'final_answer'):
+                    group['phase'] = phase
+                if not message_id and after_tool and group['parts']:
+                    prior = ''.join(group['parts'])
+                    if prior and not prior.endswith('\n\n'):
+                        group['parts'].append('\n\n')
+                group['parts'].append(chunk)
+                after_tool = False
                 if on_chunk:
                     await on_chunk(chunk)
             elif kind in ("tool_call", "tool_call_update"):
-                final_parts.clear()
-                last_unidentified = False
+                after_tool = True
                 if parts and not parts[-1].endswith('\n'):
                     parts.append('\n')
                 self.observe("tool_update", tool_id=message.get("toolCallId"), status=message.get("status"), title=message.get("title"))
@@ -276,8 +278,9 @@ class Client:
                 **({"_meta":{"com.microsoft.amplifier.attention":attention_offer}} if attention_offer else {}),
             }, update), timeout)
             unsettled=[tid for tid,call in self.tool_calls.items() if call.get('status') not in ('completed','failed')]
-            candidates = [group for group in messages.values() if group['phase'] != 'commentary']
-            final_text = ''.join(final_parts) if last_unidentified or not candidates else ''.join(candidates[-1]['parts'])
+            candidates = [''.join(group['parts']) for group in messages.values()
+                          if group['phase'] != 'commentary' and any(group['parts'])]
+            final_text = candidates[-1] if candidates else ''
             return {"text": "".join(parts), "final_text": final_text, "stop_reason": result.get("stopReason", "unknown"), 'unsettled_tools':unsettled}
         except asyncio.TimeoutError:
             try:

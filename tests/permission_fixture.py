@@ -7,7 +7,7 @@ for line in sys.stdin:
  elif m=='session/new':send({'id':v['id'],'result':{'sessionId':'test-session'}})
  elif m=='session/prompt':
   supplied_prompt=v['params']['prompt']
-  if scenario=='narration':send({'method':'session/update','params':{'sessionId':'test-session','update':{'sessionUpdate':'agent_message_chunk','content':{'type':'text','text':'I will inspect first.'}}}})
+  if scenario=='narration':send({'method':'session/update','params':{'sessionId':'test-session','update':{'sessionUpdate':'agent_message_chunk','messageId':'narration','_meta':{'com.microsoft.amplifier.message':{'phase':'commentary'}},'content':{'type':'text','text':'I will inspect first.'}}}})
   raw={'server':'minecraft','tool':'observe','arguments':{}}
   if scenario.startswith('game:'):raw['tool']=scenario.split(':',1)[1]
   if scenario=='external':raw={'server':'filesystem','tool':'delete','arguments':{}}
@@ -16,5 +16,7 @@ for line in sys.stdin:
   reply=json.loads(sys.stdin.readline())
   result=reply['result']
   if scenario=='context':result['supplied_prompt']=supplied_prompt
-  send({'method':'session/update','params':{'sessionId':'test-session','update':{'sessionUpdate':'agent_message_chunk','content':{'type':'text','text':json.dumps(result)}}}})
+  update={'sessionUpdate':'agent_message_chunk','content':{'type':'text','text':json.dumps(result)}}
+  if scenario=='narration':update.update({'messageId':'answer','_meta':{'com.microsoft.amplifier.message':{'phase':'final_answer'}}})
+  send({'method':'session/update','params':{'sessionId':'test-session','update':update}})
   send({'id':v['id'],'result':{'stopReason':'end_turn'}})

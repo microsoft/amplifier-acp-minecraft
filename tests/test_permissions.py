@@ -58,7 +58,7 @@ class Permissions(unittest.IsolatedAsyncioTestCase):
    self.assertEqual(result['outcome'],{'outcome':'cancelled'})
   finally:await c.close()
 
- async def test_final_reply_excludes_pre_tool_narration(self):
+ async def test_final_reply_excludes_identified_commentary_before_tool(self):
   c=Client({'command':[sys.executable,str(Path(__file__).with_name('permission_fixture.py')),'narration'],'cwd':'/tmp'},lambda *a,**kw:None)
   try:
    await c.start();await c.open_session();c.permission_active=lambda:True
