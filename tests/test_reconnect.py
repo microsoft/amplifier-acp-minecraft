@@ -18,7 +18,7 @@ FIXTURE = Path(__file__).with_name('reconnect_fixture.py')
 class Reconnect(unittest.IsolatedAsyncioTestCase):
     async def exercise(self, scenario):
         """Run the real scheduling loop and real ACP subprocesses against a body fixture."""
-        clients, paths, finishes, sleeps, attention_posts = [], [], [], [], []
+        clients, paths, finishes, sleeps, attention_posts, prompt_worlds = [], [], [], [], [], []
         social = scenario.startswith('attention-')
         task = {'id': 'accepted-task', 'status': 'running', 'turns': 12,
                 'max_turns': 45, 'deadline': 9999999999999}
@@ -32,14 +32,19 @@ class Reconnect(unittest.IsolatedAsyncioTestCase):
                 super().__init__(*args, **kwargs)
                 clients.append(self)
 
+            async def prompt(self, text, *args, **kwargs):
+                prompt_worlds.append(json.loads(text.rsplit('\n', 1)[-1])['world'])
+                return await super().prompt(text, *args, **kwargs)
+
         def control(config, path, payload=None):
             nonlocal active, reserved
             paths.append(path)
-            if path == '/state':
+            if path in ('/state', '/observation'):
                 if len(finishes) >= 2 or (scenario == 'during-prompt' and finishes):
                     raise asyncio.CancelledError()
                 return {'ready': True, 'busy': False, 'generation': 1, 'turn_active': active,
-                        'pending_messages': len(messages), 'task': dict(task)}
+                        'pending_messages': len(messages), 'task': dict(task),
+                        'view_fixture': 'recent' if path == '/observation' else 'full'}
             if path == '/status':
                 return {'turn_active': active, 'busy': False, 'task': dict(task)}
             if path == '/continuation':
@@ -99,7 +104,7 @@ class Reconnect(unittest.IsolatedAsyncioTestCase):
             events = [json.loads(line) for line in output.getvalue().splitlines()]
         return {'frames': frames, 'calls': calls, 'session': session, 'events': events,
                 'paths': paths, 'finishes': finishes, 'sleeps': sleeps, 'reserved': reserved,
-                'messages': messages, 'task': task, 'attention_posts': attention_posts}
+                'messages': messages, 'task': task, 'attention_posts': attention_posts, 'prompt_worlds': prompt_worlds}
 
     async def test_closed_endpoint_reloads_before_reserving_another_turn(self):
         result = await self.exercise('close-between')
@@ -115,6 +120,7 @@ class Reconnect(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result['task']['turns'], 14)
         self.assertEqual(result['task']['max_turns'], 45)
         self.assertEqual(result['task']['deadline'], 9999999999999)
+        self.assertEqual([w['view_fixture'] for w in result['prompt_worlds']], ['recent', 'recent'])
 
     async def test_live_transport_is_reused_without_probe_or_replay(self):
         result = await self.exercise('keep-open')

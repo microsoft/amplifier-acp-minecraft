@@ -53,6 +53,17 @@ and browser origins are rejected. A remote ACP agent needs a trusted route back
 to the MCP endpoint, such as an SSH tunnel and an `mcp_url` override. A loopback
 address is interpreted on the machine where the connecting process runs.
 
+Planner turns and the default `observe` tool use a recent working view: current
+world facts and conversation, the last five progress reports, and the last five
+exact action receipts. Repeated historical observations and duplicate event
+payloads are omitted with explicit counts/markers. Task identity, authority,
+deadlines, consumed turns and uncertainty remain unchanged. `work_report` and
+`work_note` return the same recent task view after saving full evidence.
+Use `observe(detail="full")` to inspect older retained details when needed.
+Owner-local `/state` and durable evidence remain full; `/observation` is the
+authenticated recent view. This is a presentation projection, not evidence that
+omitted actions succeeded, messages were handled, or responsibilities ended.
+
 ## Newer servers and crossplay
 
 The default body uses Java protocol 1.21.1. It can also join Paper 26.3 through

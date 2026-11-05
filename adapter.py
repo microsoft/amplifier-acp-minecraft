@@ -254,6 +254,9 @@ async def run(home):
                     observe('assessment_applied',application='advisory',task_id=state['task']['id'],fingerprint=assessment['fingerprint'])
             if watch_notifications:
                 observe('watch_applied',application='advisory',ids=[n['id'] for n in watch_notifications])
+            world=await request('/observation')
+            if not world.get('turn_active') or world.get('generation')!=state.get('generation'):
+                raise RuntimeError('Turn stopped before planner observation')
             observe('turn_started',messages=messages)
             prompt='''You are participating as yourself in a private Minecraft Java world through an independent Minecraft adapter.
 Use only the minecraft MCP tools for this turn. Do not use shell, filesystem, external apps, Slack, or other tools.
@@ -286,9 +289,9 @@ Use cancel_movement to abandon a move/follow route while preserving your assignm
 Do not destroy player structures without being asked. No PvP. Stop when asked. Ask a question only if necessary.
 Your final response is automatically posted into game chat; avoid duplicating it with the chat tool.
 This is a shared public room. Never disclose private information learned on another surface.
-'''+json.dumps({'messages':messages,'world':state,'agent_assessment':assessment,'attention_notifications':watch_notifications})
+'''+json.dumps({'messages':messages,'world':world,'agent_assessment':assessment,'attention_notifications':watch_notifications})
             calls.append(time.time());save(calls_path,calls)
-            awareness=Awareness(home,client,state.get('conversation',{}),observe)
+            awareness=Awareness(home,client,world.get('conversation',{}),observe)
             pending=asyncio.create_task(client.prompt(prompt,220,attention_offer=attention_offer))
             try:
                 while not pending.done():

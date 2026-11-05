@@ -4,6 +4,7 @@ const http = require('node:http');
 const crypto = require('node:crypto');
 const path = require('node:path');
 const {WorkshopState}=require('./workshop-state.cjs');
+const {taskView,worldView}=require('./planner-view.cjs');
 const spatial=require('./spatial.cjs');
 const walking=require('./walking.cjs');
 const signs=require('./signs.cjs');
@@ -122,7 +123,7 @@ function speak(text){
 }
 async function operate(name,a={}){
   if(!ready)throw Error('Player is not connected');
-  if(name==='observe')return snapshot();
+  if(name==='observe')return a.detail==='full'?snapshot():worldView(snapshot());
   if(name==='conversation')return conversation.snapshot();
   if(name==='entities')return survival.entities(bot,a);
   if(name==='inventory'){if(busy)throw Error('Wait for the current action before refreshing inventory');return refreshInventory(bot);}
@@ -142,14 +143,14 @@ async function operate(name,a={}){
   }
   if(Date.now()>turnUntil)throw Error('No active agent turn; ask the player to start one');
   if(busy)throw Error('Another action is running; wait for its result');
-  if(name==='work_note'){const result=history.note(a,{position:bot.entity.position.clone(),health:bot.health,recent_actions:receipts.slice(-8)});record('work_status',{task_id:result.id,status:result.status,progress:result.progress.at(-1)});return result;}
+  if(name==='work_note'){const result=history.note(a,{position:bot.entity.position.clone(),health:bot.health,recent_actions:receipts.slice(-8)});record('work_status',{task_id:result.id,status:result.status,progress:result.progress.at(-1)});return taskView(result);}
   if(name==='attention_watch'||name==='attention_watches'||name==='attention_cancel'){
     const action=name==='attention_watch'?{operation:'arm',spec:a}:name==='attention_cancel'?{operation:'cancel',id:a.id}:{operation:'list'};
     const result=await watchOperation(action);record('attention_watch_tool',{tool:name,result});return result;
   }
   if(['work_begin','work_report','work_reopen'].includes(name)){
     const result=name==='work_begin'?history.begin(a):name==='work_reopen'?history.reopen(a):history.report(a);if(name!=='work_report')turnUntil=Math.min(turnUntil,result.deadline);
-    record('work_status',{task_id:result.id,status:result.status,goal:result.goal,progress:result.progress.at(-1)});return result;
+    record('work_status',{task_id:result.id,status:result.status,goal:result.goal,progress:result.progress.at(-1)});return taskView(result);
   }
   if(!['chat','tell'].includes(name)&&!history.data.turn?.may_mutate)throw Error('A peer message does not authorize game actions after a responsibility stops. You may inspect and reply; a new human request is needed for more work.');
   if(!['chat','tell'].includes(name)&&turnUntil-Date.now()<95000)throw Error('Wrap up this turn now: use work_report to save progress and continue in the next turn. No more game mutations this turn.');
@@ -308,7 +309,7 @@ const definitions={
   work_begin:['Accept a recent human game request that needs several turns. Only use when the human asks for ongoing work; do not turn ordinary chat into tasks. Use its event id. Budgets persist and Stop cancels the task.',{request_id:z.string(),goal:z.string().min(1).max(2000)}],
   work_report:['Record concrete progress and choose running to continue, waiting with a concrete wait_for condition for a temporary dependency, blocked for an obstacle, or review when finished for humans to inspect. Never claim verified completion. Call before ending every work turn.',{status:z.enum(['running','waiting','blocked','review']),summary:z.string().min(1).max(2000),wait_for:z.string().min(1).max(1000).optional()}],
   work_reopen:['Return a reviewed task to work for an in-scope correction requested publicly by an operator-authorized reviewer. Use the incoming message event id and explain how it fits your existing goal. Preserves the task, deadline and limits; consumes one work turn. Cannot revive stopped, expired or interrupted work.',{task_id:z.string(),request_id:z.string(),reason:z.string().min(1).max(2000)}],
-  observe:['Inspect your player, inventory, nearby blocks, visible players, chat and actual action results.',{}],
+  observe:['Inspect current player, inventory, terrain, conversation and recent exact action receipts. Default summary avoids repeated historical observations. Use detail=full only when older retained progress or action details are needed; omission is not proof of success or handled work.',{detail:z.enum(['summary','full']).default('summary')}],
   survey:['Survey loaded surroundings for a building site. Sampled ground elevation is separated from tree canopy; includes water and head clearance. Samples are not a complete footprint or a proven route. Use map/inspect before building.',{radius:z.number().int().min(8).max(24).default(16)}],
   map:['Read local elevation slices, obstacles, footing and standing candidates. Coordinates are feet positions; use plan_route to test reachability.',{radius:z.number().int().min(2).max(8).default(4)}],
   plan_route:['Plan without moving. mode=walk_only stays on level full footing, without jumping, climbing, swimming, or wall/diagonal shortcuts. Use the same mode for move. Normal mode can climb/jump. Target y is exact feet height; range is horizontal only. Bounded loaded-terrain search is not proof of arrival.',{...xyz,range:z.number().int().min(0).max(3).default(0),mode:z.enum(['normal','walk_only']).default('normal')}],
@@ -360,6 +361,7 @@ const server=http.createServer(async(req,res)=>{
     }
     let result;
     if(req.method==='GET'&&req.url==='/state')result=snapshot();
+    else if(req.method==='GET'&&req.url==='/observation')result=worldView(snapshot());
     else if(req.method==='GET'&&req.url==='/conversation')result={...conversation.snapshot(),generation,turn_active:Date.now()<turnUntil};
     else if(req.method==='GET'&&req.url==='/watch-context')result=watchContext();
     else if(req.method==='POST'&&req.url==='/watch')result=await watchOperation(await json(req));
