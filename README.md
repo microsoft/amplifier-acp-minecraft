@@ -595,13 +595,16 @@ launch an extra unbudgeted prompt. Ordinary source attention remains available.
 A message arriving after the final check is outside that check's cutoff. Tool
 context exposure means supplied evidence, not proof the model understood it.
 
-Identified ACP text is collected per `messageId` in first-observed message order.
+Identified ACP text is collected per `messageId` in first-observed nonempty text order.
 The latest nonempty, non-commentary message is selected with all of its chunks;
 a delayed older chunk cannot overwrite it. Both `messageId` and
 `_meta["com.microsoft.amplifier.message"].phase` are optional on each
 `session/update`'s `update` object. Recognized phases are `commentary` and
 `final_answer`; omitted phases retain an existing message's classification.
-An empty new message is not a withdrawal of an earlier answer. An explicit
+Empty text envelopes (including steering receipts without a `messageId`) do not
+create a message, change its phase/order, consume a tool separator, or trigger
+text callbacks. Receipt retrieval remains independent. An empty new message is
+not a withdrawal of an earlier answer. An explicit
 nonempty revised answer (including a structured pass decision where used) takes
 precedence over older messages. A turn containing only commentary or empty text
 has no final text to broadcast.

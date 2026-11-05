@@ -7,14 +7,20 @@ from acp_client import Client, ProtocolError
 
 
 class Revisions(unittest.IsolatedAsyncioTestCase):
-    async def result(self, mode, *, replay=False, observed=None):
+    async def result(self, mode, *, replay=False, observed=None, chunks=None, receipts=False):
         observed = observed if observed is not None else []
         client = Client({'command': [sys.executable, str(Path(__file__).with_name('output_fixture.py')), mode],
                          'cwd': '/tmp'}, lambda kind, **data: observed.append((kind, data)))
         try:
             await client.start()
             await client.open_session('output-test' if replay else None)
-            return await client.prompt('Existing work', 5)
+            async def on_chunk(text):
+                if chunks is not None:
+                    chunks.append(text)
+            result = await client.prompt('Existing work', 5, on_chunk=on_chunk)
+            if receipts:
+                result['receipts'] = await client.request('_session/input_receipts', {'sessionId': client.session})
+            return result
         finally:
             await client.close()
 
@@ -54,8 +60,8 @@ class Revisions(unittest.IsolatedAsyncioTestCase):
     async def test_commentary_only_and_empty_final_have_no_answer(self):
         self.assertEqual((await self.result('commentary_only'))['final_text'], '')
 
-    async def test_late_content_for_initially_empty_older_id_does_not_promote_it(self):
-        self.assertEqual((await self.result('empty_first'))['final_text'], 'Current.')
+    async def test_empty_envelope_does_not_reserve_message_order_before_real_text(self):
+        self.assertEqual((await self.result('empty_first'))['final_text'], 'Late old text.')
 
     async def test_mixed_unidentified_old_tail_does_not_promote_it(self):
         self.assertEqual((await self.result('mixed'))['final_text'], 'Current.')
@@ -71,6 +77,30 @@ class Revisions(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result['final_text'], 'Sticks already delivered.')
         self.assertNotIn('Saved history.', result['text'])
 
-    async def test_empty_message_ids_are_bounded_even_without_text(self):
+    async def test_nonempty_message_id_count_is_bounded(self):
         with self.assertRaisesRegex(ProtocolError, 'message identity exceeds'):
             await self.result('identity_limit')
+
+    async def test_receipt_without_id_does_not_reserve_legacy_answer_order(self):
+        self.assertEqual((await self.result('receipt_before_legacy'))['final_text'], 'Current answer.')
+
+    async def test_receipt_after_tool_does_not_modify_selected_text(self):
+        self.assertEqual((await self.result('receipt_after_tool'))['final_text'], 'Answer.')
+
+    async def test_receipt_does_not_consume_legacy_tool_separator(self):
+        self.assertEqual((await self.result('receipt_before_tail'))['final_text'], 'Before.\n\nAfter.')
+
+    async def test_empty_envelope_does_not_change_existing_message_phase(self):
+        self.assertEqual((await self.result('empty_phase'))['final_text'], 'Current.')
+
+    async def test_empty_metadata_does_not_consume_assistant_message_count(self):
+        self.assertEqual((await self.result('empty_flood'))['final_text'], 'Current.')
+
+    async def test_receipt_only_turn_has_no_text_callbacks_but_receipts_are_retrievable(self):
+        chunks = []
+        result = await self.result('receipt_only', chunks=chunks, receipts=True)
+        self.assertEqual(result['final_text'], '')
+        self.assertEqual(result['text'], '')
+        self.assertEqual(chunks, [])
+        self.assertEqual(result['receipts']['inputReceipts'][0]['state'], 'incorporated')
+        self.assertEqual(result['receipts']['inputReceipts'][0]['inputId'], 'source-update')

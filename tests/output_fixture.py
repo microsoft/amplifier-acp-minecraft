@@ -18,6 +18,13 @@ def chunk(ident, text, phase=None):
     return update
 
 
+def receipt():
+    update = chunk(None, '')
+    update['_meta'] = {'io.github.bkrabach.agent-runtime': {'inputReceipt': {
+        'inputId': 'source-update', 'turnId': 'active-turn', 'sequence': 1, 'state': 'incorporated'}}}
+    return update
+
+
 def updates():
     revised = [chunk('draft', 'Need sticks.', 'final_answer'),
                chunk('new', 'Sticks already ', 'final_answer'),
@@ -49,6 +56,18 @@ def updates():
                 chunk('empty', '', 'final_answer')]
     if mode == 'empty_first':
         return [chunk('old', ''), chunk('new', 'Current.'), chunk('old', 'Late old text.')]
+    if mode == 'receipt_before_legacy':
+        return [receipt(), chunk('draft', 'Draft.'), chunk(None, 'Current answer.')]
+    if mode == 'receipt_after_tool':
+        return [chunk(None, 'Answer.'), tool, tool_done, receipt()]
+    if mode == 'receipt_before_tail':
+        return [chunk(None, 'Before.'), tool, tool_done, receipt(), chunk(None, 'After.')]
+    if mode == 'receipt_only':
+        return [receipt()]
+    if mode == 'empty_phase':
+        return [chunk('old', 'Old.'), chunk('new', 'Current.'), chunk('new', '', 'commentary')]
+    if mode == 'empty_flood':
+        return [chunk('answer', 'Current.')] + [chunk(str(i), '') for i in range(1100)]
     if mode == 'mixed':
         return [chunk(None, 'Legacy.'), chunk('new', 'Current.'), chunk(None, ' Older tail.')]
     if mode == 'metadata':
@@ -57,7 +76,7 @@ def updates():
         b['_meta'] = {'com.microsoft.amplifier.message': 'unrecognized'}
         return [a, b]
     if mode == 'identity_limit':
-        return [chunk(str(i), '') for i in range(1025)]
+        return [chunk(str(i), 'a') for i in range(1025)]
     if mode == 'phase_change':
         return [chunk('old', 'Old.'), chunk('new', 'Current ', 'commentary'),
                 chunk('new', 'answer.', 'final_answer'), chunk('old', ' late tail.')]
@@ -71,6 +90,8 @@ for line in sys.stdin:
         result = {'protocolVersion': 1, 'agentCapabilities': {'loadSession': True}}
     elif method == 'session/new':
         result = {'sessionId': 'output-test'}
+    elif method == '_session/input_receipts':
+        result = {'inputReceipts': [receipt()['_meta']['io.github.bkrabach.agent-runtime']['inputReceipt']]}
     elif method in ('session/prompt', 'session/load'):
         for update in updates() if method == 'session/prompt' else [chunk('new', 'Saved history.', 'final_answer')]:
             emit({'method': 'session/update', 'params': {'sessionId': 'output-test', 'update': update}})
