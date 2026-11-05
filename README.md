@@ -269,6 +269,10 @@ records that the call returned; it does not independently verify task completion
 These projections do not modify the stored history or owner access to it.
 Outgoing `chat`, public `tell`, replies and notices record the actual text handed
 to public chat separately, so shared readers can still follow the conversation.
+Final replies use up to eight paced chat messages, bounded by the platform's
+UTF-16 limit. Longer replies end with an explicit shortening notice instead of
+silently dropping the end. Delivery stops if the public conversation changes;
+delivery counts describe what was sent, without logging the reply payload.
 A failed send does not create that record; it is not proof of remote delivery.
 
 For a same-machine [Agent Instance](https://github.com/microsoft/amplifier-constellation-instance):

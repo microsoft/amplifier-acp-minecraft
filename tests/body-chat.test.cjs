@@ -43,6 +43,17 @@ test('real watch context changes when a nearby crop ripens without a planner tur
   assert.equal(JSON.stringify(f.history.data),before);assert.equal(f.inbox.length,0);
  }finally{f.close();}
 });
+test('final reply route accepts eight bounded chunks without changing task authority',async()=>{
+ const f=fixture('BuilderOne');try{
+  const sent=[];f.bot.chat=text=>sent.push(text);f.startFixtureTurn();
+  const before=JSON.stringify(f.history.task());
+  for(let i=0;i<8;i++)await f.request('/reply',{text:`Tour part ${i+1}`,conversation_revision:'empty'});
+  assert.equal(sent.length,8);
+  const denied=await f.request('/reply',{text:'Ninth chunk',conversation_revision:'empty'},400);
+  assert.equal(denied.error,'Reply window is closed');assert.equal(sent.length,8);
+  assert.equal(JSON.stringify(f.history.task()),before);
+ }finally{f.close();}
+});
 test('real chat listeners queue sentence-end addresses and keep expired work unchanged',()=>{
  const one=fixture('BuilderOne'),two=fixture('BuilderTwo');
  try{
