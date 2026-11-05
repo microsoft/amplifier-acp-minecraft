@@ -165,6 +165,13 @@ marks that existing task ready; it does not bypass planner capacity or start an
 ACP prompt. Watch expirations and decision-service quotas still apply, and no
 expired watch is revived. State survives controller restarts.
 
+Public hourly-capacity notices are sent once per wait and at most once every
+15 minutes per installation. A brief resumption or controller restart does not
+reset that cadence. The last attempted notice time is persisted before sending
+in `capacity-notice.json`, so an ambiguous delivery is not immediately repeated.
+Every capacity wait and resumption remains observable; this only limits repeated
+public notices, not conversation delivery, interruption notices, or work limits.
+
 Stop cancels work and revokes the current action lease. Interrupted work requires
 inspection. Clean model turn limits can continue only when tools have settled and
 the body is idle, within the existing task budget. `review` means the agent has
