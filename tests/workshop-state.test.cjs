@@ -244,3 +244,24 @@ test('review claimed during an interrupted turn cannot bypass receipt reconcilia
   const rid=correction(s);s.startTurn({peerOnly:true,requestIds:[rid]});assert.throws(()=>s.reopen({task_id:task.id,request_id:rid,reason:'bypass interruption'}));
  }
 });
+
+test('explicit operator review can recover an accidental stop without replacing or replenishing work',t=>{
+ const s=fixture(t);const task=s.begin({request_id:request(s),goal:'Existing independent build'});
+ s.startTurn();s.actionStarted('walk');s.actionSettled('walk',false);s.finish(true);s.stop();
+ const before=JSON.parse(JSON.stringify(task));
+ for(const value of [undefined,false,'true',1])assert.throws(()=>s.resumeReviewed({task_id:task.id,reason:'Inspected stop',resume_stopped:value}));
+ s.resumeReviewed({task_id:task.id,resume_stopped:true,reason:'Operator verified agent route cancellation, no human stop, settled movement, same valid work remains.'});
+ for(const field of ['id','request_id','started_at','deadline','max_turns','turns','last_turn'])assert.deepEqual(task[field],before[field]);
+ assert.equal(task.status,'running');assert.equal(task.progress.at(-1).previous_status,'stopped');
+ assert.equal(s.data.turn,null);assert.equal(new WorkshopState(s.file).task().status,'running');
+});
+test('explicit stopped-task review cannot bypass stale identity, active work, reason or limits',t=>{
+ for(const problem of ['stale','active','no_reason','deadline','turns']){
+  const s=fixture(t);const task=s.begin({request_id:request(s),goal:'Existing build'});s.stop();
+  if(problem==='active')s.data.turn={task_id:task.id};
+  if(problem==='deadline')task.deadline=Date.now()-1;
+  if(problem==='turns')task.turns=task.max_turns;
+  assert.throws(()=>s.resumeReviewed({task_id:problem==='stale'?'other':task.id,reason:problem==='no_reason'?' ':'Inspected',resume_stopped:true}));
+  assert.equal(task.status,'stopped');
+ }
+});

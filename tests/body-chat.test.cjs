@@ -233,3 +233,20 @@ test('stick deposit prevents a cancellation composed against older conversation 
   assert.equal(sent.length,1);assert.ok(sent[0].includes('Checking the chest'));
  }finally{f.close();}
 });
+
+test('operator stopped-task recovery uses the real idle generation gate and explicit authorization',async()=>{
+ const f=fixture('BuilderOne');try{
+  f.bot.pathfinder={setGoal(){}};f.bot.clearControlStates=()=>{};f.bot.stopDigging=()=>{};
+  Object.assign(f.history.data.task,{status:'running',deadline:Date.now()+3600000,turns:7,max_turns:45});
+  f.startFixtureTurn();await f.operate('stop');
+  const before=JSON.parse(JSON.stringify(f.history.task())),generation=(await f.request('/conversation')).generation;
+  const args={task_id:before.id,reason:'Operator inspected an accidental route stop; original human allowance remains valid.',generation,resume_stopped:true};
+  await f.request('/resume-reviewed',{...args,resume_stopped:false},400);
+  await f.request('/resume-reviewed',{...args,generation:generation-1},400);
+  const recovered=await f.request('/resume-reviewed',args);
+  assert.equal(recovered.status,'running');
+  for(const field of ['id','deadline','turns','max_turns'])assert.equal(recovered[field],before[field]);
+  assert.equal(f.history.data.turn,null);assert.equal((await f.request('/conversation')).turn_active,false);
+  await assert.rejects(f.operate('resume-reviewed',args),/No active agent turn/);
+ }finally{f.close();}
+});

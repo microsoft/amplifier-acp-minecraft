@@ -255,6 +255,21 @@ free to reason about capability changes without Minecraft-specific runtime code.
 
 ## Action timeouts
 
+`cancel_movement` abandons only an in-flight `move` or `follow` while preserving
+its existing task, turn deadline and consumed budget. Wait for the original action
+to settle, inspect the actual position, and then choose another route. It refuses
+to cancel a different action; an idle call is a no-op. `stop` still ends the whole
+assignment, including when a human asks to stop. Unsettled workers keep the body
+busy and remain subject to the action timeout; cancellation never proves arrival.
+
+The authenticated operator-only `/resume-reviewed` endpoint can also recover an
+accidentally stopped assignment with `resume_stopped: true`, its exact `task_id`,
+current `generation`, and a concrete `reason`. Review the stop's origin and settled
+effects first. A human stop requires subsequent human authorization; this is never
+automatic recovery or an agent tool. Normal recovery still refuses stopped work.
+The original deadline, task identity and consumed turn budget remain unchanged;
+expired/exhausted or active tasks cannot be resumed. Unknown work is not replayed.
+
 A movement action has a 60-second limit. On timeout the body cancels the old
 action generation and waits briefly for its worker to settle. A settled movement
 failure leaves the existing turn available for inspection and a progress report;

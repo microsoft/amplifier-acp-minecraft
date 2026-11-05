@@ -7,10 +7,10 @@ const {Vec3}=require('vec3');
 const {boundedAction}=require('../action-deadline.cjs');
 const root=path.resolve(__dirname,'..'),realRequire=createRequire(path.join(root,'body.cjs'));
 const wait=ms=>new Promise(resolve=>setTimeout(resolve,ms));
-function fixture({ignoreCancel=false,cleanupMs=0}={}){
+function fixture({ignoreCancel=false,cleanupMs=0,timeoutMs=10}={}){
  const home=fs.mkdtempSync(path.join(os.tmpdir(),'body-timeout-'));
  const config=path.join(home,'config.json');fs.writeFileSync(config,JSON.stringify({username:'Fixture',token:'fixture'}));
- const bot=new EventEmitter();bot.username='Fixture';bot.entity={position:new Vec3(.5,64,.5)};bot.players={};
+ const bot=new EventEmitter();bot.username='Fixture';bot.entity={position:new Vec3(.5,64,.5)};bot.players={};bot.entities={1:{id:1,uuid:'fixture-target',position:new Vec3(2,64,0)}};
  bot.loadPlugin=()=>{};bot.clearControlStates=()=>{};bot.stopDigging=()=>{};
  let rejectMovement,releaseMovement,starts=0;
  bot.pathfinder={setGoal(goal){if(goal===null&&!ignoreCancel&&rejectMovement)setTimeout(()=>rejectMovement(Error('Movement cancelled')),cleanupMs);}};
@@ -21,12 +21,12 @@ function fixture({ignoreCancel=false,cleanupMs=0}={}){
   if(name==='node:http')return {createServer:()=>({listen(){},close(){}})};
   if(name==='./spatial.cjs')return spatial;
   if(name==='./containers.cjs')return {container:()=>spatial.gotoWithProgress()};
-  if(name==='./action-deadline.cjs')return {boundedAction:(work,options)=>boundedAction(work,{...options,timeoutMs:10,settleMs:40})};
+  if(name==='./action-deadline.cjs')return {boundedAction:(work,options)=>boundedAction(work,{...options,timeoutMs,settleMs:40})};
   return realRequire(name);
  };
  const context=vm.createContext({require:requireMock,module:{exports:{}},console:{log(){}},Buffer,
   process:{argv:['node','body.cjs',config],on(){},exit(){assert.fail('Unexpected process exit');}},
-  setTimeout:(fn,ms)=>setTimeout(fn,ms===60000?10:ms===250?1:ms),clearTimeout});
+  setTimeout:(fn,ms)=>setTimeout(fn,ms===250?1:ms),clearTimeout});
  const source=fs.readFileSync(process.env.WORKSHOP_TEST_BODY_PATH||path.join(root,'body.cjs'),'utf8');
  vm.runInContext(source+`
    ready=true;
@@ -77,5 +77,47 @@ test('a non-movement timeout retains the conservative closed-turn behavior',asyn
   assert.equal(f.state().turnUntil,0);assert.equal(f.state().busy,false);
   assert.equal(f.history.data.events.at(-1).operation_settled,true);
   assert.equal(f.history.data.events.at(-1).turn_preserved,false);
+ }finally{f.close();}
+});
+
+for(const action of ['move','follow'])test(`cancel_movement abandons ${action} without cancelling the assignment`,async()=>{
+ const f=fixture({timeoutMs:5000});try{
+  const before=JSON.stringify(f.history.task()),initial=f.state(),turn=JSON.stringify(f.history.data.turn);
+  const work=f.operate(action,action==='move'?{x:2,y:64,z:0,mode:'normal'}:{entity_id:1,uuid:'fixture-target',seconds:5});
+  const failed=assert.rejects(work,/cancelled/i);await wait(5);
+  const receipt=await f.operate('cancel_movement');assert.equal(receipt.cancellation_requested,true);
+  assert.equal(receipt.task_preserved,true);assert.equal(f.state().turnUntil,initial.turnUntil);
+  await failed;assert.equal(f.state().busy,false);assert.equal(JSON.stringify(f.history.task()),before);
+  assert.equal(f.history.data.turn.started_at,JSON.parse(turn).started_at);
+  assert.equal(f.history.data.turn.actions[0].status,'uncertain','cancellation is not proof of arrival');
+  assert.equal(f.history.data.events.filter(e=>e.kind==='action_result').length,0);
+  await f.operate('work_report',{status:'waiting',summary:'Route cancelled; inspect new footing before a different route.',wait_for:'Route evidence'});
+  assert.equal(f.history.task().turns,initial.task.turns);
+ }finally{f.close();}
+});
+test('idle movement cancellation changes no authority or generation',async()=>{
+ const f=fixture();try{
+  const before=JSON.stringify(f.state()),turn=JSON.stringify(f.history.data.turn);
+  assert.equal((await f.operate('cancel_movement')).cancellation_requested,false);
+  assert.equal(JSON.stringify(f.state()),before);assert.equal(JSON.stringify(f.history.data.turn),turn);
+ }finally{f.close();}
+});
+test('movement cancellation refuses a different in-flight effect',async()=>{
+ const f=fixture({timeoutMs:1000});try{
+  const work=f.operate('container',{conversation_revision:(await f.operate('conversation')).revision,contents_revision:'fixture',x:2,y:64,z:0,operation:'deposit',item:'oak_planks',count:1});
+  await wait(5);const generation=f.state().generation;
+  await assert.rejects(f.operate('cancel_movement'),/Only move\/follow/);
+  assert.equal(f.state().generation,generation);assert.equal(f.state().busy,true);
+  f.release();await work;
+ }finally{f.close();}
+});
+test('movement cancellation keeps unresolved workers exclusive and still obeys human Stop',async()=>{
+ const f=fixture({ignoreCancel:true,timeoutMs:1000});try{
+  const move=f.operate('move',{x:2,y:64,z:0,mode:'normal'}),failed=assert.rejects(move,/cancelled/i);
+  await wait(5);await f.operate('cancel_movement');assert.equal(f.state().busy,true);
+  await assert.rejects(f.operate('move',{x:3,y:64,z:0}),/Another action/);
+  await f.operate('stop');f.release();await failed;
+  assert.equal(f.state().turnUntil,0);assert.equal(f.history.task().status,'stopped');
+  await f.operate('cancel_movement');assert.equal(f.history.task().status,'stopped');
  }finally{f.close();}
 });
