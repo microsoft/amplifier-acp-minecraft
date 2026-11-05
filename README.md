@@ -564,7 +564,12 @@ source IDs, prompt binding, delivery and incorporation states, without copying
 message bodies. At most 16 batches of 16 recent public messages are submitted per
 turn. Whispers, private Operator briefs and raw action receipts never enter this
 projection. Unknown delivery is not retried; a receipt query may establish later
-incorporation. Receipt failure or an unreadable journal does not authorize replay.
+incorporation only when the endpoint separately advertises
+`_meta.steering.receiptsMethod: "_session/input_receipts"`. Steering alone does
+not promise that native Runtime extension. Without it, the journal retains the
+delivery acknowledgment and reports receipt coverage as `unsupported`; it does
+not claim incorporation, probe unknown methods, or replay the input. Receipt
+failure or an unreadable journal does not authorize replay.
 Late input remains history and follows ordinary attention/inbox handling.
 
 A generic ACP endpoint need not implement steering. It receives new public

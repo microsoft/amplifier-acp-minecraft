@@ -58,10 +58,39 @@ class AwarenessWire(unittest.IsolatedAsyncioTestCase):
         finally:
             await c.close()
 
-    async def test_native_and_codex_shaped_endpoints_use_the_same_optional_contract(self):
-        for mode in ('native', 'codex'):
-            with self.subTest(mode=mode):
-                await self.exercise(mode)
+    async def test_advertised_native_receipts_reconcile_delivery(self):
+        await self.exercise('native')
+
+    async def test_steering_without_receipt_capability_never_queries_or_claims_incorporation(self):
+        observed = []
+        c = Client({'command': [sys.executable, str(FIXTURE), 'codex'], 'cwd': '/tmp'},
+                   lambda kind, **data: observed.append((kind, data)))
+        try:
+            await c.start(); await c.open_session()
+            c.permission_active = lambda: True
+            with tempfile.TemporaryDirectory() as tmp:
+                a = Awareness(tmp, c, {'revision': 'old'}, c.observe)
+                task = asyncio.create_task(c.prompt('Existing accepted work', 10))
+                while c.active_prompt_id is None:
+                    await asyncio.sleep(.001)
+                await a.consider(snapshot())
+                result = await task
+                self.assertEqual(result['final_text'], 'Fresh peer evidence received.')
+                before = c.next_id
+                await a.finish()
+                self.assertEqual(c.next_id, before, 'Do not probe an unadvertised native extension')
+                self.assertEqual(a.sent[0]['state'], 'received')
+                self.assertIsNone(a.final_revision(snapshot()))
+                self.assertIn(('awareness_receipt_unavailable', {'category': 'unsupported'}), observed)
+                self.assertFalse(any(kind == 'awareness_receipt' for kind, _ in observed))
+                # Unknown incorporation is not a license to replay the update.
+                other = Awareness(tmp, c, {'revision': 'old'}, c.observe)
+                await other.consider(snapshot())
+                self.assertEqual(other.sent, [])
+                self.assertEqual(other.receipts[-1]['state'], 'received')
+                self.assertEqual(c.next_id, before)
+        finally:
+            await c.close()
 
     async def test_lost_steering_response_is_unknown_then_queryable_without_replay(self):
         await self.exercise('lost')
@@ -147,3 +176,14 @@ class AwarenessWire(unittest.IsolatedAsyncioTestCase):
                       {'_meta': {'steering': True}}, {'_meta': {'io.github.bkrabach.agent-instance': {'inputContinuity': {'awareness': True}}}}):
             c.info = value
             self.assertFalse(c.supports_awareness())
+
+    def test_receipt_queries_require_their_own_advertised_capability(self):
+        c = Client({}, lambda *a, **k: None)
+        for value in (None, [], {'_meta': None}, {'_meta': {'steering': True}},
+                      {'_meta': {'steering': {'supported': True}}},
+                      {'_meta': {'steering': {'supported': False, 'receiptsMethod': '_session/input_receipts'}}},
+                      {'_meta': {'steering': {'supported': True, 'receiptsMethod': '_session/unknown'}}}):
+            c.info = value
+            self.assertFalse(c.supports_input_receipts())
+        c.info = {'_meta': {'steering': {'supported': True, 'receiptsMethod': '_session/input_receipts'}}}
+        self.assertTrue(c.supports_input_receipts())

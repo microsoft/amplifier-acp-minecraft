@@ -115,6 +115,11 @@ class Awareness:
     async def finish(self):
         if not self.sent:
             return
+        if not self.client.supports_input_receipts():
+            # An injected acknowledgment is not proof of incorporation. Leave
+            # the journal intact, with no probe, replay or new prompt fallback.
+            self.observe('awareness_receipt_unavailable', category='unsupported')
+            return
         try:
             result = await asyncio.wait_for(self.client.request('_session/input_receipts', {'sessionId': self.client.session}), 3)
             records = {r.get('inputId'): r for r in result.get('inputReceipts', [])}

@@ -34,7 +34,7 @@ for line in sys.stdin:
         send({'id': message['id'], 'result': {'protocolVersion': 1,
               'agentInfo': {'name': 'codex' if mode == 'codex' else 'native'},
               'agentCapabilities': {'loadSession': True}, '_meta': {
-                  'steering': {'supported': True}, 'io.github.bkrabach.agent-instance': {
+                  'steering': {'supported': True, **({} if mode == 'codex' else {'receiptsMethod': '_session/input_receipts'})}, 'io.github.bkrabach.agent-instance': {
                       'inputContinuity': {'awareness': {'version': 1, 'activeOnly': True, 'promptIdRequired': True}}}}}})
     elif method == 'session/new':
         send({'id': message['id'], 'result': {'sessionId': sid}})
@@ -62,7 +62,10 @@ for line in sys.stdin:
             if mode != 'lost':
                 send({'id': message['id'], 'result': {'outcome': 'injected'}})
     elif method == '_session/input_receipts':
-        send({'id': message['id'], 'result': {'inputReceipts': receipts}})
+        if mode == 'codex':
+            send({'id': message['id'], 'error': {'code': -32601}})
+        else:
+            send({'id': message['id'], 'result': {'inputReceipts': receipts}})
     elif method == 'session/cancel':
         if active is not None:
             send({'id': active, 'result': {'stopReason': 'cancelled'}})

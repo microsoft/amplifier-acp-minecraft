@@ -122,6 +122,14 @@ class Client:
                 and capability.get('version') == 1 and capability.get('activeOnly') is True
                 and capability.get('promptIdRequired') is True)
 
+    def supports_input_receipts(self):
+        # Steering support alone does not promise native Runtime receipt reads.
+        # Preserve each third-party endpoint's actual advertised guarantees.
+        meta = self.info.get('_meta') if isinstance(self.info, dict) else None
+        steering = meta.get('steering') if isinstance(meta, dict) else None
+        return (isinstance(steering, dict) and steering.get('supported') is True
+                and steering.get('receiptsMethod') == '_session/input_receipts')
+
     async def _callback(self, value):
         if value['method'] != 'session/request_permission':
             await self.send({'id': value['id'], 'error': {'code': -32601, 'message': 'Client capability not offered'}})
