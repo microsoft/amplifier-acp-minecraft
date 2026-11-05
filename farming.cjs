@@ -1,6 +1,11 @@
 // One ordinary hoe interaction. No movement, digging, planting or retry loop.
 const {refreshInventory}=require('./inventory.cjs');
 const hoes=new Set(['wooden_hoe','stone_hoe','iron_hoe','golden_hoe','diamond_hoe','netherite_hoe']);
+// Planting consumes an inventory item but produces a differently named block.
+// Only exact known results count; an arbitrary changed block is not evidence.
+const cropBlocks=Object.freeze({wheat_seeds:'wheat',beetroot_seeds:'beetroots',
+ melon_seeds:'melon_stem',pumpkin_seeds:'pumpkin_stem',carrot:'carrots',potato:'potatoes'});
+function plantedBlocks(item){return Object.hasOwn(cropBlocks,item)?[cropBlocks[item]]:[];}
 function target(bot,p,expected){
  const b=bot.blockAt(p);
  if(!['grass_block','dirt'].includes(expected)||b?.name!==expected)throw Error('Till requires the expected grass_block or dirt; inspect first. Coarse/rooted dirt need separate preparation.');
@@ -45,4 +50,4 @@ async function till(bot,p,a,check,{timeoutMs=3000}={}){
    error:e.message,guidance:'An interaction may have reached the server. Inspect before retrying; no automatic retry occurred.'};
  }finally{clearTimeout(timer);bot.removeListener('blockUpdate',listener);}
 }
-module.exports={till,target};
+module.exports={till,target,plantedBlocks};
