@@ -672,6 +672,22 @@ details are never broadcast as final chat. See the shared
 
 ### Farming and movement repair
 
+`gather(block, targets, count)` mines an explicit ordered list of 1–8 unique
+coordinates, within 24 blocks of the player's starting position. `count` defaults
+to one and cannot exceed the list length. Use `find`, `map`, `inspect` and public
+conversation to select a resource site first. A block's type does not distinguish
+natural stone or timber from another player's paving, walls or posts. Selection
+is the agent's responsibility; the adapter does not claim to know block ownership.
+
+Gathering never searches for a substitute. It stops on a changed, unloaded,
+unsafe or unreachable target, and rechecks the target after walking and equipping
+a tool. Results list exact removed coordinates and observed replacement blocks,
+with inventory deltas summed across stacks. An unconfirmed removal stops the
+batch without a retry. The old name/count-only call is refused before movement or
+digging; callers must supply `targets`. Ordinary movement, footing, harvesting,
+Stop and task-budget checks still apply. This is a Minecraft tool contract; ACP
+and Instance attention are unchanged.
+
 `till(x,y,z,expected)` uses one inventory hoe on an expected grass/dirt block
 within clear reach. It verifies air above, the held hoe and the target after
 aiming, and accepts only a matching server farmland update as success. It does

@@ -217,11 +217,19 @@ async function operate(name,a={}){
         return {position:bot.entity.position.clone(),target:survival.describe(bot,target),within_three_blocks:target.position.distanceTo(bot.entity.position)<=3};
       }
       if(name==='gather'){
-        let mined=0;const before=snapshot().inventory;let blocked=null;
-        for(let n=0;n<a.count;n++){
-          check();const candidates=bot.findBlocks({matching:b=>b.name===a.block,maxDistance:24,count:12});let block=null;
-          for(const p of candidates){try{const candidate=bot.blockAt(p);spatial.digGuard(bot,candidate);spatial.harvestTool(bot,candidate);block=candidate;break;}catch(e){blocked=e.message;}}
-          if(!block)break;
+        // Resource names do not establish ownership. Never choose a nearby
+        // building block on behalf of the caller, or substitute a new target.
+        const count=a.count??1;
+        if(!Array.isArray(a.targets)||!a.targets.length||a.targets.length>8)throw Error('Gather requires 1–8 explicit targets. Use find/map/inspect to select resource blocks; do not select player builds.');
+        if(!Number.isInteger(count)||count<1||count>8||count>a.targets.length)throw Error('Gather count must be 1–8 and no greater than the target selection');
+        const origin=bot.entity.position.clone();
+        const targets=a.targets.map(t=>{if(!t||![t.x,t.y,t.z].every(Number.isInteger)||t.y< -64||t.y>319)throw Error('Gather targets must be whole block coordinates');const p=new Vec3(t.x,t.y,t.z);if(p.distanceTo(origin)>24)throw Error('Gather targets must be within 24 blocks of the starting position');return p;});
+        if(new Set(targets.map(p=>p.toString())).size!==targets.length)throw Error('Gather target selection must not contain duplicates');
+        const before=snapshot().inventory,removed=[];let blocked=null,error=null;
+        const target=p=>{const b=bot.blockAt(p);if(!b||b.name!==a.block)throw Error('Selected target changed or is unloaded; inspect it before choosing more resources');spatial.digGuard(bot,b);spatial.harvestTool(bot,b);return b;};
+        for(const p of targets.slice(0,count)){
+          check();let block;
+          try{block=target(p);}catch(e){blocked=e.message;break;}
           if(!bot.canDigBlock(block)){
             const spots=[];for(let y=block.position.y-1;y<=block.position.y+1;y++)for(let x=block.position.x-2;x<=block.position.x+2;x++)for(let z=block.position.z-2;z<=block.position.z+2;z++){
               const p=new Vec3(x,y,z);if(!p.offset(0,-1,0).equals(block.position)&&spatial.supported(bot,p))spots.push(p);
@@ -230,15 +238,20 @@ async function operate(name,a={}){
             const spot=spots.slice(0,12).find(p=>spatial.route(bot,p).reachable);
             if(!spot){blocked='No confirmed safe route to a standing cell within the planning budget';break;}await go(spot,0,true);
           }
-          check();spatial.digGuard(bot,block);const tool=spatial.harvestTool(bot,block);if(tool)await bot.equip(tool,'hand');
-          check();if(!bot.canDigBlock(block)){blocked='Block is not in reach from safe footing';break;}
-          await bot.dig(block);mined++;await delay(350);check();
+          check();try{block=target(p);}catch(e){blocked=e.message;break;}
+          const tool=spatial.harvestTool(bot,block);if(tool)await bot.equip(tool,'hand');
+          check();try{block=target(p);}catch(e){blocked=e.message;break;}
+          if(!bot.canDigBlock(block)){blocked='Block is not in reach from safe footing';break;}
+          await bot.dig(block);await delay(350);check();
+          const after=bot.blockAt(p)?.name;
+          if(!after||after===a.block){error='Server did not confirm selected block removal; inspect before retrying';blocked=error;break;}
+          removed.push({position:p,before:a.block,after});
           const drop=Object.values(bot.entities).filter(e=>e.name==='item'&&e.position.distanceTo(block.position)<5).sort((a,b)=>a.position.distanceTo(bot.entity.position)-b.position.distanceTo(bot.entity.position))[0];
           const pickup=drop?.position.floored();
           if(pickup&&spatial.supported(bot,pickup)&&spatial.route(bot,pickup).reachable){await go(pickup,0,true);await delay(700);}
         }
-        const inventory=snapshot().inventory,old=Object.fromEntries(before.map(i=>[i.name,i.count]));
-        return {mined,collected:inventory.map(i=>({name:i.name,count:i.count-(old[i.name]||0)})).filter(i=>i.count>0),inventory,blocked,warning:'Broken blocks are not necessarily collected; inspect collected/inventory. Pickup never walks onto unsupported ground.'};
+        const inventory=snapshot().inventory,totals=items=>items.reduce((out,i)=>{out[i.name]=(out[i.name]||0)+i.count;return out;},{}),old=totals(before);
+        return {mined:removed.length,removed,collected:Object.entries(totals(inventory)).map(([name,count])=>({name,count:count-(old[name]||0)})).filter(i=>i.count>0),inventory,blocked,...(error?{error}:{}),warning:'Only selected coordinates are considered. Block type cannot prove natural origin or ownership. Broken blocks are not necessarily collected; inspect collected/inventory. Pickup never walks onto unsupported ground.'};
       }
       if(name==='craft'){
         const item=bot.registry.itemsByName[a.item];if(!item)throw Error('Unknown item');
@@ -308,7 +321,7 @@ const definitions={
   chat:['Pass the latest conversation_revision; reconsider newer public evidence before sending. Say something in Minecraft public chat. No slash commands.',{conversation_revision:revision,text:z.string().min(1).max(240)}],
   move:['Move to exact feet height. mode=walk_only uses level cardinal walking with no jumping/climbing/swimming or wall shortcuts and verifies the observed height. Rechecks terrain and stops on obstruction, lost footing or Stop. Normal mode may jump/climb. Range is horizontal only; use 0 for a precise destination.',{...xyz,range:z.number().int().min(0).max(3).default(0),mode:z.enum(['normal','walk_only']).default('normal')}],
   follow:['Follow a visible player by name OR a moving animal by entity_id and uuid from entities. Bounded duration, no digging. Rechecks identity and reports actual proximity; useful for approaching sheep that move between observations.',{player:z.string().optional(),entity_id:z.number().int().optional(),uuid:z.string().uuid().optional(),seconds:z.number().int().min(1).max(30).default(10)}],
-  gather:['Mine up to count nearby blocks of the exact block name and walk to collect drops. Reports actual inventory.',{block:z.string(),count:z.number().int().min(1).max(8).default(1)}],
+  gather:['Mine only explicitly selected targets, in order, up to count. First use find/map/inspect and conversation to select resource blocks, not player builds: type alone cannot prove natural origin. Targets must be unique and within 24 blocks at the start. Never searches for replacements; changed/unsafe targets stop the batch. May walk to safe footing and drops. Returns exact removed coordinates and inventory deltas; inspect partial/unconfirmed results before retrying.',{block:z.string(),count:z.number().int().min(1).max(8).default(1),targets:z.array(z.object(xyz)).min(1).max(8)}],
   craft:['Craft recipe executions using your inventory and a nearby table when needed. Counts are recipe executions.',{item:z.string(),count:z.number().int().min(1).max(8).default(1)}],
   place:['Place an inventory block. support_face is the outward normal from support toward target (north=-z, east=+x). Optional facing supports ordinary signs (text front), beds (foot toward head), stairs (uphill direction), and furnace/blast_furnace/smoker (front). It is verified against server block properties; a mismatch requires inspection, not blind replay. For standing signs choose support_face=up; horizontal support produces a wall sign. Write text afterward with write_sign. Beds need two empty supported cells. Stair half/shape follow the clicked support and surroundings; inspect the returned properties.',{...xyz,item:z.string(),support_face,facing:z.enum(['north','south','east','west']).optional()}],
   build:['Place a small explicit list of blocks from inventory; stops and reports partial progress on failure.',{item:z.string(),support_face,blocks:z.array(z.object(xyz)).min(1).max(24)}],
