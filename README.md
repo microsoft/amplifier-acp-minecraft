@@ -118,6 +118,20 @@ server inventory. Sign writes verify the server's text echo and can reject stale
 edits with `expected_lines`. Item drops remain physical world interactions:
 another nearby player may collect them, so verify the recipient's inventory.
 
+`place.facing` selects a cardinal direction for ordinary signs (text front), beds
+(foot toward head), stairs (uphill direction), and furnaces, blast furnaces or
+smokers (front). Placement checks the observed server block properties before
+reporting success. An orientation mismatch may have placed a block: inspect it
+instead of repeating the action. Stair half and shape remain determined by the
+support face and surroundings; the result includes their observed properties.
+Other block types retain ordinary placement without an explicit facing.
+
+`tests/facing_live.py --node /path/to/node --properties /path/to/server.properties
+--out /path/to/results.json` checks twenty furnace/stair orientations through the
+real body, with independent server block-state confirmation. It accepts only a
+loopback disposable `facing-fixture`, `farming-fixture` or `container-fixture`
+world and uses no model calls. Never run fixture tests against a shared world.
+
 `tests/movement_live.py --node /path/to/node --properties /path/to/server.properties
 --out /path/to/results.json` checks climbs, descents and blocked head clearance
 through the body against a loopback-only disposable `movement-fixture` or
