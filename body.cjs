@@ -105,6 +105,7 @@ function snapshot(){
 function watchContext(){
  return watchBridge.context(cfg,history,{ready,position:bot.entity?.position,health:bot.health,
   inventory:ready?bot.inventory.items().map(i=>({name:i.name,count:i.count})):[],
+  crops:ready?farming.observeCrops(bot):null,
   players:ready?Object.values(bot.players).map(p=>({name:p.username,position:p.entity?.position})):[]});
 }
 async function watchOperation(action){

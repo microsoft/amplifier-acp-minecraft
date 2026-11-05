@@ -26,6 +26,23 @@ function fixture(name,semantic=false){
   assert.equal(code,expectedStatus,body);return JSON.parse(body);
  },close:()=>fs.rmSync(home,{recursive:true,force:true})};
 }
+test('real watch context changes when a nearby crop ripens without a planner turn or game action',async()=>{
+ const f=fixture('BuilderOne');try{
+  const {Vec3}=realRequire('vec3');let age=0;
+  f.bot.entity={position:new Vec3(-2,63,0)};f.bot.health=20;f.bot.inventory={items:()=>[]};
+  f.bot.findBlocks=()=>[new Vec3(-2,63,1)];
+  f.bot.blockAt=()=>({name:'wheat',getProperties:()=>({age})});
+  f.startFixtureTurn();const before=JSON.stringify(f.history.data);
+  const initial=await f.request('/watch-context');
+  age=7;
+  const ripe=await f.request('/watch-context');
+  const first=initial.events.find(e=>e.id==='environment:crops'),second=ripe.events.find(e=>e.id==='environment:crops');
+  assert.equal(first.content.blocks[0].properties.age,0);
+  assert.equal(second.content.blocks[0].properties.age,7);
+  assert.equal(second.kind,'environment');assert.equal(second.id,first.id);
+  assert.equal(JSON.stringify(f.history.data),before);assert.equal(f.inbox.length,0);
+ }finally{f.close();}
+});
 test('real chat listeners queue sentence-end addresses and keep expired work unchanged',()=>{
  const one=fixture('BuilderOne'),two=fixture('BuilderTwo');
  try{

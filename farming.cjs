@@ -6,6 +6,25 @@ const hoes=new Set(['wooden_hoe','stone_hoe','iron_hoe','golden_hoe','diamond_ho
 const cropBlocks=Object.freeze({wheat_seeds:'wheat',beetroot_seeds:'beetroots',
  melon_seeds:'melon_stem',pumpkin_seeds:'pumpkin_stem',carrot:'carrots',potato:'potatoes'});
 function plantedBlocks(item){return Object.hasOwn(cropBlocks,item)?[cropBlocks[item]]:[];}
+const observedCrops=new Set([...Object.values(cropBlocks),'farmland','nether_wart','cocoa','sweet_berry_bush','torchflower_crop','pitcher_crop']);
+function observeCrops(bot){
+ // Read loaded chunk data only: no walking, growth acceleration or model call.
+ // Stable ordering and no timestamp keep unchanged crops from waking a watch.
+ const radius=16,limit=64;
+ const ids=[...observedCrops].map(name=>bot.registry?.blocksByName?.[name]?.id).filter(Number.isInteger);
+ // Numeric IDs let Mineflayer skip chunk palettes with no relevant blocks.
+ const positions=bot.findBlocks({matching:ids.length?ids:b=>observedCrops.has(b.name),maxDistance:radius,count:limit+1});
+ const blocks=[];let unavailable=0;
+ for(const p of positions.slice(0,limit)){
+  const b=bot.blockAt(p);
+  if(!b||!observedCrops.has(b.name)){unavailable++;continue;}
+  const properties=b.getProperties?.()||{};
+  blocks.push({name:b.name,position:{x:p.x,y:p.y,z:p.z},
+   properties:Object.fromEntries(['age','moisture','stage'].filter(k=>Number.isInteger(properties[k])).map(k=>[k,properties[k]]))});
+ }
+ blocks.sort((a,b)=>a.position.x-b.position.x||a.position.y-b.position.y||a.position.z-b.position.z||a.name.localeCompare(b.name));
+ return {radius_blocks:radius,limit,coverage:'loaded_nearby_blocks',truncated:positions.length>limit,unavailable,blocks};
+}
 function target(bot,p,expected){
  const b=bot.blockAt(p);
  if(!['grass_block','dirt'].includes(expected)||b?.name!==expected)throw Error('Till requires the expected grass_block or dirt; inspect first. Coarse/rooted dirt need separate preparation.');
@@ -50,4 +69,4 @@ async function till(bot,p,a,check,{timeoutMs=3000}={}){
    error:e.message,guidance:'An interaction may have reached the server. Inspect before retrying; no automatic retry occurred.'};
  }finally{clearTimeout(timer);bot.removeListener('blockUpdate',listener);}
 }
-module.exports={till,target,plantedBlocks};
+module.exports={till,target,plantedBlocks,observeCrops};
