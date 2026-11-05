@@ -156,8 +156,9 @@ async function operate(name,a={}){
   async function place(p,item,supportFace,facing){
     check();const target=bot.blockAt(p);if(!target||!['air','cave_air','short_grass','tall_grass','snow'].includes(target.name))throw Error('Target is not empty');
     const directions={north:[0,-1],south:[0,1],east:[1,0],west:[-1,0]};
+    const furnaceFacing=['furnace','blast_furnace','smoker'].includes(item),stairsFacing=item.endsWith('_stairs');
     if(facing){
-      if(!item.endsWith('_bed')&&!/_sign$/.test(item))throw Error('Explicit facing is supported for beds and ordinary signs only');
+      if(!item.endsWith('_bed')&&!/_sign$/.test(item)&&!furnaceFacing&&!stairsFacing)throw Error('Explicit facing is supported for beds, ordinary signs, stairs, furnaces, blast furnaces and smokers only');
       if(item.includes('hanging_sign'))throw Error('Explicit facing for hanging signs is not supported');
       if(item.endsWith('_bed')){
        const [dx,dz]=directions[facing],head=p.offset(dx,0,dz);
@@ -171,11 +172,12 @@ async function operate(name,a={}){
     if(bot.heldItem?.name!==item)throw Error('Server did not confirm the requested held item; refresh inventory before retrying');
     const support=spatial.placementSupport(bot,p,supportFace,item);
     check();bot.setControlState('sneak',true);
-    try{await delay(100);check();if(facing){const [dx,dz]=directions[facing],direction=/_sign$/.test(item)?-1:1;await bot.lookAt(bot.entity.position.offset(dx*direction,1.62,dz*direction),false);check();await bot._placeBlockWithOptions(support.block,support.normal,{forceLook:'ignore',swingArm:'right'});}else await bot.placeBlock(support.block,support.normal);}finally{bot.setControlState('sneak',false);}
+    try{await delay(100);check();if(facing){const [dx,dz]=directions[facing],direction=/_sign$/.test(item)||furnaceFacing?-1:1;await bot.lookAt(bot.entity.position.offset(dx*direction,1.62,dz*direction),false);check();await bot._placeBlockWithOptions(support.block,support.normal,{forceLook:'ignore',swingArm:'right'});}else await bot.placeBlock(support.block,support.normal);}finally{bot.setControlState('sneak',false);}
     await delay(180);check();
     const actual=bot.blockAt(p)?.name;const expected=[item,...farming.plantedBlocks(item),...(item.endsWith('torch')?[item.replace('torch','wall_torch')]:[]),...(item.endsWith('_sign')?[item.replace('_sign','_wall_sign')]:[])];
     if(!expected.includes(actual))throw Error(`Placement mismatch: expected ${item}, observed ${actual}`);if(item==='ladder'&&supportFace&&bot.blockAt(p)?.getProperties().facing!==supportFace)throw Error('Ladder was placed but facing differs from requested support_face; inspect before continuing');
     const properties=bot.blockAt(p)?.getProperties();let head;
+    if(facing&&(furnaceFacing||stairsFacing)&&properties?.facing!==facing)throw Error(`${item} was placed but its facing differs from requested ${facing}; observed ${properties?.facing??'unknown'}. Inspect before continuing; do not repeat placement blindly.`);
     if(facing&&/_sign$/.test(item)){
       const correct=actual.includes('_wall_sign')?properties.facing===facing:Number(properties.rotation)==={south:0,west:4,north:8,east:12}[facing];
       if(!correct)throw Error('Sign was placed but its front differs from requested facing; inspect before continuing.');
@@ -300,7 +302,7 @@ const definitions={
   follow:['Follow a visible player by name OR a moving animal by entity_id and uuid from entities. Bounded duration, no digging. Rechecks identity and reports actual proximity; useful for approaching sheep that move between observations.',{player:z.string().optional(),entity_id:z.number().int().optional(),uuid:z.string().uuid().optional(),seconds:z.number().int().min(1).max(30).default(10)}],
   gather:['Mine up to count nearby blocks of the exact block name and walk to collect drops. Reports actual inventory.',{block:z.string(),count:z.number().int().min(1).max(8).default(1)}],
   craft:['Craft recipe executions using your inventory and a nearby table when needed. Counts are recipe executions.',{item:z.string(),count:z.number().int().min(1).max(8).default(1)}],
-  place:['Place an inventory block. support_face is the outward normal from support toward target (north=-z, east=+x). For standing signs choose support_face=up and facing for the text front; horizontal support produces a wall sign. Write text afterward with write_sign. For beds, target is foot and facing points toward head; reserve two empty supported cells.',{...xyz,item:z.string(),support_face,facing:z.enum(['north','south','east','west']).optional()}],
+  place:['Place an inventory block. support_face is the outward normal from support toward target (north=-z, east=+x). Optional facing supports ordinary signs (text front), beds (foot toward head), stairs (uphill direction), and furnace/blast_furnace/smoker (front). It is verified against server block properties; a mismatch requires inspection, not blind replay. For standing signs choose support_face=up; horizontal support produces a wall sign. Write text afterward with write_sign. Beds need two empty supported cells. Stair half/shape follow the clicked support and surroundings; inspect the returned properties.',{...xyz,item:z.string(),support_face,facing:z.enum(['north','south','east','west']).optional()}],
   build:['Place a small explicit list of blocks from inventory; stops and reports partial progress on failure.',{item:z.string(),support_face,blocks:z.array(z.object(xyz)).min(1).max(24)}],
   give:['Read conversation first; pass its revision as conversation_revision and reconsider any changed plan before giving. Hand over inventory items to a stationary visible player 1.8–2.5 blocks away on the same level. Never walks or chases. Observes pickup packets and server inventory; unconfirmed means inspect drops, not retry. Meet and establish readiness first.',{conversation_revision:revision,player:z.string(),item:z.string(),count:z.number().int().min(1).max(64)}],
   stop:['Stop your movement and current work immediately.',{}]
