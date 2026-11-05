@@ -58,6 +58,9 @@ def updates():
         return [chunk('old', ''), chunk('new', 'Current.'), chunk('old', 'Late old text.')]
     if mode == 'receipt_before_legacy':
         return [receipt(), chunk('draft', 'Draft.'), chunk(None, 'Current answer.')]
+    if mode in ('receipt_after_identified', 'empty_old_after_identified'):
+        tail = receipt() if mode == 'receipt_after_identified' else chunk('old', '', 'final_answer')
+        return [chunk('old', 'Need supplies.'), chunk('new', 'Supplies received.'), tail]
     if mode == 'receipt_after_tool':
         return [chunk(None, 'Answer.'), tool, tool_done, receipt()]
     if mode == 'receipt_before_tail':
