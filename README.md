@@ -150,14 +150,24 @@ through the body against a loopback-only disposable `movement-fixture` or
 creates test geometry and must never target a shared world. It uses no model.
 
 `container` inspects ordinary chests (single/double) and barrels, or deposits and
-withdraws 1–64 ordinary supply items. It checks reach without moving, uses
-server-confirmed clicks, and verifies the exact source and destination deltas.
-Insufficient supplies or capacity fail before transferring. Shared containers
-are not locked: coordinate ownership, and inspect after a partial or unconfirmed
-result instead of repeating it. An interrupted transfer can leave a cursor;
-`recover` returns it to its original source slot when safe. It never drops
-leftovers to make room. Custom-name, enchantment, and other component-bearing
-items require more precise selection and are currently refused.
+withdraws 1–64 items. It checks reach without moving, uses authoritative server
+snapshots after every click, and verifies source/destination totals. Ordinary
+supplies may be selected by name. Tools, named or enchanted items, and other
+component-bearing stacks require explicit `source_slot` and `source_item_revision`
+from a fresh inspection, alongside `contents_revision` and `conversation_revision`.
+Inspection reports window-relative slots and item revisions for both storage and
+player inventory. A selected transfer takes only that exact stack and uses empty
+destination slots, preserving its wear, name, enchantments and components. It
+never substitutes another same-name item or merges selected stacks.
+
+Insufficient supplies or space and stale selection fail before transferring.
+Concurrent changes, ignored clicks or missing acknowledgements stop the batch;
+partial results are unconfirmed and must not be replayed blindly. Inspect first.
+`recover` can return a held cursor only to its original source when the item
+identity still matches and the original count is not exceeded. The window stays
+open when cursor state is unresolved, preventing accidental dropped leftovers.
+Shared storage still needs coordination; a successful transfer does not establish
+exclusive ownership or guarantee its future contents.
 
 The optional `tests/containers_live.py` regression requires a **separate disposable
 server** on a non-production port with `level-name=container-fixture`. Pass
