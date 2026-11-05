@@ -3,6 +3,7 @@ import argparse
 import asyncio
 import hashlib
 import json
+import math
 import os
 from pathlib import Path
 import time
@@ -63,13 +64,29 @@ def save(path, value):
     tmp=path.with_suffix('.tmp');tmp.write_text(json.dumps(value,indent=2));os.chmod(tmp,0o600);tmp.replace(path)
 
 
-async def capacity_gate(calls,state,request,observe,waiting,*,now=None,sleep=asyncio.sleep,while_waiting=None):
+CAPACITY_NOTICE_INTERVAL = 15 * 60
+
+
+def load_capacity_notice(path):
+    """Only a notification timestamp; never a task, queue, or capacity grant."""
+    try:
+        value=json.loads(path.read_text()).get('last_attempt_at')
+        if type(value) in (int,float) and math.isfinite(value) and value>=0:
+            return {'last_notice_at':value}
+    except (OSError,ValueError,AttributeError):
+        pass
+    return {}
+
+
+async def capacity_gate(calls,state,request,observe,waiting,*,now=None,sleep=asyncio.sleep,while_waiting=None,notice_path=None):
     """Rate limits wait before consuming messages; never cancel or renew a task."""
     now=time.time() if now is None else now
     calls[:]=[t for t in calls if t>now-3600]
     if len(calls)<30:
         if waiting.get('active'):observe('budget_resumed')
-        waiting.clear()
+        # One freed slot may refill immediately. Keep notice cadence across those
+        # short resumptions, independently of the actual capacity-wait telemetry.
+        waiting.pop('active',None);waiting.pop('notified',None)
         return True
     delay=max(.05,min(calls)+3600-now)
     if not waiting.get('active'):
@@ -77,8 +94,21 @@ async def capacity_gate(calls,state,request,observe,waiting,*,now=None,sleep=asy
         waiting['active']=True
     has_work=state.get('pending_messages',0)>0 or (state.get('task') or {}).get('status') in ('running','waiting')
     if has_work and not waiting.get('notified'):
-        await request('/notice',{'kind':'budget'})
+        last=waiting.get('last_notice_at')
+        if last is not None and last>now:
+            # A wall-clock correction must not suppress notices indefinitely.
+            waiting['last_notice_at']=last=now
+            if notice_path is not None:save(notice_path,{'last_attempt_at':now})
         waiting['notified']=True
+        if last is None or now-last>=CAPACITY_NOTICE_INTERVAL:
+            waiting['last_notice_at']=now
+            # Persist before sending: a lost reply or restart must not replay a
+            # notice which may already have appeared in the public conversation.
+            if notice_path is not None:save(notice_path,{'last_attempt_at':now})
+            await request('/notice',{'kind':'budget'})
+        else:
+            observe('budget_notice_suppressed',reason='recent_capacity_notice',
+                    retry_after_seconds=CAPACITY_NOTICE_INTERVAL-(now-last))
     if while_waiting:
         await while_waiting()
     await sleep(min(10,delay))
@@ -101,7 +131,8 @@ async def run(home):
     client=None
     calls_path=home/'calls.json'
     calls=json.loads(calls_path.read_text()) if calls_path.exists() else []
-    budget_waiting={}
+    notice_path=home/'capacity-notice.json'
+    budget_waiting=load_capacity_notice(notice_path)
     connection_failures=0
     last_continuation=None
     async def request(path,payload=None):
@@ -183,7 +214,7 @@ async def run(home):
                     observe('continuation_policy',**continuation)
                 last_continuation=continuation_key
                 state=await request('/state')
-            if not await capacity_gate(calls,state,request,observe,budget_waiting,while_waiting=observe_capacity_wait):continue
+            if not await capacity_gate(calls,state,request,observe,budget_waiting,while_waiting=observe_capacity_wait,notice_path=notice_path):continue
             messages=await request('/inbox/peek')
             if not messages and conversation_attention and await request('/participation'):
                 await connect()
