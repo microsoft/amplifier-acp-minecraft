@@ -18,7 +18,7 @@ function fixture(name,semantic=false){
   return realRequire(n);
  },module:{exports:{}},console:{log(){}},Buffer,
  process:{argv:['node','body.cjs',config],on(){},exit(){assert.fail('Unexpected process exit');}},setTimeout,clearTimeout});
- vm.runInContext(fs.readFileSync(path.join(root,'body.cjs'),'utf8')+'\nmodule.exports={history,inbox,operate,startFixtureTurn(){ready=true;turnUntil=Date.now()+240000;history.startTurn();}};',context,{filename:'body.cjs'});
+ vm.runInContext(fs.readFileSync(path.join(root,'body.cjs'),'utf8')+'\nmodule.exports={history,inbox,operate,mcpServer,startFixtureTurn(){ready=true;turnUntil=Date.now()+240000;history.startTurn();}};',context,{filename:'body.cjs'});
  return {bot,...context.module.exports,task,home,async request(url,payload,expectedStatus=200){
   const req=Readable.from(payload===undefined?[]:[JSON.stringify(payload)]);
   Object.assign(req,{url,method:payload===undefined?'GET':'POST',headers:{authorization:'Bearer fixture'}});
@@ -26,6 +26,20 @@ function fixture(name,semantic=false){
   assert.equal(code,expectedStatus,body);return JSON.parse(body);
  },close:()=>fs.rmSync(home,{recursive:true,force:true})};
 }
+test('every advertised game tool has a matching scoped ACP permission',async()=>{
+ const {Client}=realRequire('@modelcontextprotocol/sdk/client/index.js');
+ const {InMemoryTransport}=realRequire('@modelcontextprotocol/sdk/inMemory.js');
+ const {execFileSync}=require('node:child_process');
+ const f=fixture('BuilderOne'),server=f.mcpServer(),client=new Client({name:'permission-fixture',version:'1'});
+ try{
+  const [clientTransport,serverTransport]=InMemoryTransport.createLinkedPair();
+  await server.connect(serverTransport);await client.connect(clientTransport);
+  const tools=(await client.listTools()).tools.map(t=>t.name);
+  const allowed=new Set(JSON.parse(execFileSync('python3',['-c','import json; from acp_client import GAME_TOOLS; print(json.dumps(sorted(GAME_TOOLS)))'],{cwd:root,encoding:'utf8'})));
+  assert.ok(tools.includes('cancel_movement'));
+  assert.deepEqual(tools.filter(t=>!allowed.has(t)),[],'Advertised game tools must not be silently denied by the ACP callback');
+ }finally{await client.close();await server.close();f.close();}
+});
 test('real watch context changes when a nearby crop ripens without a planner turn or game action',async()=>{
  const f=fixture('BuilderOne');try{
   const {Vec3}=realRequire('vec3');let age=0;
