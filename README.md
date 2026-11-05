@@ -595,12 +595,23 @@ launch an extra unbudgeted prompt. Ordinary source attention remains available.
 A message arriving after the final check is outside that check's cutoff. Tool
 context exposure means supplied evidence, not proof the model understood it.
 
-Identified ACP text is collected per `messageId` in creation order. The latest
-non-commentary answer is selected; a delayed older chunk cannot overwrite it.
-The optional `com.microsoft.amplifier.message.phase` distinguishes commentary
-from final answers. An empty final revision stays silent. Unidentified endpoints
-retain legacy append behavior; they cannot provide the same revision guarantees.
-Raw reasoning and tool details are never broadcast as final chat.
+Identified ACP text is collected per `messageId` in first-observed message order.
+The latest nonempty, non-commentary message is selected with all of its chunks;
+a delayed older chunk cannot overwrite it. Both `messageId` and
+`_meta["com.microsoft.amplifier.message"].phase` are optional on each
+`session/update`'s `update` object. Recognized phases are `commentary` and
+`final_answer`; omitted phases retain an existing message's classification.
+An empty new message is not a withdrawal of an earlier answer. An explicit
+nonempty revised answer (including a structured pass decision where used) takes
+precedence over older messages. A turn containing only commentary or empty text
+has no final text to broadcast.
+
+Unidentified endpoints retain append behavior, including text before and after
+tools; they cannot provide the same revision guarantees. A new ID does not mark
+an earlier message complete. Tool state and media are independent of text
+selection, and changing IDs does not discard them. Raw reasoning and tool
+details are never broadcast as final chat. See the shared
+[collaboration contract](https://github.com/microsoft/amplifier-constellation/blob/main/contracts/collaboration.v1-candidate.md#answer-identity-and-revisions).
 
 ### Farming and movement repair
 
