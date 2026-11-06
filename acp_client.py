@@ -5,6 +5,7 @@ import json
 import os
 from pathlib import Path
 import signal
+from prompt_lifecycle import PromptLifecycle
 
 __version__ = "0.1.0"
 
@@ -42,6 +43,7 @@ class Client:
         self.reader = None
         self.pending = {}
         self.active_prompt_id = None
+        self.lifecycle = None
 
     def transport_closed(self):
         """Known local closure only; this makes no ACP request or health promise."""
@@ -64,7 +66,7 @@ class Client:
         self.reader = asyncio.create_task(self._read_frames())
         self.info = await asyncio.wait_for(self.request("initialize", {
             "protocolVersion": 1, "clientInfo": {"name": "minecraft-adapter", "version": __version__},
-            "clientCapabilities": {},
+            "clientCapabilities": {"session": {"compaction": {}}},
         }), 30)
         if self.info.get("protocolVersion") != 1:
             raise ProtocolError("Endpoint did not negotiate ACP v1")
@@ -224,7 +226,8 @@ class Client:
             if method == 'session/prompt' and self.active_prompt_id == request_id:
                 self.active_prompt_id = None
 
-    async def prompt(self, text, timeout, on_chunk=None, attention_offer=None):
+    async def prompt(self, text, timeout=None, on_chunk=None, attention_offer=None):
+        self.lifecycle = PromptLifecycle(self.observe)
         parts, characters = [], 0
         messages = {}
         after_tool = False
@@ -243,6 +246,7 @@ class Client:
 
         async def update(message):
             nonlocal characters, after_tool
+            self.lifecycle.update(message)
             kind = message.get("sessionUpdate")
             if kind == "agent_message_chunk" and message.get("content", {}).get("type") == "text":
                 chunk = message["content"]["text"]

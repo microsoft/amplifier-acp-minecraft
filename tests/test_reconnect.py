@@ -46,7 +46,7 @@ class Reconnect(unittest.IsolatedAsyncioTestCase):
                         'pending_messages': len(messages), 'task': dict(task),
                         'view_fixture': 'recent' if path == '/observation' else 'full'}
             if path == '/status':
-                return {'turn_active': active, 'busy': False, 'task': dict(task)}
+                return {'turn_active': active, 'busy': False, 'task': dict(task), 'action_lease': {'version': 1, 'renewable': False}}
             if path == '/continuation':
                 return {'action': 'continue'}
             if path == '/inbox/peek':
