@@ -35,6 +35,7 @@ class Maintenance(unittest.IsolatedAsyncioTestCase):
                 self.assertFalse(c.maintenance_active)
             finally:await c.close()
     async def test_bare_command_both_signals_closed_authority_and_callback_denial(self):await self.exercise('success','completed')
+    async def test_completed_only_typed_update_with_matching_terminal(self):await self.exercise('completed-only','completed')
     async def test_other_compaction_completion_is_not_success(self):await self.exercise('unrelated','unknown')
     async def test_compaction_success_without_terminal_times_out_unknown(self):await self.exercise('no-terminal','unknown',asyncio.TimeoutError)
     async def test_transport_loss_is_unknown_not_replayed(self):await self.exercise('closed','unknown',ProtocolError)

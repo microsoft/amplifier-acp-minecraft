@@ -24,7 +24,8 @@ for line in sys.stdin:
     elif method=='session/prompt':
         active=v['id'];operation=v['params']['_meta'][META]['operationId']
         assert v['params']['prompt']==[{'type':'text','text':'/compact'}]
-        update({'sessionUpdate':'compaction_update','compactionId':'one','status':'in_progress'})
+        if mode!='completed-only':
+            update({'sessionUpdate':'compaction_update','compactionId':'one','status':'in_progress'})
         if mode=='closed':sys.exit(0)
         send({'id':'permission','method':'session/request_permission','params':{'sessionId':sid,
             'toolCall':{'toolCallId':'mutation','rawInput':{'server':'minecraft','tool':'place'}},

@@ -53,7 +53,11 @@ async def compact(client, home, operation_id, status, *, timeout=600):
             if item.get('sessionUpdate')!='compaction_update':return
             identity,state=item.get('compactionId'),item.get('status')
             if not isinstance(identity,str) or not identity:return
-            if compaction_id is None and state=='in_progress':compaction_id=identity
+            # A conforming peer may emit only a completed update. Correlate
+            # the first typed ID with the Instance's operation-bound result;
+            # neither this update nor prompt settlement alone proves success.
+            if compaction_id is None and state in ('in_progress','completed','failed','cancelled'):
+                compaction_id=identity
             if identity==compaction_id and state in ('in_progress','completed','failed','cancelled'):
                 compaction_status=state
                 client.observe('maintenance_compaction',status=state,prompt_settled=False)

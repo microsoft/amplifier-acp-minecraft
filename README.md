@@ -820,7 +820,8 @@ not a sandbox for arbitrary backend-internal tools.
 
 A private durable receipt is written before sending; an existing operation ID
 cannot be repeated automatically. Completion requires a matching typed compaction
-start/success, matching prompt terminal, and matching Instance result metadata.
+success, matching prompt terminal, and matching Instance result metadata. A peer
+may emit only the completed update without an earlier in-progress update.
 Acceptance, an unrelated completion, cancellation acknowledgement, lost transport
 or a bounded wait expiring are not success. Failed/unknown paths close the client
 connection without replay. No `/turn`, lease renewal, task renewal or game action
