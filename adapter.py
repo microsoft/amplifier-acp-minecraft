@@ -153,7 +153,8 @@ async def run(home):
     identity=hashlib.sha256(json.dumps(endpoint,sort_keys=True).encode()).hexdigest()
     def observe(kind,**data):
         print(json.dumps({'time':time.time(),'kind':kind,**data}),flush=True)
-    assessment_enabled=(cfg.get('decision_attention') or {}).get('policy')==POLICY
+    incoming_chat_only=cfg.get('incoming_chat_only') is True
+    assessment_enabled=not incoming_chat_only and (cfg.get('decision_attention') or {}).get('policy')==POLICY
     attention=(Assessment if assessment_enabled else Attention)(home,cfg.get('decision_attention'),observe)
     state_signature=signature if assessment_enabled else fingerprint
     client=None
@@ -167,7 +168,7 @@ async def run(home):
     last_continuation=None
     async def request(path,payload=None):
         return await asyncio.to_thread(control,cfg,path,payload)
-    watches=Watches(home,cfg['decision_attention'],request,observe) if cfg.get('agent_watches') else None
+    watches=Watches(home,cfg['decision_attention'],request,observe) if cfg.get('agent_watches') and not incoming_chat_only else None
     conversation_attention=ConversationAttention(observe) if (cfg.get('conversation_attention') or {}).get('enabled') else None
     async def connect():
         nonlocal client, connection_failures
@@ -239,7 +240,7 @@ async def run(home):
                 await asyncio.sleep(2);continue
             # Leave queued messages in the body. Stop clears them immediately;
             # state is reread after each wait so deadlines still expire normally.
-            if not state.get('turn_active') and not state.get('busy'):
+            if not incoming_chat_only and not state.get('turn_active') and not state.get('busy'):
                 continuation=await request('/continuation',{'generation':state.get('generation')})
                 continuation_key=(state.get('task',{}).get('id') if state.get('task') else None,json.dumps(continuation,sort_keys=True))
                 if continuation.get('action') not in ('hold','continue') and continuation_key!=last_continuation:
@@ -249,9 +250,11 @@ async def run(home):
             calls[:]=[t for t in calls if t>time.time()-3600]
             conversation_only=False
             messages=[]
-            if len(calls)>=30:
+            if incoming_chat_only or len(calls)>=30:
                 messages=await human_reply_messages(request,connect,conversation_attention)
                 conversation_only=bool(messages)
+            if incoming_chat_only and not conversation_only:
+                await asyncio.sleep(2);continue
             if not conversation_only:
                 if not await capacity_gate(calls,state,request,observe,budget_waiting,while_waiting=observe_capacity_wait,notice_path=notice_path):continue
                 messages=await request('/inbox/peek')

@@ -867,3 +867,14 @@ admission. Expired requests and stopped work remain unchanged.
 
 Deploy the controller and body together at a verified idle boundary. No shared
 Instance or Runtime schema change is needed for this adapter-local resource lane.
+
+
+For a staged upgrade that must restore conversation without restoring construction,
+set `incoming_chat_only: true` in the existing connector configuration before
+starting either component. This optional mode always uses the bounded human reply
+lane, even when ordinary work capacity is available. Both scheduler and body refuse
+autonomous continuation, task-watch scheduling/wakes and ordinary action turns;
+saved tasks, queues and watch definitions are retained. Peers remain context for
+human engagement, not autonomous triggers in this mode. It is not a universal
+workshop pause and does not stop other installations. Switching it off later is an
+explicit, separately coordinated operation; it never renews expired tasks.
