@@ -1,12 +1,12 @@
 const test=require('node:test'),assert=require('node:assert/strict');
 const {ActionLease}=require('../action-lease.cjs');
-function fixture(){let now=1000;const task={id:'same',status:'running',deadline:3600000,max_turns:135,turns:120};
+function fixture(){let now=1000;const task={id:'same',status:'running',deadline:14400000,max_turns:135,turns:120};
  const turn={task_id:'same',actions:[],may_mutate:true};
  const lease=new ActionLease({now:()=>now});lease.begin(turn,task,true);
  return {lease,task,turn,advance:n=>now+=n,request:()=>({lease_id:lease.id,task_id:task.id})};}
 test('hours of controller renewals retain exact task, turn and consumed limits',()=>{
  const f=fixture(),before=JSON.stringify(f.task),turnBefore=JSON.stringify(f.turn),id=f.lease.id;
- for(let i=0;i<100;i++){f.advance(30000);f.lease.renew(f.request(),f.task,f.turn);}
+ for(let i=0;i<240;i++){f.advance(30000);f.lease.renew(f.request(),f.task,f.turn);}
  assert.equal(f.lease.id,id);assert.equal(JSON.stringify(f.task),before);assert.equal(JSON.stringify(f.turn),turnBefore);
  assert.equal(f.lease.view(f.task).renewable,true);
 });

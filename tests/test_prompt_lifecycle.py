@@ -4,6 +4,15 @@ from prompt_lifecycle import PromptLifecycle
 from acp_client import Client
 
 class Lifecycle(unittest.IsolatedAsyncioTestCase):
+    async def test_cancel_transport_write_is_bounded_without_replay_or_settlement_claim(self):
+        c=Client({},lambda *a,**k:None);c.session='same';sent=[]
+        async def blocked_send(frame):
+            sent.append(frame)
+            await asyncio.Event().wait()
+        c.send=blocked_send
+        with self.assertRaises(asyncio.TimeoutError):await c.cancel(timeout=.01)
+        self.assertEqual(sent,[{'method':'session/cancel','params':{'sessionId':'same'}}])
+
     def test_silence_and_repeated_metadata_are_unknown_not_failure_or_progress(self):
         now=[0]; events=[]
         p=PromptLifecycle(lambda kind,**fields:events.append((kind,fields)),clock=lambda:now[0])

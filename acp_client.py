@@ -102,8 +102,10 @@ class Client:
             self.process.stdin.write((json.dumps({"jsonrpc": "2.0", **value}) + "\n").encode())
             await self.process.stdin.drain()
 
-    async def cancel(self):
-        await self.send({"method": "session/cancel", "params": {"sessionId": self.session}})
+    async def cancel(self, timeout=5):
+        # Bound transport delivery, not planner work. A blocked pipe must not
+        # prevent cleanup after authority closes; sending is not settlement.
+        await asyncio.wait_for(self.send({"method": "session/cancel", "params": {"sessionId": self.session}}), timeout)
 
     def permission_context(self):
         """Describe this client's current policy, never grant a tool invocation."""
