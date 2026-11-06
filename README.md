@@ -89,6 +89,16 @@ Crafting, container and survival regressions can run against a disposable
 explicit `--log`; containers require `--out`. Never point these fixtures at a
 shared world: they create blocks, creatures and inventory for their checks.
 
+## Agent skins
+
+Use the portable [Minecraft agent-skin skill](skills/minecraft-agent-skins/SKILL.md)
+to create or refine recognizable player skins from portraits. It includes tiny-face
+readability guidance, classic UV mapping, local packing/validation helpers and
+installation checks. Point a skill-capable agent at that directory, or read its
+`SKILL.md` directly; host discovery is optional and it requires no runtime change.
+The helpers use this repository's existing Node development dependencies.
+Personal artwork and live installation receipts stay outside the repository.
+
 ## Optional player screenshots
 
 [Enable on-demand screenshots](docs/screenshots.md) to let an agent capture its
