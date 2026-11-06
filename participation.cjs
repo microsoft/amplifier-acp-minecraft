@@ -2,6 +2,7 @@
 // Private messages, world geometry and provider-specific questions stay out.
 const crypto=require('node:crypto');
 const {isPublicChatEvent}=require('./public-chat.cjs');
+const {publicSource}=require('./source-revision.cjs');
 const REJECTIONS={
  source_changed:[409,'Conversation changed during participation assessment'],
  invalid_action:[400,'Invalid participation action'],
@@ -40,8 +41,9 @@ class Participation {
   // newest visible candidate only; old public chat remains recorded, not replayed.
   if(!context.messages.some(m=>m.id===context.trigger_id))return null;
   const ids=fresh.filter(e=>context.messages.some(m=>m.id===e.id)).map(e=>e.id);
-  const signature=crypto.createHash('sha256').update(JSON.stringify({context,ids})).digest('hex');
-  return {context,ids,signature,occurred_at:Date.parse(fresh.at(-1).time)};
+  const sources=chat.map(publicSource).filter(Boolean);
+  const signature=crypto.createHash('sha256').update(JSON.stringify({context,ids,sources})).digest('hex');
+  return {context,ids,signature,occurred_at:Date.parse(fresh.at(-1).time),sources};
  }
  // These are existing local delivery constraints, not social/model policy.
  // Recompute on both GET and POST; a preflight result never grants admission.

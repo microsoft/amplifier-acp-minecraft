@@ -786,3 +786,47 @@ request, assignment, attention and uncertainty fields are still passed intact.
 This reduces instruction bytes, not an asserted token/cost saving or a semantic
 compaction of owner evidence. More extensive context-snapshot integration awaits
 an explicitly negotiated Instance/runtime contract.
+
+## Optional source delivery and explicit maintenance (candidate integration)
+
+When Instance advertises `inputContinuity.sourceDelivery` version 1 with the
+exact metadata `com.microsoft.amplifier.source-delivery` and receipts method
+`_amplifier/source_receipts`, active awareness includes up to 40 original source
+IDs, content revisions and `occurredAt` timestamps. A source revision hashes one
+public event, not the surrounding conversation, task state or truncated preview.
+Private management events and whispers never receive public provenance. The same
+source facts add `revision` and original `occurred_at` to attention context
+messages only for this advertised contract. Older strict ACP/Instance schemas
+receive no added protocol fields. Changed revisions remain new evidence; a lost
+reply does not replay the same revision as a fresh command.
+
+Optional source receipt queries preserve received/submitted/remoteQueued/
+incorporated/notAccepted/promptRequired/unknown as host observations. Missing or
+mismatched receipts remain unknown. These facts neither consume inbox messages
+nor declare work complete, accept responsibility, or bypass Instance attention.
+They do not relax existing final-answer freshness checks. Steering without a
+`receiptsMethod` still never probes the native input-receipts method.
+
+`maintenance.compact` is a prepared explicit helper, not an automatic scheduler
+or a fallback after a game timeout. It requires the Instance maintenance v1
+capability and a current session advertisement of the standard `compact`
+command. It checks an idle session and an authenticated idle body with no action
+lease, then sends exactly one `/compact` text block before the adapter decorator,
+with `com.microsoft.amplifier.maintenance` metadata and a stable operation ID.
+The matching Instance route must preserve that command before its own decorator.
+All permission callbacks are denied during maintenance. The caller owns the
+controller's idle boundary; Instance excludes competing session input. This is
+not a sandbox for arbitrary backend-internal tools.
+
+A private durable receipt is written before sending; an existing operation ID
+cannot be repeated automatically. Completion requires a matching typed compaction
+start/success, matching prompt terminal, and matching Instance result metadata.
+Acceptance, an unrelated completion, cancellation acknowledgement, lost transport
+or a bounded wait expiring are not success. Failed/unknown paths close the client
+connection without replay. No `/turn`, lease renewal, task renewal or game action
+is performed; the caller must recheck existing authority afterward. Native
+Runtime's automatic provider compaction needs no advertised command or helper.
+
+This integration is staged against a candidate shared contract. Live use and
+rollout require the matching released Instance capability and a fresh coordinated
+idle handoff; the running game scheduler does not invoke maintenance yet.
