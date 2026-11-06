@@ -96,3 +96,37 @@ test('source receipt has immutable source revision, original actor/time and expl
 test('reported reply pacing uses the same validated limit as admission',()=>{
  const f=fixture();try{assert.equal(f.intake.capabilities().capacity.reply_turns_per_hour,12);f.cfg.human_reply_turns_per_hour=61;assert.equal(f.intake.capabilities().capacity.reply_turns_per_hour,0);f.cfg.human_reply_turns_per_hour=4;assert.equal(f.intake.capabilities().capacity.reply_turns_per_hour,4);}finally{f.close();}
 });
+
+for (const [label, restriction] of [['lower cumulative cap', {max_turns:7}], ['elapsed deadline', {deadline:1}]]) {
+ test(`${label} survives lost acknowledgment and restart without reviving larger authority`,()=>{
+  const f=fixture();try{
+   const original=f.human();const acceptance={request_id:original.id,goal:'shop'};
+   f.intake.accept(acceptance);const task=f.h.task();task.turns=8;
+   task.unknown_receipts=[{id:'historical-unknown',state:'unknown'}];
+   const source=f.human('Reduce the allowance now','AnotherHuman');
+   const args={request_id:source.id,task_id:task.id,expected_revision:1,...restriction};
+   // Persist the amendment, then discard its reply and crash before /finish.
+   f.intake.amend(args);
+   const stored=JSON.parse(fs.readFileSync(f.file,'utf8'));
+   assert.equal(stored.task.status,'budget_exhausted');
+   assert.equal(stored.turn.conversation_only,true);
+   const h=new WorkshopState(f.file),intake=new TaskIntake(h,f.cfg);
+   assert.equal(h.data.turn,null);assert.equal(h.data.last_conversation_turn.interrupted,true);
+   assert.deepEqual(h.task(),stored.task);assert.equal(h.task().turns,8);
+   assert.equal(h.task().authority_revision,2);
+   assert.equal(intake.capabilities().autonomous_work_allowed,false);
+   assert.deepEqual(h.task().unknown_receipts,[{id:'historical-unknown',state:'unknown'}]);
+   assert.deepEqual(h.task().authority.source,task.authority.source);
+   const before=fs.readFileSync(f.file,'utf8');
+   const retry=intake.amend(args);
+   assert.equal(retry.duplicate,true);assert.equal(retry.current_status,'budget_exhausted');
+   assert.equal(retry.turns,8);assert.equal(retry.execution_started,false);
+   assert.equal(intake.accept(acceptance).current_status,'budget_exhausted');
+   assert.throws(()=>intake.amend({...args,max_turns:12,deadline:Date.now()+600000,resume:true}),/different transition/);
+   assert.equal(fs.readFileSync(f.file,'utf8'),before);
+   const again=new WorkshopState(f.file);
+   assert.deepEqual(again.task(),stored.task);assert.equal(again.data.task_authorizations.length,2);
+   assert.equal(new TaskIntake(again,f.cfg).runnable(),false);
+  }finally{f.close();}
+ });
+}
