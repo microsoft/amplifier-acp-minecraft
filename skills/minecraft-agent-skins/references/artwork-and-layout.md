@@ -53,6 +53,11 @@ Do not accidentally cover base eyes with an opaque outer face.
   crops or infer symmetry without checking.
 - **Missing surfaces:** generate or deliberately design a missing bottom/back/
   limb face. Stretching an unrelated strip produces a valid but poor texture.
+- **Near-opaque export noise:** a generated atlas had alpha 252–254 in all 1,632
+  sampled base pixels despite opaque-looking artwork. Inspect the sampled alpha
+  distribution; explicitly normalize only near-opaque base samples, with unchanged
+  RGB and a recorded threshold/count. Keep strict rejection of real holes. Do not
+  disable alpha for the entire source or erase intentional overlay transparency.
 - **Accessories at 8×8:** keep eyes separate from spectacle frames; a dark rim
   with no eye separation reads as a mask. There is no universal eye stencil.
 - **Sharpness versus lighting:** flat PNG and daytime mapped previews distinguish

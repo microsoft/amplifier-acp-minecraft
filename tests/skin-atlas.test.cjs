@@ -62,3 +62,16 @@ test('overlay alpha is diagnostic; CLI round trip refuses overwriting existing a
     assert.equal(check.status, 0); assert.equal(JSON.parse(check.stdout).visualQuality, 'not_assessed');
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });
+test('near-opaque generated base can be normalized only by explicit bounded threshold, with unchanged RGB', () => {
+  const src = fixture(), pos = (8 * 64 + 8) * 4;
+  src.data[pos + 3] = 252;
+  assert.throws(() => pack(src, uv), /Nonopaque/);
+  const out = pack(src, { ...uv, minimumBaseAlpha: 252 });
+  assert.equal(out.packing.normalizedBasePixels, 1);
+  assert.equal(out.data[pos + 3], 255);
+  assert.deepEqual(out.data.subarray(pos, pos + 3), src.data.subarray(pos, pos + 3));
+  assert.equal(src.data[pos + 3], 252); // original artwork remains untouched
+  src.data[pos + 3] = 249;
+  assert.throws(() => pack(src, { ...uv, minimumBaseAlpha: 250 }), /Nonopaque/);
+  for (const minimumBaseAlpha of [0, 249, 256, 252.5, '252']) assert.throws(() => pack(src, { ...uv, minimumBaseAlpha }), /minimumBaseAlpha/);
+});

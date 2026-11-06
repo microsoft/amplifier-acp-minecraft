@@ -70,6 +70,13 @@ does **not** infer panels, fix artwork, preserve an existing outer layer, mirror
 limbs, or prove correct face orientation. For an existing skin with overlays,
 edit that texture while preserving its layout instead of using this base packer.
 
+If inspected opaque artwork has only near-opaque export noise (for example alpha
+252–254 throughout sampled base faces), the private map can explicitly set
+`minimumBaseAlpha` from 250 to 255. Default 255 remains strict. The packer rejects
+samples below that threshold, changes only accepted base alpha to 255, preserves
+RGB, and reports the normalized pixel count. This is not a repair for holes,
+intentional transparency, incorrect crops or overlays. See the source alpha first.
+
 Validate dimensions, opaque base faces and partial-alpha diagnostics. Inspect
 the 8×8 face at native size and enlarged with nearest-neighbor, then view the
 mapped character from front, back and both sides. Verify top/bottom, limb seams,
