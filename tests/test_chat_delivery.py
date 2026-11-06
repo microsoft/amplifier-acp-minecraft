@@ -8,6 +8,13 @@ from adapter import minecraft_reply_lines, deliver_final_reply
 
 
 class ChatDeliveryTests(unittest.IsolatedAsyncioTestCase):
+    def test_packetization_prefers_complete_sentences_without_dropping_text(self):
+        text='First complete thought. A second sentence needs another packet.'
+        lines,shortened=minecraft_reply_lines(text,width=40)
+        self.assertEqual(lines[0],'First complete thought.')
+        self.assertEqual(' '.join(lines),text)
+        self.assertFalse(shortened)
+
     def test_tour_keeps_ending_limitations_after_three_chunks(self):
         text=('Visit the market, inn, garden and dock. '*29+
               'Important: one loaf only. The vessel is a display; the chime sound is unverified.')

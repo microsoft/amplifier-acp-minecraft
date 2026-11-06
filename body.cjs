@@ -32,7 +32,11 @@ const { z } = require('zod');
 const { addressed, conversationRouter, peerIntent } = require('./routing.cjs');
 const cfg = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
 const version=cfg.version||'1.21.1';
+const {TaskIntake,INTAKE_TOOLS}=require('./task-intake.cjs');
+const chatProvenance=new (require('./chat-provenance.cjs').ChatProvenance)();
 const history=new WorkshopState(path.join(path.dirname(process.argv[2]),'workshop.json'),{maxTurns:cfg.task_max_turns||12,maxSeconds:cfg.task_max_seconds||2400});
+const taskIntake=new TaskIntake(history,cfg);
+const workAllowed=()=>taskIntake.capabilities().autonomous_work_allowed;
 const bot = mineflayer.createBot({host:cfg.host || '127.0.0.1',port:cfg.port || 25565,
   username:cfg.username,version,auth:cfg.auth || 'offline',hideErrors:true,
   customPackets:require('./protocol-compatibility.cjs').protocolCompatibility(version)});
@@ -72,9 +76,9 @@ bot.on('error',e=>record('connection_error',{message:e.message}));
 bot.on('kicked',reason=>record('kicked',{reason}));
 bot.on('death',()=>{stop();record('death');});
 bot.on('health',()=>{if(bot.health<8)record('low_health',{health:bot.health});});
-function hear(username,message,whisper=false){
+function hear(username,message,whisper=false,transport=null){
   if(username===bot.username)return;
-  const agent=(cfg.bot_names||[]).includes(username);
+  const agent=(cfg.bot_names||[]).some(n=>n.toLowerCase()===username.toLowerCase());
   const route=agent?null:routeHuman({username,message,whisper,participants:Object.keys(bot.players).concat(cfg.bot_names||[])});
   if(agent){
     // Named requests can cross between independent agents through game chat.
@@ -91,20 +95,21 @@ function hear(username,message,whisper=false){
     return;
   }
   const semantic=participation.enabled&&!whisper;
-  const e=record('chat',{username,message,whisper,provenance:whisper?'minecraft_whisper':'minecraft_public_chat',source:'human',accepted:!!route&&!semantic});
+  const e=record('chat',{username,message,whisper,provenance:whisper?'minecraft_whisper':'minecraft_public_chat',source:'human',transport,accepted:!!route&&!semantic});
   lastHumanAt=Date.now();
   record('chat_routing',{username,route:semantic?'participation_pending':route||'context_only'});
-  if(route&&/\b(stop|pause)\b/i.test(message)){stop();inbox.length=0;history.data.participation_pending=[];history.stop();history.save();record('stopped_by_player',{username});bot.chat('Stopped.');return;}
+  if(route&&/\b(stop|pause)\b/i.test(message)){stop();inbox.length=0;history.data.participation_pending=[];history.stop();taskIntake.revokeSources();history.save();record('stopped_by_player',{username});bot.chat('Stopped.');return;}
   if(semantic){participation.queue(e);return;}
   if(!route)return;
   if(inbox.length<8){inbox.push({id:e.id,username,message,whisper,source:'human'});history.save();}
 }
-bot.on('chat',(u,m)=>hear(u,m));bot.on('whisper',(u,m)=>hear(u,m,true));
+bot.on('message',(m,position,sender,verified)=>chatProvenance.observe(m,position,sender,verified,bot.players));
+bot.on('chat',(u,m,_translation,json)=>hear(u,m,false,chatProvenance.get(u,json)));bot.on('whisper',(u,m,_translation,json)=>hear(u,m,true,chatProvenance.get(u,json)));
 function snapshot(){
   if(!ready)return {username:cfg.username,ready:false,events:events.slice(-15)};
   const p=bot.entity.position;
   const blocks=bot.findBlocks({matching:b=>b.name!=='air'&&b.name!=='water'&&b.name!=='grass_block'&&b.name!=='dirt'&&b.name!=='stone',maxDistance:16,count:50});
-  return {username:bot.username,ready,busy,generation,turn_active:Date.now()<turnUntil,pending_messages:inbox.length,incoming_chat_only:cfg.incoming_chat_only===true,conversation_only:history.data.turn?.conversation_only===true,position:p,health:bot.health,food:bot.food,time:bot.time.timeOfDay,
+  return {username:bot.username,ready,busy,generation,turn_active:Date.now()<turnUntil,pending_messages:inbox.length,incoming_chat_only:cfg.incoming_chat_only===true,conversation_only:history.data.turn?.conversation_only===true,task_capabilities:taskIntake.capabilities(),position:p,health:bot.health,food:bot.food,time:bot.time.timeOfDay,
     inventory:bot.inventory.items().map(i=>({name:i.name,count:i.count})),
     terrain:spatial.localMap(bot,3),
     players:Object.values(bot.players).map(p=>({name:p.username,position:p.entity?.position})),
@@ -135,7 +140,13 @@ function speak(text){
 }
 async function operate(name,a={}){
   if(!ready)throw Error('Player is not connected');
-  if((cfg.incoming_chat_only===true||history.data.turn?.conversation_only)&&!REPLY_TOOLS.has(name))throw Error('Conversation-only turn: observation and replies only. No game effects, task changes or watch changes.');
+  if(name==='task_capabilities')return taskIntake.capabilities();
+  if(INTAKE_TOOLS.has(name)){
+    if(!taskIntake.capabilities().task_intake_enabled||!history.data.turn?.conversation_only||Date.now()>=turnUntil||busy)throw Error('Task intake requires a current idle human reply turn and enabled installation policy');
+    const result=name==='task_accept'?taskIntake.accept(a):taskIntake.amend(a);
+    record('task_authorization',{operation:name,...result});return result;
+  }
+  if((!workAllowed()||history.data.turn?.conversation_only)&&!REPLY_TOOLS.has(name))throw Error('Conversation-only or unauthorized turn: World effects are unavailable in this mode/turn. Inspect task_capabilities for the specific policy and source requirements.');
   if(name==='observe')return a.detail==='full'?snapshot():worldView(snapshot());
   if(name==='conversation')return conversation.snapshot();
   if(name==='entities')return survival.entities(bot,a);
@@ -146,7 +157,7 @@ async function operate(name,a={}){
   if(name==='map')return spatial.localMap(bot,a.radius);
   if(name==='plan_route'){if(busy)throw Error('Wait for the current action before planning another route');return a.mode==='walk_only'?walking.plan(bot,coord(a),a.range):spatial.route(bot,coord(a),a.range);}
   if(name==='find')return bot.findBlocks({matching:b=>b.name===a.block,maxDistance:a.radius,count:12}).map(p=>({name:a.block,position:p}));
-  if(name==='stop'){stop();history.stop();record('agent_stopped_task');return {stopped:true};}
+  if(name==='stop'){stop();history.stop();taskIntake.revokeSources();record('agent_stopped_task');return {stopped:true};}
   if(name==='cancel_movement'){
     if(!busy)return {cancellation_requested:false,reason:'No action is running',task_preserved:true};
     if(!['move','follow'].includes(activeAction))throw Error('Only move/follow can be cancelled separately; wait for the current action or use Stop to halt the whole task');
@@ -162,6 +173,7 @@ async function operate(name,a={}){
     const result=await watchOperation(action);record('attention_watch_tool',{tool:name,result});return result;
   }
   if(['work_begin','work_report','work_reopen'].includes(name)){
+    if(name==='work_begin'&&taskIntake.enabled())throw Error('Use source-bound task_accept during a human reply turn');
     const result=name==='work_begin'?history.begin(a):name==='work_reopen'?history.reopen(a):history.report(a);if(name!=='work_report'){turnUntil=Math.min(turnUntil,result.deadline);if(lease.id){lease.bind(result);scheduleLease();}}
     record('work_status',{task_id:result.id,status:result.status,goal:result.goal,progress:result.progress.at(-1)});return taskView(result);
   }
@@ -318,6 +330,9 @@ const definitions={
   container:['First inspect to get contents_revision; transfers also need a fresh conversation_revision from conversation. A changed chest or new public message rejects the transfer before delivery. Inspect an ordinary chest/barrel or deposit/withdraw 1–64 ordinary supply items, verifying both inventories against server snapshots. Stand within four blocks with clear reach; never walks. Coordinate shared storage. Partial/unconfirmed results require inspection, never blind retries. recover returns a held cursor to its original source slot after an interrupted transfer. Tools and other component-bearing items require source_slot plus source_item_revision from inspect; this selects one exact stack and preserves its properties, using empty destination slots only.',{...xyz,expected:z.enum(['chest','barrel']),conversation_revision:revision,contents_revision:revision,operation:z.enum(['inspect','deposit','withdraw','recover']),source_slot:z.number().int().min(0).max(89).optional(),source_item_revision:z.string().regex(/^[0-9a-f]{64}$/).optional(),item:z.string().min(1).max(80).optional(),count:z.number().int().min(1).max(64).optional()}],
   work_note:['Update an existing task after a bounded recovery or new observation. Resolving a blocked task marks it for review; never schedules more work or resets budgets.',{task_id:z.string(),summary:z.string().min(1).max(2000),blocker_resolved:z.boolean().default(false),status:z.enum(['blocked','needs_review','review']).optional()}],
   tell:['Pass the latest conversation_revision; reconsider newer public evidence before sending. Address a player in public chat. intent=request asks for action/reply; update adds visible [FYI], ack adds [ACK]. Instance attention decides whether a fresh public message merits an idle turn; active-turn awareness can carry all three as context. Use requests only for actual dependencies; do not acknowledge acknowledgments.',{conversation_revision:revision,player:z.string().min(1).max(16),text:z.string().min(1).max(210),intent:z.enum(['request','update','ack']).default('request')}],
+  task_capabilities:['Read effective task mode, allowed transitions, default limits, ceilings and blocked reasons. No authority change.',{}],
+  task_accept:['Accept an actual public human assignment using its verified event id. Not for greetings/questions. Durable/idempotent; metadata only, no world effects in this reply. Do not claim accepted until success. Optional limits require human instruction; otherwise use defaults.',{request_id:z.string(),goal:z.string().min(1).max(2000),max_turns:z.number().int().positive().optional(),seconds:z.number().int().positive().optional()}],
+  task_amend:['Apply an explicit public human limit change to the named current assignment and expected revision. max_turns is cumulative; deadline is absolute Unix milliseconds. Keep consumed counts. resume only when the human explicitly requests continuation. Never use peer text as authority.',{request_id:z.string(),task_id:z.string(),expected_revision:z.number().int().positive(),max_turns:z.number().int().positive().optional(),deadline:z.number().int().positive().optional(),resume:z.boolean().optional()}],
   work_begin:['Accept a recent human game request that needs several turns. Only use when the human asks for ongoing work; do not turn ordinary chat into tasks. Use its event id. Budgets persist and Stop cancels the task.',{request_id:z.string(),goal:z.string().min(1).max(2000)}],
   work_report:['Record concrete progress and choose running to continue, waiting with a concrete wait_for condition for a temporary dependency, blocked for an obstacle, or review when finished for humans to inspect. Never claim verified completion. Call before ending every work turn.',{status:z.enum(['running','waiting','blocked','review']),summary:z.string().min(1).max(2000),wait_for:z.string().min(1).max(1000).optional()}],
   work_reopen:['Return a reviewed task to work for an in-scope correction requested publicly by an operator-authorized reviewer. Use the incoming message event id and explain how it fits your existing goal. Preserves the task, deadline and limits; consumes one work turn. Cannot revive stopped, expired or interrupted work.',{task_id:z.string(),request_id:z.string(),reason:z.string().min(1).max(2000)}],
@@ -376,10 +391,10 @@ const server=http.createServer(async(req,res)=>{
     else if(req.method==='GET'&&req.url==='/observation')result=worldView(snapshot());
     else if(req.method==='GET'&&req.url==='/conversation')result={...conversation.snapshot(),generation,turn_active:Date.now()<turnUntil};
     else if(req.method==='GET'&&req.url==='/watch-context')result=watchContext();
-    else if(req.method==='POST'&&req.url==='/watch'){if(cfg.incoming_chat_only===true)throw Error('Incoming-chat-only mode: task watches are not scheduled');result=await watchOperation(await json(req));}
+    else if(req.method==='POST'&&req.url==='/watch'){if(!workAllowed())throw Error('Current mode/task cannot schedule work watches');result=await watchOperation(await json(req));}
     else if(req.method==='POST'&&req.url==='/continuation'){
       const a=await json(req);if(a.generation!==generation||busy||Date.now()<turnUntil)throw Error('Continuation observation changed');
-      if(cfg.incoming_chat_only===true)result={action:'hold',reason:'incoming_chat_only'};
+      if(!workAllowed())result={action:'hold',reason:!taskIntake.enabled()&&cfg.incoming_chat_only===true?'incoming_chat_only':'task_authority_unavailable'};
       else if(history.budgetCheckpoint()){record('budget_checkpoint',{task_id:history.task().id});result={action:'checkpoint'};}
       else if(cfg.automatic_recovery&&cfg.decision_attention?.command&&history.task()?.status==='needs_review'&&ready){
         const epoch=generation,taskId=history.task().id;
@@ -390,7 +405,7 @@ const server=http.createServer(async(req,res)=>{
         }
       }else result={action:'hold'};
     }
-    else if(req.method==='GET'&&req.url==='/status')result={ready,busy,turn_active:Date.now()<turnUntil,incoming_chat_only:cfg.incoming_chat_only===true,conversation_only:history.data.turn?.conversation_only===true,task:history.task(),action_lease:lease.view(history.task())};
+    else if(req.method==='GET'&&req.url==='/status')result={ready,busy,turn_active:Date.now()<turnUntil,incoming_chat_only:cfg.incoming_chat_only===true,conversation_only:history.data.turn?.conversation_only===true,task_intake_enabled:taskIntake.capabilities().task_intake_enabled,task_capabilities:taskIntake.capabilities(),task:history.task(),action_lease:lease.view(history.task())};
     else if(req.method==='GET'&&req.url==='/inbox/peek')result=inbox.slice(0,8);
     else if(req.method==='GET'&&req.url==='/conversation/admission')result=replyAdmission.status(inbox);
     else if(req.method==='GET'&&['/participation','/participation?human_only=1'].includes(req.url))result=participation.enabled?participationProposal(req.url.endsWith('human_only=1')):null;
@@ -411,7 +426,7 @@ const server=http.createServer(async(req,res)=>{
       const a=await json(req);
       if(busy||Date.now()<turnUntil||history.data.turn)throw Error('A turn or unsettled operation is already active');
       if(a.expected_generation!==undefined&&a.expected_generation!==generation)throw Error('Turn was superseded by Stop or a connection change');
-      if(cfg.incoming_chat_only===true&&a.conversation_only!==true)throw Error('Incoming-chat-only mode requires a bounded human reply');
+      if(!workAllowed()&&a.conversation_only!==true)throw Error('Current mode/task requires a bounded human reply; no autonomous authority');
       const ids=a.message_ids||[];
       if(!Array.isArray(ids)||ids.length>8||new Set(ids).size!==ids.length||ids.some(id=>!inbox.some(m=>m.id===id)))throw Error('Queued request changed before turn start');
       if(a.conversation_only===true){
@@ -437,9 +452,13 @@ const server=http.createServer(async(req,res)=>{
       else {if(++replies>8)throw Error('Reply window is closed');result=speak(a.text);}
     }
     else if(req.method==='POST'&&req.url==='/finish'){const a=await json(req);if(ready)history.checkpoint({position:bot.entity.position.clone(),health:bot.health,recent_actions:receipts.slice(-8)});history.finish(!!a.error||busy,!!a.budget_limited&&!busy);stop();result={stopped:true};}
-    else if(req.method==='POST'&&req.url==='/wake'){if(cfg.incoming_chat_only===true)throw Error('Incoming-chat-only mode does not wake construction');const a=await json(req);if(a.generation!==generation||Date.now()<turnUntil)throw Error('Observation superseded or turn already active');result=history.wake(a.task_id);record('attention_wake',{task_id:a.task_id});}
+    else if(req.method==='POST'&&req.url==='/wake'){if(!workAllowed())throw Error('Current mode/task cannot wake construction');const a=await json(req);if(a.generation!==generation||Date.now()<turnUntil)throw Error('Observation superseded or turn already active');result=history.wake(a.task_id);record('attention_wake',{task_id:a.task_id});}
     else if(req.method==='POST'&&req.url==='/resume-reviewed'){const a=await json(req);if(!ready||busy||Date.now()<turnUntil||a.generation!==generation)throw Error('Recovery review superseded or player not idle');result=history.resumeReviewed(a);record('operator_recovery',{task_id:result.id,reason:a.reason});}
-    else if(req.method==='POST'&&req.url==='/stop'){stop();inbox.length=0;history.data.participation_pending=[];history.stop();history.save();result={stopped:true};}
+    else if(req.method==='POST'&&req.url==='/stop'){stop();inbox.length=0;history.data.participation_pending=[];history.stop();taskIntake.revokeSources();history.save();result={stopped:true};}
+    else if(req.method==='POST'&&req.url==='/task-source/review'){
+      if(!ready||busy||Date.now()<turnUntil)throw Error('Source review requires a verified idle body');
+      result=taskIntake.reviewSource(await json(req));record('task_source_reviewed',{source_id:result.source.id,valid_until:result.valid_until});
+    }
     else if(req.method==='POST'&&req.url==='/task'){
       const a=await json(req);if(typeof a.text!=='string'||!a.text.trim()||a.text.length>12000||inbox.length>=8)throw Error('Task must contain 1–12000 characters and the queue must have space');
       const reviewers=a.reviewers||[];if(!Array.isArray(reviewers)||reviewers.length>8||reviewers.some(n=>typeof n!=='string'||!(cfg.bot_names||[]).includes(n)||n===cfg.username))throw Error('Reviewers must be configured peers other than this player');
