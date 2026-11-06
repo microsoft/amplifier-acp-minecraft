@@ -16,7 +16,9 @@ recommended allowance. The existing 30 work-turn/hour pacing and provider caps
 are independent and unchanged.
 
 `task_capabilities` exposes effective mode, defaults, ceilings, current revision,
-allowed task transitions and distinct blocked reasons. Persistent `chat_only`
+allowed task transitions, current consumed/remaining work, hourly pacing and
+distinct blocked reasons. Provider remaining capacity is explicitly unknown here;
+the connected host/provider still enforces its own limits. Persistent `chat_only`
 configuration is different from a temporary human reply reserve. Repeating a
 message or waiting for capacity does not clear a disabled intake policy.
 
@@ -25,6 +27,10 @@ assignment. Only a new task with this policy's recorded human authority can run.
 With `incoming_chat_only: true`, disabling intake closes that path again.
 Legacy work mode (`incoming_chat_only: false`) retains its existing behavior. Stop still cancels current action
 leases and revokes unused sources older than the stop.
+
+This implements a bounded local subset of the shared
+[task-admission contract](https://github.com/microsoft/amplifier-constellation/blob/6c122d8c14f52f103484536d7005ac37163e17ef/contracts/task-admission.v1-candidate.md).
+It adds no ACP fields or host API. Delegation remains unavailable as described below.
 
 ## Acceptance and amendments
 
@@ -44,11 +50,19 @@ case sensitivity. Parsed system messages or model-supplied speaker fields cannot
 create transport proof. Attribution means the configured Minecraft server vouched
 for the player UUID; it is not a claim that every bridged client has a verified
 Mojang chat signature. Missing attribution fails closed for new task authority,
-while normal conversation may still respond.
+while normal conversation may still respond. Durable source receipts explicitly
+include the original actor, time, public audience and a stable source revision.
+That revision hashes the source identity/content facts, not surrounding routing
+context; the full original evidence has a separate hash.
 
 `task_amend` names the current task and expected authority revision. `max_turns`
 is the cumulative cap, never a fresh balance; `deadline` is an absolute Unix
-millisecond timestamp. Consumed turns and original source remain intact. An
+millisecond timestamp. Consumed turns and original source remain intact. A lower
+cap may be below consumed work, including zero: that exhausted allowance closes
+further work rather than erasing consumption or rejecting the reduction. A past
+positive deadline similarly closes further work. Exhaustion wins even if the
+request also supplies `resume`. Amendments execute only in the effect-free human
+reply turn, after prior game operations settle; they cannot open a lease. An
 explicit human-requested `resume` amendment can continue an expired task admitted
 under this policy, within ceilings. Expiry cannot erase an unresolved interruption. Stopped or interrupted/uncertain tasks still
 require their existing review path. A mode change alone never resumes them.

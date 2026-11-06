@@ -40,7 +40,7 @@ test('amendment is source bound, revision checked and cumulative; any human can 
  const f=fixture();try{const e=f.human();f.intake.accept({request_id:e.id,goal:'shop'});const t=f.h.task();t.turns=7;const request=f.human('Continue longer','OtherHuman');const args={request_id:request.id,task_id:t.id,expected_revision:1,max_turns:30,deadline:Date.now()+3600000};const r=f.intake.amend(args);assert.equal(r.turns,7);assert.equal(r.authority_revision,2);assert.equal(f.h.task().authority.source.username,'AnyVisitor');assert.equal(f.h.data.task_authorizations.at(-1).source.username,'OtherHuman');assert.equal(f.intake.amend(args).duplicate,true);assert.equal(f.h.data.task_authorizations.length,2);const e2=f.human();assert.throws(()=>f.intake.amend({...args,request_id:e2.id}),/authority changed/);}finally{f.close();}
 });
 test('ceilings and spent counts cannot be reset; stopped/unknown work cannot be reopened',()=>{
- const f=fixture();try{const e=f.human();assert.throws(()=>f.intake.accept({request_id:e.id,goal:'shop',max_turns:136}));f.intake.accept({request_id:e.id,goal:'shop'});const t=f.h.task();t.turns=8;const next=f.human();const args={request_id:next.id,task_id:t.id,expected_revision:1};const checkedAt=Date.now();f.intake.now=()=>checkedAt;for(const a of [{max_turns:7},{max_turns:136},{deadline:checkedAt+10800001},{deadline:1}])assert.throws(()=>f.intake.amend({...args,...a}));for(const status of ['stopped','needs_review']){t.status=status;assert.throws(()=>f.intake.amend({...args,max_turns:30,resume:true}));}assert.equal(t.turns,8);assert.equal(t.authority_revision,1);}finally{f.close();}
+ const f=fixture();try{const e=f.human();assert.throws(()=>f.intake.accept({request_id:e.id,goal:'shop',max_turns:136}));f.intake.accept({request_id:e.id,goal:'shop'});const t=f.h.task();t.turns=8;const next=f.human();const args={request_id:next.id,task_id:t.id,expected_revision:1};const checkedAt=Date.now();f.intake.now=()=>checkedAt;for(const a of [{max_turns:-1},{max_turns:136},{deadline:checkedAt+10800001},{deadline:0}])assert.throws(()=>f.intake.amend({...args,...a}));for(const status of ['stopped','needs_review']){t.status=status;assert.throws(()=>f.intake.amend({...args,max_turns:30,resume:true}));}assert.equal(t.turns,8);assert.equal(t.authority_revision,1);}finally{f.close();}
 });
 test('expiry needs an explicit resume amendment, not a policy change',()=>{
  const f=fixture();try{const e=f.human();f.intake.accept({request_id:e.id,goal:'shop'});const t=f.h.task();t.deadline=1;assert.equal(f.intake.runnable(),false);const next=f.human('Please continue another hour');const args={request_id:next.id,task_id:t.id,expected_revision:1,max_turns:20,deadline:Date.now()+3600000};assert.throws(()=>f.intake.amend(args),/explicit/);f.intake.amend({...args,resume:true});assert.equal(f.intake.runnable(),true);}finally{f.close();}
@@ -72,4 +72,27 @@ test('expiry cannot hide an unresolved turn to permit amendment or replacement',
   assert.throws(()=>f.intake.amend({request_id:next.id,task_id:task.id,expected_revision:1,deadline:Date.now()+3600000,resume:true}),/effects review/);
   assert.throws(()=>f.intake.accept({request_id:next.id,goal:'replacement'}),/effects review/);assert.equal(f.h.task().id,task.id);
  }finally{f.close();}
+});
+
+test('human reductions close exhausted work without resetting consumed counts or needing resume',()=>{
+ for(const reduction of [{max_turns:3},{max_turns:7},{max_turns:0},{deadline:1}]){
+  const f=fixture();try{
+   const e=f.human();f.intake.accept({request_id:e.id,goal:'shop'});const original=f.h.task();original.turns=7;
+   const next=f.human('Reduce the allowance','AnotherHuman');const args={request_id:next.id,task_id:original.id,expected_revision:1,...reduction};
+   const result=f.intake.amend(args);assert.equal(result.turns,7);assert.equal(result.status,'budget_exhausted');assert.equal(f.intake.runnable(),false);assert.equal(f.h.task().id,original.id);assert.equal(f.h.task().authority.source.id,e.id);
+   const capabilities=f.intake.capabilities();assert.equal(capabilities.assignment.consumed_turns,7);assert.equal(capabilities.assignment.remaining_turns,Math.max(0,result.max_turns-7));assert.equal(capabilities.capacity.provider_remaining,null);
+   assert.equal(f.intake.amend(args).duplicate,true);assert.equal(f.h.data.task_authorizations.length,2);
+   assert.deepEqual(f.h.data.task_authorizations.at(-1).previous,{status:'running',max_turns:12,deadline:original.deadline,turns:7,authority_revision:1});
+  }finally{f.close();}
+ }
+});
+test('an exhausted reduction wins over resume and never opens world authority',()=>{
+ const f=fixture();try{const e=f.human();f.intake.accept({request_id:e.id,goal:'shop'});const task=f.h.task();task.turns=5;const next=f.human();f.intake.amend({request_id:next.id,task_id:task.id,expected_revision:1,max_turns:0,resume:true});assert.equal(f.intake.runnable(),false);assert.equal(f.h.task().status,'budget_exhausted');}finally{f.close();}
+});
+test('source receipt has immutable source revision, original actor/time and explicit public audience',()=>{
+ const f=fixture();try{const e=f.human();const before=f.intake.source(e.id);e.routing_debug='context changed';const after=f.intake.source(e.id);assert.equal(before.revision,after.revision);assert.notEqual(before.source_hash,after.source_hash);assert.equal(after.time,e.time);assert.equal(after.actor.server_player_uuid,e.transport.uuid);assert.deepEqual(after.audience,{kind:'public',experience:'minecraft'});f.intake.accept({request_id:e.id,goal:'shop'});assert.equal(f.h.task().authority.source.revision,before.revision);}finally{f.close();}
+});
+
+test('reported reply pacing uses the same validated limit as admission',()=>{
+ const f=fixture();try{assert.equal(f.intake.capabilities().capacity.reply_turns_per_hour,12);f.cfg.human_reply_turns_per_hour=61;assert.equal(f.intake.capabilities().capacity.reply_turns_per_hour,0);f.cfg.human_reply_turns_per_hour=4;assert.equal(f.intake.capabilities().capacity.reply_turns_per_hour,4);}finally{f.close();}
 });

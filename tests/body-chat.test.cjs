@@ -311,3 +311,19 @@ test('actual body does not trust a parsed human-looking name or a configured age
   await f.operate('task_capabilities',{});f.history.finish();
  }finally{f.close();}
 });
+
+test('actual body applies a human exhausted reduction and rejects the next work lease',async()=>{
+ const f=fixture('BuilderOne',false,{incoming_chat_only:true,human_task_intake:{enabled:true}});
+ try{
+  const {Vec3}=realRequire('vec3');f.bot.entity={position:new Vec3(0,64,0)};f.bot.inventory={items:()=>[]};f.bot.findBlocks=()=>[];f.bot.blockAt=()=>null;f.bot.time={timeOfDay:0};f.bot.pathfinder={setGoal(){}};f.bot.clearControlStates=()=>{};f.bot.stopDigging=()=>{};f.readyFixture();
+  const uuid='00000000-0000-0000-0000-000000000123';f.bot.players.Visitor={uuid};
+  const say=text=>{const raw={};f.bot.emit('message',raw,'chat',uuid,false);f.bot.emit('chat','Visitor',text,null,raw);return f.history.data.events.filter(e=>e.kind==='chat').at(-1);};
+  const source=say('BuilderOne, please build a shop.');await f.request('/turn',{conversation_only:true,message_ids:[source.id]});
+  const accepted=await f.request('/action',{name:'task_accept',arguments:{request_id:source.id,goal:'shop'}});await f.request('/finish',{});
+  await f.request('/turn',{continuation:true,renewable_lease:true,message_ids:[]});await f.request('/action',{name:'work_report',arguments:{status:'running',summary:'Inspected initial work area.'}});await f.request('/finish',{});
+  const amendment=say('BuilderOne, reduce the cumulative allowance to zero.');await f.request('/turn',{conversation_only:true,message_ids:[amendment.id]});
+  const result=await f.request('/action',{name:'task_amend',arguments:{request_id:amendment.id,task_id:accepted.task_id,expected_revision:1,max_turns:0}});
+  assert.equal(result.status,'budget_exhausted');assert.equal(result.turns,1);assert.equal(result.max_turns,0);assert.equal(result.task_id,accepted.task_id);assert.equal((await f.request('/status')).action_lease.lease_id,null);
+  await f.request('/finish',{});await f.request('/turn',{continuation:true,renewable_lease:true,message_ids:[]},400);assert.equal((await f.request('/status')).action_lease.lease_id,null);assert.equal(f.history.task().turns,1);
+ }finally{f.close();}
+});
