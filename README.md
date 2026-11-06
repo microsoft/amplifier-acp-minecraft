@@ -743,9 +743,9 @@ native/Codex provider run or a production-world rollout.
 
 ## Healthy work, action leases and ACP lifecycle
 
-A planner turn has no implicit elapsed-time cutoff. Standard ACP `session/prompt`
-settles only on its matching response, protocol/transport failure, or cancellation
-following revoked local authority. Long reasoning or compaction is not a failed
+A planner turn has no implicit elapsed-time cutoff. The client waits for the
+matching ACP `session/prompt` response. Protocol/transport failure or revoked
+local authority aborts that wait without proving effect settlement. Long reasoning or compaction is not a failed
 connection. The client advertises standard `clientCapabilities.session.compaction`
 and records typed `compaction_update` statuses; a completed compaction does not
 complete a prompt. Endpoints without these updates remain usable. After 180

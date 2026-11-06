@@ -1,9 +1,23 @@
 import asyncio
 import unittest
-from prompt_lifecycle import PromptLifecycle
+from prompt_lifecycle import PromptLifecycle, await_terminal
 from acp_client import Client
 
 class Lifecycle(unittest.IsolatedAsyncioTestCase):
+    async def test_cancel_settlement_distinguishes_terminal_from_local_failure_and_silence(self):
+        loop=asyncio.get_running_loop()
+        good=loop.create_future();good.set_result({'stop_reason':'cancelled','unsettled_tools':['pending-effect']})
+        evidence=await await_terminal(good)
+        self.assertTrue(evidence['terminal_observed']);self.assertEqual(evidence['unsettled_tool_count'],1)
+        failed=loop.create_future();failed.set_exception(ConnectionError('private payload must not be logged'))
+        evidence=await await_terminal(failed)
+        self.assertFalse(evidence['terminal_observed']);self.assertNotIn('private',str(evidence))
+        cancelled=loop.create_future();cancelled.cancel()
+        self.assertFalse((await await_terminal(cancelled))['terminal_observed'])
+        silent=loop.create_future()
+        self.assertEqual(await await_terminal(silent,timeout=.001),{'terminal_observed':False,'outcome':'unknown'})
+        self.assertFalse(silent.cancelled());silent.cancel()
+
     async def test_cancel_transport_write_is_bounded_without_replay_or_settlement_claim(self):
         c=Client({},lambda *a,**k:None);c.session='same';sent=[]
         async def blocked_send(frame):

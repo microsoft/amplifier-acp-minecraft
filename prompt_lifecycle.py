@@ -1,5 +1,23 @@
 """ACP observations, not guessed provider health or an elapsed turn budget."""
+import asyncio
 import time
+
+
+async def await_terminal(pending, timeout=5):
+    """A completed local future can be transport loss, not a prompt response."""
+    done, _ = await asyncio.wait({pending}, timeout=timeout)
+    if not done:
+        return {'terminal_observed': False, 'outcome': 'unknown'}
+    if pending.cancelled():
+        return {'terminal_observed': False, 'outcome': 'local_cancelled'}
+    error = pending.exception()
+    if error is not None:
+        return {'terminal_observed': False, 'outcome': 'prompt_error',
+                'error_type': type(error).__name__}
+    result = pending.result()
+    return {'terminal_observed': True, 'outcome': 'prompt_response',
+            'stop_reason': result.get('stop_reason', 'unknown'),
+            'unsettled_tool_count': len(result.get('unsettled_tools', []))}
 
 
 class PromptLifecycle:

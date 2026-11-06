@@ -10,6 +10,7 @@ import time
 import urllib.request
 from conversation_awareness import Awareness
 from planner_prompt import planner_prompt
+from prompt_lifecycle import await_terminal
 from acp_client import Client, turn_disposition
 from attention import Attention, fingerprint
 from assessment import Assessment, POLICY, signature
@@ -273,8 +274,7 @@ async def run(home):
                             await client.cancel()
                             # Authority has already closed. Cancellation is not
                             # settlement: observe a bounded terminal reply, never replay.
-                            done,_=await asyncio.wait({pending},timeout=5)
-                            observe('planner_cancel_settlement',terminal_observed=bool(done))
+                            observe('planner_cancel_settlement',**(await await_terminal(pending)))
                             if not pending.done():pending.cancel()
                             await client.close();client=None
                             raise RuntimeError('Action authority ended; inspect effects before continuing')
