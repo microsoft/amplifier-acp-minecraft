@@ -2,9 +2,9 @@ const test=require('node:test'),assert=require('node:assert/strict');
 const fs=require('node:fs'),os=require('node:os'),path=require('node:path'),vm=require('node:vm');
 const {EventEmitter}=require('node:events'),{createRequire}=require('node:module'),{Readable}=require('node:stream');
 const root=path.resolve(__dirname,'..'),realRequire=createRequire(path.join(root,'body.cjs'));
-function fixture(){
+function fixture(configOverride={}){
  const home=fs.mkdtempSync(path.join(os.tmpdir(),'body-lease-')),config=path.join(home,'config.json');
- fs.writeFileSync(config,JSON.stringify({username:'Builder',token:'fixture'}));
+ fs.writeFileSync(config,JSON.stringify({username:'Builder',token:'fixture',...configOverride}));
  const now=Date.now(),task={id:'accepted',status:'running',deadline:now+3600000,turns:120,max_turns:135,progress:[]};
  fs.writeFileSync(path.join(home,'workshop.json'),JSON.stringify({task,events:[],turn:null,inbox:[]}));
  const bot=new EventEmitter();Object.assign(bot,{username:'Builder',players:{},loadPlugin(){},pathfinder:{setGoal(){}},clearControlStates(){},stopDigging(){},entity:{position:{clone:()=>({x:0,y:64,z:0})}},health:20});
@@ -72,5 +72,24 @@ test('reply-only whisper never broadcasts and cannot mix audiences',async()=>{
   assert.deepEqual(sent,[['Visitor','Private reply']]);
   const event=h.data.events.find(e=>e.kind==='chat_sent');assert.equal(event.whisper,true);assert.equal(event.provenance,'minecraft_whisper');
   f.advance(240001);await f.request('/reply',{text:'Late'},400);
+ }finally{f.close();}
+});
+
+test('incoming-chat-only configuration cannot continue a valid stored task or open ordinary action authority',async()=>{
+ const f=fixture({incoming_chat_only:true,automatic_recovery:true});try{
+  const before=JSON.stringify(f.history.data.task);
+  assert.equal((await f.request('/status')).incoming_chat_only,true);
+  assert.equal((await f.request('/continuation',{generation:0})).reason,'incoming_chat_only');
+  await f.request('/turn',{renewable_lease:true,continuation:true},400);
+  await f.request('/wake',{generation:0,task_id:'accepted'},400);
+  await f.request('/watch',{operation:'arm'},400);
+  await assert.rejects(()=>f.operate('work_begin',{}),/Conversation-only/);
+  const e=f.history.record({kind:'chat',source:'human',username:'Visitor',message:'Hello',accepted:true,provenance:'minecraft_public_chat',time:new Date().toISOString()});
+  f.history.data.inbox.push({id:e.id,source:'human',username:'Visitor',message:'Hello'});f.history.save();
+  await f.request('/turn',{message_ids:[e.id]},400);
+  await f.request('/turn',{conversation_only:true,message_ids:[e.id]});
+  assert.equal((await f.request('/status')).action_lease.lease_id,null);
+  await f.request('/finish',{});
+  assert.equal(JSON.stringify(f.history.data.task),before);
  }finally{f.close();}
 });

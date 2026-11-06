@@ -104,7 +104,7 @@ function snapshot(){
   if(!ready)return {username:cfg.username,ready:false,events:events.slice(-15)};
   const p=bot.entity.position;
   const blocks=bot.findBlocks({matching:b=>b.name!=='air'&&b.name!=='water'&&b.name!=='grass_block'&&b.name!=='dirt'&&b.name!=='stone',maxDistance:16,count:50});
-  return {username:bot.username,ready,busy,generation,turn_active:Date.now()<turnUntil,pending_messages:inbox.length,conversation_only:history.data.turn?.conversation_only===true,position:p,health:bot.health,food:bot.food,time:bot.time.timeOfDay,
+  return {username:bot.username,ready,busy,generation,turn_active:Date.now()<turnUntil,pending_messages:inbox.length,incoming_chat_only:cfg.incoming_chat_only===true,conversation_only:history.data.turn?.conversation_only===true,position:p,health:bot.health,food:bot.food,time:bot.time.timeOfDay,
     inventory:bot.inventory.items().map(i=>({name:i.name,count:i.count})),
     terrain:spatial.localMap(bot,3),
     players:Object.values(bot.players).map(p=>({name:p.username,position:p.entity?.position})),
@@ -135,7 +135,7 @@ function speak(text){
 }
 async function operate(name,a={}){
   if(!ready)throw Error('Player is not connected');
-  if(history.data.turn?.conversation_only&&!REPLY_TOOLS.has(name))throw Error('Conversation-only turn: observation and replies only. No game effects, task changes or watch changes.');
+  if((cfg.incoming_chat_only===true||history.data.turn?.conversation_only)&&!REPLY_TOOLS.has(name))throw Error('Conversation-only turn: observation and replies only. No game effects, task changes or watch changes.');
   if(name==='observe')return a.detail==='full'?snapshot():worldView(snapshot());
   if(name==='conversation')return conversation.snapshot();
   if(name==='entities')return survival.entities(bot,a);
@@ -376,10 +376,11 @@ const server=http.createServer(async(req,res)=>{
     else if(req.method==='GET'&&req.url==='/observation')result=worldView(snapshot());
     else if(req.method==='GET'&&req.url==='/conversation')result={...conversation.snapshot(),generation,turn_active:Date.now()<turnUntil};
     else if(req.method==='GET'&&req.url==='/watch-context')result=watchContext();
-    else if(req.method==='POST'&&req.url==='/watch')result=await watchOperation(await json(req));
+    else if(req.method==='POST'&&req.url==='/watch'){if(cfg.incoming_chat_only===true)throw Error('Incoming-chat-only mode: task watches are not scheduled');result=await watchOperation(await json(req));}
     else if(req.method==='POST'&&req.url==='/continuation'){
       const a=await json(req);if(a.generation!==generation||busy||Date.now()<turnUntil)throw Error('Continuation observation changed');
-      if(history.budgetCheckpoint()){record('budget_checkpoint',{task_id:history.task().id});result={action:'checkpoint'};}
+      if(cfg.incoming_chat_only===true)result={action:'hold',reason:'incoming_chat_only'};
+      else if(history.budgetCheckpoint()){record('budget_checkpoint',{task_id:history.task().id});result={action:'checkpoint'};}
       else if(cfg.automatic_recovery&&cfg.decision_attention?.command&&history.task()?.status==='needs_review'&&ready){
         const epoch=generation,taskId=history.task().id;
         result=await watchBridge.invoke(cfg.decision_attention.command,path.dirname(process.argv[2]),{...history.recoveryFacts(),idle:true,observation_current:true},'continuation');
@@ -389,7 +390,7 @@ const server=http.createServer(async(req,res)=>{
         }
       }else result={action:'hold'};
     }
-    else if(req.method==='GET'&&req.url==='/status')result={ready,busy,turn_active:Date.now()<turnUntil,conversation_only:history.data.turn?.conversation_only===true,task:history.task(),action_lease:lease.view(history.task())};
+    else if(req.method==='GET'&&req.url==='/status')result={ready,busy,turn_active:Date.now()<turnUntil,incoming_chat_only:cfg.incoming_chat_only===true,conversation_only:history.data.turn?.conversation_only===true,task:history.task(),action_lease:lease.view(history.task())};
     else if(req.method==='GET'&&req.url==='/inbox/peek')result=inbox.slice(0,8);
     else if(req.method==='GET'&&req.url==='/conversation/admission')result=replyAdmission.status(inbox);
     else if(req.method==='GET'&&['/participation','/participation?human_only=1'].includes(req.url))result=participation.enabled?participationProposal(req.url.endsWith('human_only=1')):null;
@@ -410,6 +411,7 @@ const server=http.createServer(async(req,res)=>{
       const a=await json(req);
       if(busy||Date.now()<turnUntil||history.data.turn)throw Error('A turn or unsettled operation is already active');
       if(a.expected_generation!==undefined&&a.expected_generation!==generation)throw Error('Turn was superseded by Stop or a connection change');
+      if(cfg.incoming_chat_only===true&&a.conversation_only!==true)throw Error('Incoming-chat-only mode requires a bounded human reply');
       const ids=a.message_ids||[];
       if(!Array.isArray(ids)||ids.length>8||new Set(ids).size!==ids.length||ids.some(id=>!inbox.some(m=>m.id===id)))throw Error('Queued request changed before turn start');
       if(a.conversation_only===true){
@@ -435,7 +437,7 @@ const server=http.createServer(async(req,res)=>{
       else {if(++replies>8)throw Error('Reply window is closed');result=speak(a.text);}
     }
     else if(req.method==='POST'&&req.url==='/finish'){const a=await json(req);if(ready)history.checkpoint({position:bot.entity.position.clone(),health:bot.health,recent_actions:receipts.slice(-8)});history.finish(!!a.error||busy,!!a.budget_limited&&!busy);stop();result={stopped:true};}
-    else if(req.method==='POST'&&req.url==='/wake'){const a=await json(req);if(a.generation!==generation||Date.now()<turnUntil)throw Error('Observation superseded or turn already active');result=history.wake(a.task_id);record('attention_wake',{task_id:a.task_id});}
+    else if(req.method==='POST'&&req.url==='/wake'){if(cfg.incoming_chat_only===true)throw Error('Incoming-chat-only mode does not wake construction');const a=await json(req);if(a.generation!==generation||Date.now()<turnUntil)throw Error('Observation superseded or turn already active');result=history.wake(a.task_id);record('attention_wake',{task_id:a.task_id});}
     else if(req.method==='POST'&&req.url==='/resume-reviewed'){const a=await json(req);if(!ready||busy||Date.now()<turnUntil||a.generation!==generation)throw Error('Recovery review superseded or player not idle');result=history.resumeReviewed(a);record('operator_recovery',{task_id:result.id,reason:a.reason});}
     else if(req.method==='POST'&&req.url==='/stop'){stop();inbox.length=0;history.data.participation_pending=[];history.stop();history.save();result={stopped:true};}
     else if(req.method==='POST'&&req.url==='/task'){
