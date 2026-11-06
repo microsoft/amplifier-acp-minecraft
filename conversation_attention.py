@@ -54,14 +54,14 @@ class ConversationAttention:
         self.failures=0
         self.deferred=None
 
-    async def consider(self,request,client):
+    async def consider(self,request,client,*,human_only=False):
         # Fetch fresh source facts while backing off a known proposal, so a new
         # human message is not delayed by a previous rejection. Failed source
         # fetches themselves back off until local transport can recover.
         if self.retry_key is None and time.time()<self.retry_after:return False
         stage='source_fetch';key=None;evaluation_requested=False
         try:
-            proposal=await request('/participation')
+            proposal=await request('/participation?human_only=1' if human_only else '/participation')
             if not proposal:
                 self.retry_key=None;self.failures=0;self.retry_after=0;self.deferred=None
                 return False
@@ -100,6 +100,7 @@ class ConversationAttention:
                 # This fallback has no pre-LLM decision-model savings.
                 offer={'action':'engage','reason':'ordinary_acp_fallback'}
             payload={'signature':proposal['signature'],'action':offer['action']}
+            if human_only:payload['human_only']=True
             if supported and offer['action']=='engage':payload['offer']={'id':offer['id'],'ticket':offer['ticket']}
             stage='local_delivery'
             result=await request('/participation',payload)

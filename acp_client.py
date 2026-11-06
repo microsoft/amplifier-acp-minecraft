@@ -13,6 +13,9 @@ __version__ = "0.1.0"
 GAME_TOOLS = frozenset({'observe','survey','inspect','find','chat','move','follow','cancel_movement','gather','craft','place','build','give','stop','work_begin','work_report','work_reopen','map','plan_route','dig','set_open','tell','work_note','inventory','entities','shear','furnace','container','attention_watch','attention_watches','attention_cancel','read_sign','write_sign','screenshot','screenshots','screenshot_read','conversation','till'})
 
 
+REPLY_TOOLS = frozenset({'observe','conversation','entities','inventory','inspect','read_sign','survey','map','plan_route','find','chat'})
+
+
 class ProtocolError(RuntimeError):
     pass
 
@@ -38,6 +41,7 @@ class Client:
         self.write_lock = asyncio.Lock()
         self.tool_calls = {}
         self.permission_active = lambda: False
+        self.permission_tools = lambda: GAME_TOOLS
         self.load_timeout, self.idle_timeout = load_timeout, idle_timeout
         self.replaying = False
         self.reader = None
@@ -112,7 +116,7 @@ class Client:
 
     def permission_context(self):
         """Describe this client's current policy, never grant a tool invocation."""
-        policy = {'server': 'minecraft', 'tools': sorted(GAME_TOOLS),
+        policy = {'server': 'minecraft', 'tools': sorted(self.permission_tools()),
                   'approval': 'allow_once', 'scope': 'same ACP session, active game turn, not session replay'}
         revision = hashlib.sha256(json.dumps(policy, sort_keys=True).encode()).hexdigest()
         active = bool(self.session) and not self.replaying and not self.maintenance_active and bool(self.permission_active())
@@ -147,7 +151,7 @@ class Client:
         call = {**self.tool_calls.get(update_call.get('toolCallId'), {}), **update_call}
         raw = call.get('rawInput') or {}
         valid = (params.get('sessionId') == self.session and isinstance(raw, dict)
-                 and raw.get('server') == 'minecraft' and raw.get('tool') in GAME_TOOLS
+                 and raw.get('server') == 'minecraft' and raw.get('tool') in self.permission_tools()
                  and not self.replaying and not self.maintenance_active and self.permission_active())
         option = next((o for o in params.get('options', []) if o.get('kind') == 'allow_once'), None)
         outcome = {'outcome': 'selected', 'optionId': option['optionId']} if valid and option else {'outcome': 'cancelled'}

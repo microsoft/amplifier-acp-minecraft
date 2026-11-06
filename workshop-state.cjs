@@ -32,6 +32,7 @@ class WorkshopState {
   this.recover();
  }
  recover(){
+  if(this.data.turn?.conversation_only){this.data.last_conversation_turn={...this.data.turn,interrupted:true};this.data.turn=null;this.save();return;}
   if(this.data.turn){
    if(['running','waiting','review'].includes(this.data.task?.status))this.data.task.status='needs_review';
    this.data.last_turn={...this.data.turn,interrupted:true};this.data.turn=null;this.save();
@@ -119,8 +120,9 @@ class WorkshopState {
   else if(blocker_resolved&&task.status==='blocked')task.status='needs_review';
   this.save();return task;
  }
- checkpoint(observation){if(this.data.task){this.data.task.last_observed={at:new Date().toISOString(),...observation};this.save();}}
+ checkpoint(observation){if(!this.data.turn?.conversation_only&&this.data.task){this.data.task.last_observed={at:new Date().toISOString(),...observation};this.save();}}
  finish(error=false,budgetLimited=false){
+  if(this.data.turn?.conversation_only){this.data.last_conversation_turn={...this.data.turn,interrupted:!!error};this.data.turn=null;this.save();return;}
   const task=this.task(),turn=this.data.turn;
   if(error&&turn&&['waiting','review'].includes(task?.status))task.status='needs_review';
   if(task?.status==='running'){

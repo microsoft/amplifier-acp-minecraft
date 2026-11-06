@@ -24,10 +24,10 @@ class Participation {
   data.participation_pending=[...(data.participation_pending||[]),event.id].slice(-8);
   this.history.save();
  }
- proposal(players){
+ proposal(players,{humanOnly=false}={}){
   const data=this.history.data;
   const pending=new Set(data.participation_pending||[]);
-  const fresh=data.events.filter(e=>pending.has(e.id)&&isPublicChatEvent(e)&&Date.now()-Date.parse(e.time)<600000);
+  const fresh=data.events.filter(e=>pending.has(e.id)&&(!humanOnly||e.source==='human')&&isPublicChatEvent(e)&&Date.now()-Date.parse(e.time)<600000);
   if(!fresh.length)return null;
   const chat=data.events.filter(isPublicChatEvent).slice(-24);
   const names=[...new Set([this.cfg.username,...chat.map(e=>e.username||this.cfg.username),...players])].slice(0,64);

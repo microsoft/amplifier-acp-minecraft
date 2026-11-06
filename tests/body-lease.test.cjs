@@ -14,7 +14,7 @@ function fixture(){
  module:{exports:{}},console:{log(){}},Date:Clock,Buffer,process:{argv:['node','body.cjs',config],on(){},exit(){}},
  setTimeout:(fn,ms)=>{const t={fn,at:current+ms,unref(){}};timers.add(t);return t;},clearTimeout:t=>timers.delete(t)});
  vm.runInContext(fs.readFileSync(path.join(root,'body.cjs'),'utf8')+'\nready=true;module.exports={history,operate};',ctx);
- return {...ctx.module.exports,task,async request(url,payload,code=200,token='fixture'){
+ return {...ctx.module.exports,task,bot,async request(url,payload,code=200,token='fixture'){
   const req=Readable.from(payload===undefined?[]:[JSON.stringify(payload)]);Object.assign(req,{url,method:payload===undefined?'GET':'POST',headers:{authorization:'Bearer '+token}});
   let status,text;await handle(req,{writeHead:x=>status=x,end:x=>text=x});assert.equal(status,code,text);return text?JSON.parse(text):null;
  },advance(ms){current+=ms;for(const t of [...timers])if(t.at<=current){timers.delete(t);t.fn();}},close(){fs.rmSync(home,{recursive:true,force:true});}};
@@ -38,5 +38,39 @@ test('actual body expires abandoned controller permission without polling and ca
   await f.request('/turn/renew',{lease_id:start.action_lease.lease_id,task_id:'accepted'},400);
   await assert.rejects(()=>f.operate('chat',{text:'Late effect'}),/No active action lease/);
   assert.equal(f.history.task().turns,121);assert.equal(f.history.task().deadline,f.task.deadline);
+ }finally{f.close();}
+});
+
+test('actual reply-only body denies world/task/watch effects and renewal while retaining chat',async()=>{
+ const f=fixture();try{
+  const h=f.history,before=JSON.stringify(h.data.task);
+  const e=h.record({kind:'chat',source:'human',username:'Visitor',message:'How is it going?',accepted:true,provenance:'minecraft_public_chat',time:new Date().toISOString()});
+  h.data.inbox.push({id:e.id,source:'human',message:e.message});h.save();
+  const start=await f.request('/turn',{conversation_only:true,message_ids:[e.id]});
+  assert.equal(start.action_lease.lease_id,null);assert.equal(start.action_lease.renewable,false);
+  assert.equal((await f.request('/status')).conversation_only,true);
+  for(const name of ['place','move','gather','container','give','stop','cancel_movement','work_begin','work_report','work_reopen','work_note','attention_watch','attention_cancel','screenshot']){
+   await assert.rejects(()=>f.operate(name,{}),/Conversation-only/);
+  }
+  await f.operate('conversation');
+  await f.request('/turn/renew',{lease_id:null,task_id:'accepted'},400);
+  await f.request('/finish',{});
+  assert.equal(JSON.stringify(h.data.task),before);
+  await f.request('/turn',{conversation_only:true,message_ids:[e.id]},400);
+ }finally{f.close();}
+});
+
+test('reply-only whisper never broadcasts and cannot mix audiences',async()=>{
+ const f=fixture();try{
+  const sent=[];f.bot.chat=t=>sent.push(['public',t]);f.bot.whisper=(u,t)=>sent.push([u,t]);
+  const h=f.history;
+  function add(username,whisper){const e=h.record({kind:'chat',source:'human',username,message:'Private question',accepted:true,whisper,provenance:whisper?'minecraft_whisper':'minecraft_public_chat',time:new Date().toISOString()});h.data.inbox.push({id:e.id,source:'human',username,whisper,message:e.message});h.save();return e.id;}
+  const one=add('Visitor',true),two=add('Other',false);
+  await f.request('/turn',{conversation_only:true,message_ids:[one,two]},400);
+  await f.request('/turn',{conversation_only:true,message_ids:[one]});
+  await f.request('/reply',{text:'Private reply'});
+  assert.deepEqual(sent,[['Visitor','Private reply']]);
+  const event=h.data.events.find(e=>e.kind==='chat_sent');assert.equal(event.whisper,true);assert.equal(event.provenance,'minecraft_whisper');
+  f.advance(240001);await f.request('/reply',{text:'Late'},400);
  }finally{f.close();}
 });

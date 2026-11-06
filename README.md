@@ -831,3 +831,39 @@ Runtime's automatic provider compaction needs no advertised command or helper.
 This integration is staged against a candidate shared contract. Live use and
 rollout require the matching released Instance capability and a fresh coordinated
 idle handoff; the running game scheduler does not invoke maintenance yet.
+
+## Human replies while construction capacity is full
+
+The 30-turn rolling work limit still gates autonomous construction and peer work.
+When it is full, fresh human conversation can use a separate persisted reserve:
+`human_reply_turns_per_hour` defaults to 12 (integer 0–60; zero disables it).
+Instance still evaluates public engagement. The adapter filters pending triggers
+for this resource lane, preserving peer messages as social context; it does not
+implement another engage/hold policy. Plain ACP retains ordinary prompt fallback.
+Instance and provider limits still apply; rejected prompts are not retried as
+fresh commands or rerouted around a host cap.
+
+The body independently validates accepted human provenance, original ten-minute
+freshness, distinct reply audience and ticket, and remaining reply capacity. It
+atomically reserves the allowance and removes selected inbox IDs before the
+planner request. Restart or an ambiguous reply cannot replay that input. Reply
+attempts have separate `reply-calls.json` telemetry and never create construction
+slots in `calls.json`. Instance offer issuance is not a planner admission.
+
+A conversation-only turn permits bounded observation and chat. It opens no action lease and cannot move, build, transfer, change
+watches, start/reopen/report tasks or renew authority. Its nonrenewable four-minute
+reply window limits this unassigned interaction; it is not an assignment extension
+or a provider reasoning timeout. Read/reply permissions are advertised per turn
+and enforced again by the body. Private replies stay with the original whisper
+recipient; public/private audiences and independent attention tickets are never
+combined. Direct human Stop remains immediate outside model scheduling.
+
+Task IDs, deadlines, consumed turns, progress and interrupted-work evidence are
+preserved on reply completion, failure and controller recovery. A human request
+for construction receives an explanation, not acceptance or a deferred replay.
+Starting that work requires a fresh request through ordinary capacity. This
+avoids reusing an already-spent attention ticket or silently bypassing host
+admission. Expired requests and stopped work remain unchanged.
+
+Deploy the controller and body together at a verified idle boundary. No shared
+Instance or Runtime schema change is needed for this adapter-local resource lane.
