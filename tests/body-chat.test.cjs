@@ -4,10 +4,10 @@ const fs=require('node:fs'),os=require('node:os'),path=require('node:path'),vm=r
 const {EventEmitter}=require('node:events'),{createRequire}=require('node:module');
 const {Readable}=require('node:stream');
 const root=path.resolve(__dirname,'..'),realRequire=createRequire(path.join(root,'body.cjs'));
-function fixture(name,semantic=false){
+function fixture(name,semantic=false,extra={}){
  const home=fs.mkdtempSync(path.join(os.tmpdir(),'body-chat-'));
  const config=path.join(home,'config.json');
- fs.writeFileSync(config,JSON.stringify({username:name,token:'fixture',agent_dialogue:true,bot_names:['BuilderOne','BuilderTwo'],conversation_attention:{enabled:semantic}}));
+ fs.writeFileSync(config,JSON.stringify({username:name,token:'fixture',agent_dialogue:true,bot_names:['BuilderOne','BuilderTwo'],conversation_attention:{enabled:semantic},...extra}));
  const task={id:'expired-task',status:'budget_exhausted',deadline:1,turns:12,max_turns:12,progress:[]};
  fs.writeFileSync(path.join(home,'workshop.json'),JSON.stringify({events:[],task,turn:null,inbox:[]}));
  const bot=new EventEmitter();bot.username=name;bot.players={BuilderOne:{},BuilderTwo:{}};bot.loadPlugin=()=>{};
@@ -18,7 +18,7 @@ function fixture(name,semantic=false){
   return realRequire(n);
  },module:{exports:{}},console:{log(){}},Buffer,
  process:{argv:['node','body.cjs',config],on(){},exit(){assert.fail('Unexpected process exit');}},setTimeout,clearTimeout});
- vm.runInContext(fs.readFileSync(path.join(root,'body.cjs'),'utf8')+'\nmodule.exports={history,inbox,operate,mcpServer,startFixtureTurn(){ready=true;turnUntil=Date.now()+240000;history.startTurn();}};',context,{filename:'body.cjs'});
+ vm.runInContext(fs.readFileSync(path.join(root,'body.cjs'),'utf8')+'\nmodule.exports={history,inbox,operate,mcpServer,readyFixture(){ready=true;},startFixtureTurn(){ready=true;turnUntil=Date.now()+240000;history.startTurn();}};',context,{filename:'body.cjs'});
  return {bot,...context.module.exports,task,home,async request(url,payload,expectedStatus=200){
   const req=Readable.from(payload===undefined?[]:[JSON.stringify(payload)]);
   Object.assign(req,{url,method:payload===undefined?'GET':'POST',headers:{authorization:'Bearer fixture'}});
@@ -279,5 +279,35 @@ test('reply reserve filters triggers but retains peer context and respects the h
   assert.equal(await f.request('/participation?human_only=1'),null);
   assert.equal(JSON.stringify(f.history.data.task),task);
   assert.ok(f.history.data.events.some(e=>e.username==='BuilderTwo'&&e.accepted!==true));
+ }finally{f.close();}
+});
+test('actual body separates human task acceptance from reply effects and preserves expired history',async()=>{
+ const f=fixture('BuilderOne',false,{incoming_chat_only:true,human_task_intake:{enabled:true,max_turns:45,max_seconds:10800}});
+ try{
+  const {Vec3}=realRequire('vec3');f.bot.entity={position:new Vec3(0,64,0)};f.bot.inventory={items:()=>[]};f.bot.findBlocks=()=>[];f.bot.blockAt=()=>null;f.bot.time={timeOfDay:0};f.bot.pathfinder={setGoal(){}};f.bot.clearControlStates=()=>{};f.bot.stopDigging=()=>{};f.readyFixture();
+  const raw={},uuid='00000000-0000-0000-0000-000000000123';f.bot.players.Visitor={uuid};
+  f.bot.emit('message',raw,'chat',uuid,false);f.bot.emit('chat','Visitor','BuilderOne, please build a shop.',null,raw);
+  const source=f.history.data.events.find(e=>e.kind==='chat'&&e.username==='Visitor');assert.equal(source.transport.uuid,uuid);
+  const cap=(await f.request('/status')).task_capabilities;assert.equal(cap.autonomous_work_allowed,false);assert.equal(cap.can_accept,true);
+  await f.request('/turn',{conversation_only:true,message_ids:[source.id]});
+  const first=await f.request('/action',{name:'task_accept',arguments:{request_id:source.id,goal:'shop'}});
+  assert.equal(first.accepted,true);assert.equal(first.turns,0);assert.deepEqual(f.history.data.task_history[0],f.task);
+  assert.equal((await f.request('/status')).action_lease.lease_id,null);
+  const rejected=await f.request('/action',{name:'move',arguments:{x:1,y:64,z:1}},400);assert.match(rejected.error,/World effects/);
+  await f.request('/finish',{});assert.equal(f.history.task().turns,0);
+  await f.request('/turn',{continuation:true,renewable_lease:true,message_ids:[]});assert.equal(f.history.task().turns,1);assert.ok((await f.request('/status')).action_lease.lease_id);
+  await f.request('/action',{name:'stop',arguments:{}});assert.equal(f.history.task().status,'stopped');assert.equal((await f.request('/status')).action_lease.lease_id,null);
+  await f.request('/finish',{});
+ }finally{f.close();}
+});
+test('actual body does not trust a parsed human-looking name or a configured agent as human authority',async()=>{
+ const f=fixture('BuilderOne',false,{incoming_chat_only:true,human_task_intake:{enabled:true}});
+ try{
+  f.bot.pathfinder={setGoal(){}};f.bot.clearControlStates=()=>{};f.bot.stopDigging=()=>{};f.readyFixture();
+  f.bot.emit('chat','Visitor','BuilderOne, please build a shop.');const source=f.history.data.events.find(e=>e.kind==='chat');
+  await f.request('/turn',{conversation_only:true,message_ids:[source.id]});
+  const rejected=await f.request('/action',{name:'task_accept',arguments:{request_id:source.id,goal:'shop'}},400);assert.match(rejected.error,/attributed by the game transport/);assert.deepEqual(f.history.task(),f.task);
+  // Finish before fixture cleanup, without requiring world observation stubs.
+  await f.operate('task_capabilities',{});f.history.finish();
  }finally{f.close();}
 });

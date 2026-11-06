@@ -5,6 +5,7 @@ import hashlib
 import json
 import math
 import os
+import re
 from pathlib import Path
 import time
 import urllib.request
@@ -29,8 +30,12 @@ def minecraft_reply_lines(text, limit=8, width=230):
     remaining=' '.join(text.split());lines=[]
     while remaining and len(lines)<limit:
         part=prefix(remaining,width)
-        if len(part)<len(remaining) and ' ' in part:
-            part=part.rsplit(' ',1)[0]
+        if len(part)<len(remaining):
+            # Surface packetization of an already settled answer, never an ACP
+            # message-completion heuristic. Fall back to words for long sentences.
+            endings=list(re.finditer(r'[.!?…][\"\'”’)]*(?=\s|$)',part))
+            if endings:part=part[:endings[-1].end()]
+            elif ' ' in part:part=part.rsplit(' ',1)[0]
         lines.append(part)
         remaining=remaining[len(part):].lstrip()
     truncated=bool(remaining)
@@ -154,7 +159,8 @@ async def run(home):
     def observe(kind,**data):
         print(json.dumps({'time':time.time(),'kind':kind,**data}),flush=True)
     incoming_chat_only=cfg.get('incoming_chat_only') is True
-    assessment_enabled=not incoming_chat_only and (cfg.get('decision_attention') or {}).get('policy')==POLICY
+    intake_enabled=(cfg.get('human_task_intake') or {}).get('enabled') is True
+    assessment_enabled=(not incoming_chat_only or intake_enabled) and (cfg.get('decision_attention') or {}).get('policy')==POLICY
     attention=(Assessment if assessment_enabled else Attention)(home,cfg.get('decision_attention'),observe)
     state_signature=signature if assessment_enabled else fingerprint
     client=None
@@ -168,7 +174,7 @@ async def run(home):
     last_continuation=None
     async def request(path,payload=None):
         return await asyncio.to_thread(control,cfg,path,payload)
-    watches=Watches(home,cfg['decision_attention'],request,observe) if cfg.get('agent_watches') and not incoming_chat_only else None
+    watches=Watches(home,cfg['decision_attention'],request,observe) if cfg.get('agent_watches') and (not incoming_chat_only or intake_enabled) else None
     conversation_attention=ConversationAttention(observe) if (cfg.get('conversation_attention') or {}).get('enabled') else None
     async def connect():
         nonlocal client, connection_failures
@@ -181,7 +187,12 @@ async def run(home):
         if client is not None:return client
         client=Client(endpoint,observe);await client.start()
         client.permission_active=lambda: control(cfg,'/status').get('turn_active',False)
-        client.permission_tools=lambda: REPLY_TOOLS if control(cfg,'/status').get('conversation_only') else GAME_TOOLS
+        def permission_tools():
+            status=control(cfg,'/status')
+            if status.get('conversation_only'):
+                return REPLY_TOOLS | ({'task_accept','task_amend'} if status.get('task_intake_enabled') else set())
+            return GAME_TOOLS
+        client.permission_tools=permission_tools
         if not client.info.get('agentCapabilities',{}).get('mcpCapabilities',{}).get('http'):
             raise RuntimeError('This adapter requires an ACP endpoint supporting HTTP MCP')
         previous=None
@@ -240,7 +251,8 @@ async def run(home):
                 await asyncio.sleep(2);continue
             # Leave queued messages in the body. Stop clears them immediately;
             # state is reread after each wait so deadlines still expire normally.
-            if not incoming_chat_only and not state.get('turn_active') and not state.get('busy'):
+            work_allowed=state.get('task_capabilities',{}).get('autonomous_work_allowed',not incoming_chat_only)
+            if work_allowed and not state.get('turn_active') and not state.get('busy'):
                 continuation=await request('/continuation',{'generation':state.get('generation')})
                 continuation_key=(state.get('task',{}).get('id') if state.get('task') else None,json.dumps(continuation,sort_keys=True))
                 if continuation.get('action') not in ('hold','continue') and continuation_key!=last_continuation:
@@ -250,10 +262,10 @@ async def run(home):
             calls[:]=[t for t in calls if t>time.time()-3600]
             conversation_only=False
             messages=[]
-            if incoming_chat_only or len(calls)>=30:
+            if intake_enabled or not work_allowed or len(calls)>=30:
                 messages=await human_reply_messages(request,connect,conversation_attention)
                 conversation_only=bool(messages)
-            if incoming_chat_only and not conversation_only:
+            if not work_allowed and not conversation_only:
                 await asyncio.sleep(2);continue
             if not conversation_only:
                 if not await capacity_gate(calls,state,request,observe,budget_waiting,while_waiting=observe_capacity_wait,notice_path=notice_path):continue

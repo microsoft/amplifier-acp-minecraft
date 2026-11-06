@@ -63,7 +63,7 @@ class HumanReplyCapacity(unittest.IsolatedAsyncioTestCase):
   async def connect():self.fail('Existing independent input needs no re-evaluation')
   self.assertEqual([m['id'] for m in await adapter.human_reply_messages(request,connect,None)],['fresh-human'])
 
- async def exercise(self,status='running',provider_failure=False,chat_only=False):
+ async def exercise(self,status='running',provider_failure=False,chat_only=False,intake=False):
   task={'id':'original','status':status,'deadline':time.time()*1000+(-1000 if status=='budget_exhausted' else 600000),'turns':30,'max_turns':45}
   before=copy.deepcopy(task);paths=[];active=False
   message={'id':'human','source':'human','message':'What are you working on?'}
@@ -77,7 +77,7 @@ class HumanReplyCapacity(unittest.IsolatedAsyncioTestCase):
    if path=='/inbox/peek':return [message]
    if path=='/turn':
     self.assertTrue(payload['conversation_only']);self.assertFalse(payload['renewable_lease']);active=True;return {'active':True}
-   if path=='/status':return {'turn_active':active,'busy':False,'conversation_only':True}
+   if path=='/status':return {'turn_active':active,'busy':False,'conversation_only':True,'task_intake_enabled':intake}
    if path=='/conversation':return world['conversation']
    if path=='/finish':raise asyncio.CancelledError()
    if path in ('/recover','/reply'):return {}
@@ -90,11 +90,14 @@ class HumanReplyCapacity(unittest.IsolatedAsyncioTestCase):
    async def close(self):pass
    async def prompt(self,text,**kwargs):
     self_outer.assertIn('CONVERSATION-ONLY TURN',text)
+    if intake:
+     self_outer.assertIn('task_accept',self.permission_tools())
+     self_outer.assertNotIn('place',self.permission_tools())
     if provider_failure:raise ProtocolError('Host capacity rejected')
     return {'text':'Working on the harbor.','final_text':'Working on the harbor.','stop_reason':'end_turn','unsettled_tools':[]}
   self_outer=self
   with tempfile.TemporaryDirectory() as tmp:
-   home=Path(tmp);cfg={'control_port':1,'token':'fixture','incoming_chat_only':chat_only};ep={'command':['unused'],'cwd':tmp};calls=[] if chat_only else [time.time()]*30
+   home=Path(tmp);cfg={'control_port':1,'token':'fixture','incoming_chat_only':chat_only,'human_task_intake':{'enabled':intake}};ep={'command':['unused'],'cwd':tmp};calls=[] if chat_only else [time.time()]*30
    bound={**ep,'mcp_servers':[{'type':'http','name':'minecraft','url':'http://127.0.0.1:1/mcp','headers':[{'name':'Authorization','value':'Bearer fixture'}]}]}
    for name,value in [('config',cfg),('endpoint',ep),('calls',calls),('session',{'binding':hashlib.sha256(json.dumps(bound,sort_keys=True).encode()).hexdigest(),'session':'saved'})]:
     (home/(name+'.json')).write_text(json.dumps(value))
@@ -109,6 +112,10 @@ class HumanReplyCapacity(unittest.IsolatedAsyncioTestCase):
   for status in ('running','budget_exhausted','stopped'):
    with self.subTest(status=status):await self.exercise(status)
  async def test_provider_rejection_is_not_bypassed_or_retried(self):await self.exercise(provider_failure=True)
+
+ async def test_intake_reserve_exposes_only_metadata_tools_with_work_capacity_full(self):
+  await self.exercise(intake=True)
+  await self.exercise(intake=True,provider_failure=True)
 
  async def test_chat_only_mode_uses_reply_reserve_even_with_full_work_capacity_available(self):
   await self.exercise(status='running',chat_only=True)

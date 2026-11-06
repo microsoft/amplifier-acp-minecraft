@@ -19,5 +19,10 @@
       "FriendlyName"
     ]
   },
-  "human_reply_turns_per_hour": 12
+  "human_reply_turns_per_hour": 12,
+  "human_task_intake": {
+    "enabled": false,
+    "max_turns": 45,
+    "max_seconds": 10800
+  }
 }

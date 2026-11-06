@@ -192,7 +192,12 @@ that world; it does not use a model or modify the workshop world.
 
 ## Continuing tasks and recovery
 
-A routed human request can authorize `work_begin`. The agent reports progress
+The optional [human task intake policy](docs/human-task-intake.md) accepts
+server-attributed human requests through durable, bounded task transitions,
+including from a conversation-only reply. It exposes effective mode and limits
+before the agent promises work; a mode change never revives expired tasks.
+
+Without that policy, a routed human request can authorize `work_begin`. The agent reports progress
 with `work_report`, choosing running, waiting, blocked, or review. Defaults are
 12 ACP turns and 40 minutes per task, with 30 ACP turns per player per hour.
 The hourly limit defers planner starts without consuming queued messages or
