@@ -23,6 +23,8 @@ are obtained separately; this repository does not distribute them.
 git clone https://github.com/microsoft/amplifier-acp-minecraft.git
 cd amplifier-acp-minecraft
 npm ci --ignore-scripts
+python3 -m venv .venv
+.venv/bin/python -m pip install --force-reinstall -r requirements.txt
 ```
 
 Copy `config.example.json` and `endpoint.example.json` to a private installation
@@ -40,13 +42,14 @@ Start the body and controller in separate terminals:
 
 ```sh
 node body.cjs /private/your-player/config.json
-python3 adapter.py --home /private/your-player
+.venv/bin/python adapter.py --home /private/your-player
 ```
 
 Repeat with a separate directory, player name and port for every agent. The
 `ops/minecraft-body@.service` and `ops/minecraft-agent@.service` files are optional
 Linux user-service templates. Adjust their application and Node paths to the
-installation before enabling them; `%h` refers to the service user's home.
+installation before enabling them, including the controller's virtual-environment
+Python path; `%h` refers to the service user's home.
 
 The body listens on loopback. Its MCP and control requests require a bearer token,
 and browser origins are rejected. A remote ACP agent needs a trusted route back
@@ -878,3 +881,17 @@ saved tasks, queues and watch definitions are retained. Peers remain context for
 human engagement, not autonomous triggers in this mode. It is not a universal
 workshop pause and does not stop other installations. Switching it off later is an
 explicit, separately coordinated operation; it never renews expired tasks.
+
+
+## Official ACP Python SDK boundary
+
+The controller uses the official `agent-client-protocol` Python SDK. Its generated
+models, stdio framing, request IDs, response correlation, callback replies and
+extension transport are upstream-owned. See [the SDK boundary contract](docs/python-sdk.md)
+for the exact revision, bounded application wrappers and reevaluation criteria.
+Install the Python requirements in the installation's own virtual environment;
+activate it before `npm test`, or place its `bin` directory first on `PATH`.
+On Windows use `.venv\Scripts\python.exe` and `.venv\Scripts\Activate.ps1`.
+Do not replace an active controller's environment during an update: stage a new
+environment, verify it, then coordinate an idle cutover that preserves saved
+sessions and authority. Installing requirements does not start game work.

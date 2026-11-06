@@ -76,9 +76,9 @@ class AwarenessWire(unittest.IsolatedAsyncioTestCase):
                 await a.consider(snapshot())
                 result = await task
                 self.assertEqual(result['final_text'], 'Fresh peer evidence received.')
-                before = c.next_id
+                before = c.requests_sent
                 await a.finish()
-                self.assertEqual(c.next_id, before, 'Do not probe an unadvertised native extension')
+                self.assertEqual(c.requests_sent, before, 'Do not probe an unadvertised native extension')
                 self.assertEqual(a.sent[0]['state'], 'received')
                 self.assertIsNone(a.final_revision(snapshot()))
                 self.assertIn(('awareness_receipt_unavailable', {'category': 'unsupported'}), observed)
@@ -88,7 +88,7 @@ class AwarenessWire(unittest.IsolatedAsyncioTestCase):
                 await other.consider(snapshot())
                 self.assertEqual(other.sent, [])
                 self.assertEqual(other.receipts[-1]['state'], 'received')
-                self.assertEqual(c.next_id, before)
+                self.assertEqual(c.requests_sent, before)
         finally:
             await c.close()
 
@@ -116,7 +116,7 @@ class AwarenessWire(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(a.receipts[-1]['reason'], 'unsupported')
             self.assertIsNone(a.final_revision(snapshot()))
             self.assertEqual(a.final_revision({**snapshot(), 'exposed_revision': 'new'}), 'new')
-            self.assertEqual(c.next_id, 0)
+            self.assertEqual(c.requests_sent, 0)
 
     async def test_crash_journal_and_delivery_limit_do_not_request_more_work(self):
         class Fake:
@@ -142,7 +142,7 @@ class AwarenessWire(unittest.IsolatedAsyncioTestCase):
             await a.consider(snapshot())
             self.assertEqual(a.receipts[-1]['reason'], 'journal_unavailable')
             self.assertEqual(path.read_text(), 'incomplete journal')
-            self.assertEqual(c.next_id, 0)
+            self.assertEqual(c.requests_sent, 0)
 
     async def test_context_already_supplied_by_a_tool_is_not_injected_again(self):
         class Fake:

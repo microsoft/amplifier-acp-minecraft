@@ -3,7 +3,7 @@ Description=Minecraft agent for %i
 After=minecraft-workshop.service
 [Service]
 WorkingDirectory=%h/.local/share/minecraft-workshop/app
-ExecStart=/usr/bin/python3 %h/.local/share/minecraft-workshop/app/adapter.py --home %h/.local/share/minecraft-workshop/%i
+ExecStart=%h/.local/share/minecraft-workshop/app/.venv/bin/python %h/.local/share/minecraft-workshop/app/adapter.py --home %h/.local/share/minecraft-workshop/%i
 Restart=on-failure
 RestartSec=5
 KillMode=control-group

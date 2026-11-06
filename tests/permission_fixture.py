@@ -10,9 +10,10 @@ for line in sys.stdin:
   if scenario=='narration':send({'method':'session/update','params':{'sessionId':'test-session','update':{'sessionUpdate':'agent_message_chunk','messageId':'narration','_meta':{'com.microsoft.amplifier.message':{'phase':'commentary'}},'content':{'type':'text','text':'I will inspect first.'}}}})
   raw={'server':'minecraft','tool':'observe','arguments':{}}
   if scenario.startswith('game:'):raw['tool']=scenario.split(':',1)[1]
-  if scenario=='external':raw={'server':'filesystem','tool':'delete','arguments':{}}
+  if scenario in ('external','future_tool'):raw={'server':'filesystem','tool':'delete','arguments':{}}
   send({'method':'session/update','params':{'sessionId':'test-session','update':{'sessionUpdate':'tool_call','toolCallId':'t1','title':'mcp.minecraft.observe','rawInput':raw}}})
-  send({'id':90,'method':'session/request_permission','params':{'sessionId':'wrong' if scenario=='wrong_session' else 'test-session','toolCall':{'toolCallId':'t1'},'options':[{'kind':'allow_always','optionId':'forever'},{'kind':'allow_once','optionId':'once'}]}})
+  send({'id':90,'method':'session/request_permission','params':{'sessionId':'wrong' if scenario=='wrong_session' else 'test-session','toolCall':{'toolCallId':'t1'},'options':[{'name':'Permission','kind':'allow_always','optionId':'forever'},{'name':'Permission','kind':'allow_once','optionId':'once'}]}})
+  if scenario=='future_tool':send({'method':'session/update','params':{'sessionId':'test-session','update':{'sessionUpdate':'tool_call_update','toolCallId':'t1','rawInput':{'server':'minecraft','tool':'observe'}}}})
   reply=json.loads(sys.stdin.readline())
   result=reply['result']
   if scenario=='context':result['supplied_prompt']=supplied_prompt

@@ -17,3 +17,5 @@ worlds/
 server.properties
 
 screenshot-ui/dist/
+
+.venv/
