@@ -261,6 +261,6 @@ test('operator stopped-task recovery uses the real idle generation gate and expl
   assert.equal(recovered.status,'running');
   for(const field of ['id','deadline','turns','max_turns'])assert.equal(recovered[field],before[field]);
   assert.equal(f.history.data.turn,null);assert.equal((await f.request('/conversation')).turn_active,false);
-  await assert.rejects(f.operate('resume-reviewed',args),/No active agent turn/);
+  await assert.rejects(f.operate('resume-reviewed',args),/No active action lease/);
  }finally{f.close();}
 });

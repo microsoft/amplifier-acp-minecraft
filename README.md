@@ -246,7 +246,7 @@ instead of starting a turn too short to do useful work. A peer request may still
 receive an inspection or reply, but cannot authorize mutations after work stops
 or expires. Only a fresh routed human request can authorize a new responsibility.
 
-Each turn permits at most 24 mutating calls over 220 seconds; builds and gathers
+Each turn permits at most 24 mutating calls; builds and gathers
 also have per-action limits. Structured permission metadata can approve only a
 named tool from the active session's Minecraft MCP server, once. Other permission
 requests are cancelled. These controls do not change tools or authority already
@@ -739,3 +739,50 @@ installation state, sessions, accepted work and budgets. Installing these tools
 is not permission to renew or resume a stopped task. Synthetic protocol and body
 regressions run in the normal suite; their success is not evidence of a live
 native/Codex provider run or a production-world rollout.
+
+
+## Healthy work, action leases and ACP lifecycle
+
+A planner turn has no implicit elapsed-time cutoff. The client waits for the
+matching ACP `session/prompt` response. Protocol/transport failure or revoked
+local authority aborts that wait without proving effect settlement. Long reasoning or compaction is not a failed
+connection. The client advertises standard `clientCapabilities.session.compaction`
+and records typed `compaction_update` statuses; a completed compaction does not
+complete a prompt. Endpoints without these updates remain usable. After 180
+seconds without new text or a tool/compaction status transition, private telemetry
+reports `planner_progress_unknown`. This is neither a provider-health claim nor
+an automatic retry/cancellation. Empty metadata, repeated status and usage updates
+are not progress evidence. No provider-specific SDK or invented heartbeat is used.
+
+The authenticated body `/turn` response includes `action_lease` version 1. New
+controllers opt in with `renewable_lease: true`, then renew every 30 seconds at
+`/turn/renew` with the exact `lease_id` and `task_id`. A lease lasts at most 240
+seconds, and never past the bound assignment deadline. Renewal requires the same
+live turn, same task identity/deadline/cap/consumed count, and a running assignment.
+It does not reserve another turn, replenish the 24-action allowance, alter the
+hourly pacing limit, or change any durable task field. Stale, expired, stopped,
+replaced, or exhausted assignments cannot be resurrected. An accepted task created
+within a conversation can bind the current lease; an unassigned conversation or
+legacy controller has a nonrenewable 240-second action window. The controller and
+body must be upgraded together at idle; older bodies do not provide this contract.
+
+A body timer closes an abandoned lease and cancels physical activity even when no
+controller polls it. Each mutating operation separately retains its 60-second
+limit, shortened to the current lease boundary when necessary; renewing a lease
+does not extend an already running operation's deadline. Human Stop, disconnect,
+and assignment expiry remain authoritative. A failed renewal/control request is
+ambiguous and closes the controller's current work path; it is not retried as a
+new prompt or new turn. Cancellation acknowledgement is not effect settlement.
+Full action receipts and uncertain outcomes remain available for review.
+
+Provider connection/inactivity/retry policy belongs to the runtime. Any future
+Instance maintenance extension must be negotiated before use. In particular this
+adapter does not send `/compact` through a decorated prompt and claim tool-free
+maintenance, nor does it infer receipt lookup support from steering alone.
+
+The planner's stable experience instructions refer to MCP tool descriptions for
+mechanics instead of duplicating that manual in every user message. Fresh world,
+request, assignment, attention and uncertainty fields are still passed intact.
+This reduces instruction bytes, not an asserted token/cost saving or a semantic
+compaction of owner evidence. More extensive context-snapshot integration awaits
+an explicitly negotiated Instance/runtime contract.

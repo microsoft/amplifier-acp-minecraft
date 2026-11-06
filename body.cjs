@@ -18,6 +18,8 @@ const farming=require('./farming.cjs');
 const repairs=new (require('./repair.cjs').RepairHints)();
 const {Conversation}=require('./conversation.cjs');
 const {boundedAction}=require('./action-deadline.cjs');
+const lease=new (require('./action-lease.cjs').ActionLease)({now:()=>Date.now()});
+let leaseTimer;
 const presence=require('./presence.cjs');
 const {isPublicChatEvent}=require('./public-chat.cjs');
 const {Participation,ParticipationRejection}=require('./participation.cjs');
@@ -55,7 +57,13 @@ const screenshots=cfg.screenshots?.enabled?new (require('./screenshots.cjs').Scr
  browserPath:cfg.screenshots.browser_path,world:cfg.world_label||'Minecraft',isReady:()=>ready,
  onSaved:info=>record('screenshot_saved',{capture_id:info.id,path:info.path,sha256:info.sha256,bytes:info.bytes,camera:info.camera})}):null;
 function cancelAction(){ generation++;bot.pathfinder.setGoal(null);bot.clearControlStates();try{bot.stopDigging();}catch{} }
-function stop(){ turnUntil=0;cancelAction(); }
+function stop(){ clearTimeout(leaseTimer);lease.clear();turnUntil=0;cancelAction(); }
+function scheduleLease(){
+ clearTimeout(leaseTimer);turnUntil=lease.until;
+ const id=lease.id;
+ leaseTimer=setTimeout(()=>{if(lease.id===id&&Date.now()>=turnUntil){stop();record('action_lease_expired');}},Math.max(1,turnUntil-Date.now()));
+ leaseTimer.unref?.();
+}
 bot.on('spawn',()=>{ready=true;spatial.alignPlayerCollision(bot);const m=new spatial.SpatialMovements(bot);m.canDig=false;m.allow1by1towers=false;m.allowParkour=false;m.allowFreeMotion=false;m.scafoldingBlocks=[];m.maxDropDown=2; /* upstream measures to landing FLOOR: 2 permits a one-block feet descent */m.liquidCost=20;bot.pathfinder.setMovements(m);record('spawn',{position:bot.entity.position});});
 bot.on('end',reason=>{ready=false;stop();record('disconnected',{reason});setTimeout(()=>process.exit(shuttingDown?0:1),1000);});
 bot.on('error',e=>record('connection_error',{message:e.message}));
@@ -101,7 +109,7 @@ function snapshot(){
     nearby_blocks:blocks.map(p=>({name:bot.blockAt(p)?.name,position:p})),
     conversation:conversation.snapshot(),
     public_chat:history.data.events.filter(isPublicChatEvent).slice(-20),
-    events:history.data.events.filter(e=>!e.whisper).slice(-35),task:history.task(),receipts:receipts.slice(-15),remaining_actions:Math.max(0,24-actions)};
+    events:history.data.events.filter(e=>!e.whisper).slice(-35),task:history.task(),receipts:receipts.slice(-15),remaining_actions:Math.max(0,24-actions),action_lease:lease.view(history.task())};
 }
 function watchContext(){
  return watchBridge.context(cfg,history,{ready,position:bot.entity?.position,health:bot.health,
@@ -141,7 +149,7 @@ async function operate(name,a={}){
     return {cancellation_requested:true,action:activeAction,task_preserved:true,
       next:'Wait for the original action to settle, then inspect your position. Arrival is not confirmed; no action is replayed.'};
   }
-  if(Date.now()>turnUntil)throw Error('No active agent turn; ask the player to start one');
+  if(Date.now()>=turnUntil)throw Error('No active action lease; inspect current task authority. Do not replay prior actions.');
   if(busy)throw Error('Another action is running; wait for its result');
   if(name==='work_note'){const result=history.note(a,{position:bot.entity.position.clone(),health:bot.health,recent_actions:receipts.slice(-8)});record('work_status',{task_id:result.id,status:result.status,progress:result.progress.at(-1)});return taskView(result);}
   if(name==='attention_watch'||name==='attention_watches'||name==='attention_cancel'){
@@ -149,11 +157,10 @@ async function operate(name,a={}){
     const result=await watchOperation(action);record('attention_watch_tool',{tool:name,result});return result;
   }
   if(['work_begin','work_report','work_reopen'].includes(name)){
-    const result=name==='work_begin'?history.begin(a):name==='work_reopen'?history.reopen(a):history.report(a);if(name!=='work_report')turnUntil=Math.min(turnUntil,result.deadline);
+    const result=name==='work_begin'?history.begin(a):name==='work_reopen'?history.reopen(a):history.report(a);if(name!=='work_report'){turnUntil=Math.min(turnUntil,result.deadline);if(lease.id){lease.bind(result);scheduleLease();}}
     record('work_status',{task_id:result.id,status:result.status,goal:result.goal,progress:result.progress.at(-1)});return taskView(result);
   }
   if(!['chat','tell'].includes(name)&&!history.data.turn?.may_mutate)throw Error('A peer message does not authorize game actions after a responsibility stops. You may inspect and reply; a new human request is needed for more work.');
-  if(!['chat','tell'].includes(name)&&turnUntil-Date.now()<95000)throw Error('Wrap up this turn now: use work_report to save progress and continue in the next turn. No more game mutations this turn.');
   const transfer=name==='give'||(name==='container'&&['deposit','withdraw'].includes(a.operation));
   if(transfer||['chat','tell'].includes(name))conversation.guard(a.conversation_revision);
   if(name==='container'&&transfer&&!a.contents_revision)throw Error('Inspect this container first and supply its contents_revision. No transfer attempted.');
@@ -275,7 +282,7 @@ async function operate(name,a={}){
         return handoff.give(bot,a,check,{beforeTransfer:()=>conversation.guard(a.conversation_revision)});
       }
       throw Error('Unknown action');
-    },{cancel:()=>{if(name==='move')cancelAction();else stop();},
+    },{timeoutMs:Math.max(1,Math.min(60000,turnUntil-Date.now())),cancel:()=>{if(name==='move')cancelAction();else stop();},
       onUnsettled:completion=>{unfinished=completion;stop();}});
     if(['move','follow'].includes(name))check();
     history.actionSettled(actionId,!result?.error);const r=record('action_result',{action_id:actionId,action:name,arguments:a,result});receipts.push(r);if(receipts.length>100)receipts.shift();return result;
@@ -334,7 +341,7 @@ function mcpServer(){
   const m=new McpServer({name:'minecraft-player',version:'0.1.0'});
   require('./screenshots.cjs').registerTools(m,screenshots);
   for(const [name,[description,inputSchema]]of Object.entries(definitions).filter(([name])=>cfg.agent_watches||!name.startsWith('attention_')))m.registerTool(name,{description,inputSchema},async a=>{
-    try{const result=await operate(name,a),changed=conversation.updates();return {content:[{type:'text',text:JSON.stringify(result)},...(changed?[{type:'text',text:JSON.stringify({conversation:changed})}]:[]),{type:'text',text:JSON.stringify({turn_seconds_remaining:Math.max(0,Math.floor((turnUntil-Date.now()-20000)/1000)),actions_remaining:Math.max(0,24-actions),guidance:'When under 80 seconds or short of actions, call work_report with running and end this turn. The controller will continue your accepted task.'})}]};}
+    try{const result=await operate(name,a),changed=conversation.updates();return {content:[{type:'text',text:JSON.stringify(result)},...(changed?[{type:'text',text:JSON.stringify({conversation:changed})}]:[]),{type:'text',text:JSON.stringify({action_lease:lease.view(history.task()),actions_remaining:Math.max(0,24-actions),operation_timeout_seconds:60,guidance:'Lease expiry is a controller safety boundary, not a reasoning deadline. Renewals never extend assignment authority. Save progress and end when short of actions or the accepted task deadline approaches. Each operation remains bounded; inspect uncertain effects before any retry.'})}]};}
     catch(e){const changed=conversation.updates();return {isError:true,content:[{type:'text',text:JSON.stringify({error:e.message,...(e.details||{}),...(changed?{conversation:changed}:{})})}]};}
   });return m;
 }
@@ -377,7 +384,7 @@ const server=http.createServer(async(req,res)=>{
         }
       }else result={action:'hold'};
     }
-    else if(req.method==='GET'&&req.url==='/status')result={ready,busy,turn_active:Date.now()<turnUntil,task:history.task()};
+    else if(req.method==='GET'&&req.url==='/status')result={ready,busy,turn_active:Date.now()<turnUntil,task:history.task(),action_lease:lease.view(history.task())};
     else if(req.method==='GET'&&req.url==='/inbox/peek')result=inbox.slice(0,8);
     else if(req.method==='GET'&&req.url==='/participation')result=participation.enabled?participationProposal():null;
     else if(req.method==='POST'&&req.url==='/participation'){
@@ -395,11 +402,16 @@ const server=http.createServer(async(req,res)=>{
     else if(req.method==='POST'&&req.url==='/recover'){history.recover();stop();result={task:history.task()};}
     else if(req.method==='POST'&&req.url==='/turn'){
       const a=await json(req);
+      if(busy||Date.now()<turnUntil||history.data.turn)throw Error('A turn or unsettled operation is already active');
       if(a.expected_generation!==undefined&&a.expected_generation!==generation)throw Error('Turn was superseded by Stop or a connection change');
       const ids=a.message_ids||[];
       if(!Array.isArray(ids)||ids.length>8||new Set(ids).size!==ids.length||ids.some(id=>!inbox.some(m=>m.id===id)))throw Error('Queued request changed before turn start');
       if(a.continuation&&history.task()?.status!=='running')throw Error('Task is no longer running');
-      if(history.budgetCheckpoint()&&a.continuation)throw Error('Task budget saved for review');history.startTurn({peerOnly:!!a.peer_only,requestIds:ids});for(let i=inbox.length-1;i>=0;i--)if(ids.includes(inbox[i].id))inbox.splice(i,1);history.save();stop();turnUntil=Math.min(Date.now()+240000,history.task()?.status==='running'?history.task().deadline:Infinity);actions=0;replies=0;conversation.expose();result={active:true};}
+      if(history.budgetCheckpoint()&&a.continuation)throw Error('Task budget saved for review');history.startTurn({peerOnly:!!a.peer_only,requestIds:ids});for(let i=inbox.length-1;i>=0;i--)if(ids.includes(inbox[i].id))inbox.splice(i,1);history.save();stop();lease.begin(history.data.turn,history.task(),a.renewable_lease===true);scheduleLease();actions=0;replies=0;conversation.expose();result={active:true,action_lease:lease.view(history.task())};}
+    else if(req.method==='POST'&&req.url==='/turn/renew'){
+      const a=await json(req);if(!ready)throw Error('Player disconnected');
+      result=lease.renew(a,history.task(),history.data.turn);scheduleLease();
+    }
     else if(req.method==='POST'&&req.url==='/notice'){
       const a=await json(req);const notices={budget:'I am waiting for hourly capacity. I will resume while the task remains authorized and within its deadline.',paused:'My game turn was interrupted. Progress so far is saved; ask me to inspect it and continue.'};
       if(!notices[a.kind])throw Error('Unknown status notice');

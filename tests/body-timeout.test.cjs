@@ -58,7 +58,7 @@ test('human Stop wins both before timeout and during cancellation cleanup',async
    const failed=assert.rejects(move,/cancelled|timed out/);
    await wait(stopAfterMs);await f.operate('stop',{});await failed;
    assert.equal(f.state().turnUntil,0);assert.equal(f.state().task.status,'stopped');
-   await assert.rejects(f.operate('work_report',{status:'running',summary:'Do not revive'}),/No active agent turn/);
+   await assert.rejects(f.operate('work_report',{status:'running',summary:'Do not revive'}),/No active action lease/);
   }finally{f.close();}
  }
 });
@@ -67,7 +67,7 @@ test('an unsettled move closes the turn and holds busy until cleanup actually fi
   await assert.rejects(f.operate('move',{x:2,y:64,z:0,mode:'normal'}),/cancellation has not settled/);
   assert.equal(f.state().turnUntil,0);assert.equal(f.state().busy,true);
   assert.equal(f.history.data.events.at(-1).operation_settled,false);
-  await assert.rejects(f.operate('move',{x:3,y:64,z:0,mode:'normal'}),/No active agent turn/);
+  await assert.rejects(f.operate('move',{x:3,y:64,z:0,mode:'normal'}),/No active action lease/);
   f.release();await wait(10);assert.equal(f.state().busy,false);assert.equal(f.starts(),1);
  }finally{f.close();}
 });
