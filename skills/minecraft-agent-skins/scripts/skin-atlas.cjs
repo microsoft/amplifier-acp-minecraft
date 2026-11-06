@@ -43,6 +43,9 @@ function validate(image) {
 }
 
 function pack(source, layout) {
+  const minimumBaseAlpha = layout.minimumBaseAlpha ?? 255;
+  if (!Number.isInteger(minimumBaseAlpha) || minimumBaseAlpha < 250 || minimumBaseAlpha > 255) throw Error('minimumBaseAlpha must be an integer from 250 to 255');
+  let normalizedBasePixels = 0;
   if (layout.width !== source.width || layout.height !== source.height) throw Error('Layout dimensions do not match source');
   if (!layout.parts || Object.keys(layout.parts).length !== PARTS.length ||
       Object.keys(layout.parts).some(p => !PARTS.includes(p))) throw Error('Layout requires exactly six classic parts');
@@ -62,11 +65,14 @@ function pack(source, layout) {
         const sy = y + Math.floor((row + 0.5) * h / dh);
         const from = (sy * source.width + sx) * 4;
         const to = ((dy + row) * 64 + dx + col) * 4;
+        if (source.data[from + 3] < minimumBaseAlpha) throw Error(`Nonopaque base sample in ${part} at ${sx},${sy}; below minimumBaseAlpha`);
         source.data.copy(output.data, to, from, from + 4);
+        if (output.data[to + 3] !== 255) { output.data[to + 3] = 255; normalizedBasePixels++; }
       }
     });
   }
   validate(output);
+  output.packing = { minimumBaseAlpha, normalizedBasePixels };
   return output;
 }
 
@@ -76,7 +82,7 @@ function main(args) {
   } else if (args[0] === 'pack' && args.length === 4) {
     const result = pack(readPng(args[1]), JSON.parse(fs.readFileSync(args[2], 'utf8')));
     fs.writeFileSync(args[3], PNG.sync.write(result), { flag: 'wx' });
-    console.log(JSON.stringify({ ...validate(result), output: args[3], sampling: 'nearest-center', layers: 'base-only' }, null, 2));
+    console.log(JSON.stringify({ ...validate(result), output: args[3], sampling: 'nearest-center', layers: 'base-only', ...result.packing }, null, 2));
   } else throw Error('Usage: skin-atlas.cjs validate SKIN.png | pack SOURCE.png LAYOUT.json NEW.png');
 }
 if (require.main === module) {
