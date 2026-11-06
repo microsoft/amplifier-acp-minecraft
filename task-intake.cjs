@@ -1,5 +1,6 @@
 // Local world-execution authority. Social attention and ACP remain independent.
 const {createHash,randomUUID}=require('node:crypto');
+const {ConversationAdmission}=require('./conversation-admission.cjs');
 const INTAKE_TOOLS=new Set(['task_accept','task_amend']);
 const canonical=v=>Array.isArray(v)?v.map(canonical):v&&typeof v==='object'?Object.fromEntries(Object.keys(v).sort().map(k=>[k,canonical(v[k])])):v;
 const digest=value=>createHash('sha256').update(JSON.stringify(canonical(value))).digest('hex');
@@ -35,7 +36,9 @@ class TaskIntake {
    defaults:limits?{turns:limits.default_turns,seconds:limits.default_seconds}:null,
    ceilings:limits?{cumulative_turns:limits.max_turns,seconds_from_amendment:limits.max_seconds}:null,
    blocked_reason:policy_error?'invalid_task_policy':!enabled&&configured_chat_only?'installation_chat_only':conversation_only?'reply_turn_no_world_effects':null,
-   task_revision:this.history.task()?.authority_revision??0,
+   task_revision:task?.authority_revision??0,
+   assignment:task?{id:task.id,status:task.status,consumed_turns:task.turns,cumulative_cap:task.max_turns,deadline:task.deadline,remaining_turns:Math.max(0,task.max_turns-task.turns),remaining_ms:Math.max(0,task.deadline-this.now())}:null,
+   capacity:{autonomous_turns_per_hour:30,reply_turns_per_hour:new ConversationAdmission(this.history,this.cfg).limit(),provider_remaining:null,provider_limits:'Enforced independently by the connected host/provider; remaining capacity is not known to this body.'},
    reviewed_requests:(this.history.data.reviewed_task_sources||[]).filter(x=>x.valid_until>this.now()&&!this.used(x.source.id)&&Date.parse(x.source.time)>(this.history.data.task_source_cutoff||0)).map(x=>({id:x.source.id,username:x.source.username,message:x.source.message,valid_until:x.valid_until})),
    capacity_note:'Reply admission and autonomous hourly/provider capacity are separate. Task acceptance is not a planner-turn reservation.'};
  }
@@ -62,7 +65,9 @@ class TaskIntake {
   const e=review?.source||data.events.find(e=>e.id===id),at=Date.parse(e?.time);
   if(!e||e.kind!=='chat'||e.source!=='human'||e.accepted!==true||e.whisper||e.provenance!=='minecraft_public_chat'||!Number.isFinite(at)||at>this.now()+5000||at<=(data.task_source_cutoff||0))throw Error('A public human source is required');
   if(!review&&(!turn.request_ids.includes(id)||at<=this.now()-600000||e.transport?.kind!=='server_player_uuid'||e.transport?.username!==e.username||!e.transport.uuid))throw Error('Source must be fresh, bound to this turn and attributed by the game transport; historical sources require explicit operator review');
-  return {id:e.id,username:e.username,message:e.message,time:e.time,source_hash:digest(e),transport:e.transport||null,evidence_origin:review?'authenticated_operator_review':'server_player_uuid'};
+  const actor={kind:'human',name:e.username,server_player_uuid:e.transport?.uuid||null},audience={kind:'public',experience:'minecraft'};
+  const original={id:e.id,actor,audience,message:e.message,time:e.time};
+  return {...original,username:e.username,revision:digest(original),source_hash:digest(e),transport:e.transport||null,evidence_origin:review?'authenticated_operator_review':'server_player_uuid'};
  }
  receipt(operation,args){
   const old=(this.history.data.task_authorizations||[]).find(r=>r.source.id===args.request_id);
@@ -94,11 +99,13 @@ class TaskIntake {
   if(!task||task.id!==args.task_id||task.authority?.kind!=='human_game_request'||task.authority_revision!==args.expected_revision||['stopped','needs_review'].includes(task.status))throw Error('Task authority changed or requires recovery review');
   if(args.max_turns===undefined&&args.deadline===undefined)throw Error('Specify a cumulative cap or absolute deadline');
   const cap=args.max_turns??task.max_turns,deadline=args.deadline??task.deadline;
-  if(!Number.isInteger(cap)||cap<Math.max(1,task.turns)||cap>limits.max_turns||!Number.isSafeInteger(deadline)||deadline<=this.now()||deadline>this.now()+limits.max_seconds*1000)throw Error('Amendment violates retained consumption, deadline or installation ceilings');
-  if(task.status==='budget_exhausted'&&args.resume!==true)throw Error('Expired assignment needs an explicit human-requested resume amendment');
+  if(!Number.isInteger(cap)||cap<0||cap>limits.max_turns||!Number.isSafeInteger(deadline)||deadline<=0||deadline>this.now()+limits.max_seconds*1000)throw Error('Amendment violates valid limits or installation ceilings');
+  const exhausted=cap<=task.turns||deadline<=this.now();
+  if(task.status==='budget_exhausted'&&!exhausted&&args.resume!==true)throw Error('Expired assignment needs an explicit human-requested resume amendment');
   const previous={status:task.status,max_turns:task.max_turns,deadline:task.deadline,turns:task.turns,authority_revision:task.authority_revision};
   task.max_turns=cap;task.deadline=deadline;task.authority_revision++;
-  if(args.resume===true){task.status='running';task.wait_for=null;task.wait_started_at=null;}
+  if(exhausted){task.status='budget_exhausted';task.wait_for=null;task.wait_started_at=null;}
+  else if(args.resume===true){task.status='running';task.wait_for=null;task.wait_started_at=null;}
   return this.commit('amend',args,source,task,previous);
  }
 }
