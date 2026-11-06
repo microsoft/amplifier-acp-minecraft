@@ -11,7 +11,7 @@ import urllib.request
 from conversation_awareness import Awareness
 from planner_prompt import planner_prompt
 from prompt_lifecycle import await_terminal
-from acp_client import Client, turn_disposition
+from acp_client import Client, turn_disposition, GAME_TOOLS, REPLY_TOOLS
 from attention import Attention, fingerprint
 from assessment import Assessment, POLICY, signature
 from watches import Watches
@@ -117,6 +117,32 @@ async def capacity_gate(calls,state,request,observe,waiting,*,now=None,sleep=asy
     return False
 
 
+async def human_reply_messages(request,connect,attention):
+    """A bounded human-only resource lane; engage/hold still belongs to Instance."""
+    def select(messages,admission):
+        eligible=set(admission.get('eligible_ids',[]))
+        selected=[m for m in messages if m.get('id') in eligible and m.get('source')=='human']
+        # A ticket binding peers cannot be split or promoted into this reserve.
+        selected=[m for m in selected if not m.get('attention_offer') or not any(
+            peer.get('source')!='human' and peer.get('attention_offer')==m['attention_offer'] for peer in messages)]
+        if not selected:return []
+        offer=selected[0].get('attention_offer')
+        audience=selected[0].get('username') if selected[0].get('whisper') else None
+        return [m for m in selected if m.get('attention_offer')==offer and
+                (m.get('username') if m.get('whisper') else None)==audience][:8]
+
+    admission=await request('/conversation/admission')
+    if admission.get('version')!=1 or admission.get('remaining',0)<=0:return []
+    selected=select(await request('/inbox/peek'),admission)
+    if not selected and attention and await request('/participation?human_only=1'):
+        client=await connect()
+        await attention.consider(request,client,human_only=True)
+        admission=await request('/conversation/admission')
+        if admission.get('version')!=1 or admission.get('remaining',0)<=0:return []
+        selected=select(await request('/inbox/peek'),admission)
+    return selected
+
+
 async def run(home):
     cfg=json.loads((home/'config.json').read_text())
     endpoint=json.loads((home/'endpoint.json').read_text())
@@ -133,6 +159,8 @@ async def run(home):
     client=None
     calls_path=home/'calls.json'
     calls=json.loads(calls_path.read_text()) if calls_path.exists() else []
+    reply_calls_path=home/'reply-calls.json'
+    reply_calls=json.loads(reply_calls_path.read_text()) if reply_calls_path.exists() else []
     notice_path=home/'capacity-notice.json'
     budget_waiting=load_capacity_notice(notice_path)
     connection_failures=0
@@ -149,9 +177,10 @@ async def run(home):
         if client is not None and client.transport_closed():
             observe('connection_closed_before_turn',session_id=client.session)
             await client.close();client=None
-        if client is not None:return
+        if client is not None:return client
         client=Client(endpoint,observe);await client.start()
         client.permission_active=lambda: control(cfg,'/status').get('turn_active',False)
+        client.permission_tools=lambda: REPLY_TOOLS if control(cfg,'/status').get('conversation_only') else GAME_TOOLS
         if not client.info.get('agentCapabilities',{}).get('mcpCapabilities',{}).get('http'):
             raise RuntimeError('This adapter requires an ACP endpoint supporting HTTP MCP')
         previous=None
@@ -161,6 +190,7 @@ async def run(home):
         await client.open_session(previous)
         save(home/'session.json',{'binding':identity,'session':client.session})
         connection_failures=0
+        return client
 
     async def observe_attention(state):
         watch_managed=False
@@ -216,8 +246,15 @@ async def run(home):
                     observe('continuation_policy',**continuation)
                 last_continuation=continuation_key
                 state=await request('/state')
-            if not await capacity_gate(calls,state,request,observe,budget_waiting,while_waiting=observe_capacity_wait,notice_path=notice_path):continue
-            messages=await request('/inbox/peek')
+            calls[:]=[t for t in calls if t>time.time()-3600]
+            conversation_only=False
+            messages=[]
+            if len(calls)>=30:
+                messages=await human_reply_messages(request,connect,conversation_attention)
+                conversation_only=bool(messages)
+            if not conversation_only:
+                if not await capacity_gate(calls,state,request,observe,budget_waiting,while_waiting=observe_capacity_wait,notice_path=notice_path):continue
+                messages=await request('/inbox/peek')
             if not messages and conversation_attention and await request('/participation'):
                 await connect()
                 await conversation_attention.consider(request,client)
@@ -235,15 +272,15 @@ async def run(home):
             attention_offer=offers[0] if offers else None
             if offers and any(offer!=attention_offer for offer in offers):
                 raise RuntimeError('Mixed attention offers cannot share a turn')
-            await request('/turn',{'renewable_lease':True,'expected_generation':state.get('generation'),'continuation':all(m.get('source')=='continuation' for m in messages),'peer_only':all(m.get('source')=='agent' for m in messages),'message_ids':[m['id'] for m in messages if m.get('id')]})
+            await request('/turn',{'renewable_lease':not conversation_only,'conversation_only':conversation_only,'expected_generation':state.get('generation'),'continuation':all(m.get('source')=='continuation' for m in messages),'peer_only':all(m.get('source')=='agent' for m in messages),'message_ids':[m['id'] for m in messages if m.get('id')]})
             turn_started=True
             state=await request('/state')  # The new turn resets action/time budgets.
             watch_notifications=[]
-            if watches:
+            if watches and not conversation_only:
                 await watches.poll()
                 watch_notifications=await watches.pending()
             assessment=None
-            if assessment_enabled:
+            if assessment_enabled and not conversation_only:
                 assessment=await attention.before_turn(state)
                 fresh=await request('/state')
                 if not fresh.get('turn_active') or fresh.get('generation')!=state.get('generation'):
@@ -259,9 +296,13 @@ async def run(home):
             world=await request('/observation')
             if not world.get('turn_active') or world.get('generation')!=state.get('generation'):
                 raise RuntimeError('Turn stopped before planner observation')
-            observe('turn_started',messages=messages)
+            observe('turn_started',messages=messages,conversation_only=conversation_only)
             prompt=planner_prompt(messages,world,assessment,watch_notifications)
-            calls.append(time.time());save(calls_path,calls)
+            if conversation_only:
+                reply_calls[:]=[t for t in reply_calls if t>time.time()-3600]
+                reply_calls.append(time.time());save(reply_calls_path,reply_calls)
+            else:
+                calls.append(time.time());save(calls_path,calls)
             awareness=Awareness(home,client,world.get('conversation',{}),observe)
             pending=asyncio.create_task(client.prompt(prompt,attention_offer=attention_offer))
             last_renewed=time.monotonic()
@@ -305,7 +346,7 @@ async def run(home):
                     await deliver_final_reply(text,revision,request,observe)
             observe('turn_completed',stop_reason=result['stop_reason'],disposition=disposition,
                     unsettled_tool_count=len(result.get('unsettled_tools',[])))
-            if watches and disposition=='complete':
+            if watches and not conversation_only and disposition=='complete':
                 await watches.acknowledge(watch_notifications)
             await request('/finish',{'error':disposition=='interrupted','budget_limited':disposition=='limited'})
         except asyncio.CancelledError:

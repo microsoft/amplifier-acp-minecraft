@@ -264,3 +264,20 @@ test('operator stopped-task recovery uses the real idle generation gate and expl
   await assert.rejects(f.operate('resume-reviewed',args),/No active action lease/);
  }finally{f.close();}
 });
+test('reply reserve filters triggers but retains peer context and respects the host hold',async()=>{
+ const f=fixture('BuilderOne',true);try{
+  f.bot.emit('chat','BuilderTwo','The roof needs a check.');
+  f.bot.emit('chat','VisitorOne','What are you all working on?');
+  const proposal=await f.request('/participation?human_only=1');
+  assert.equal(proposal.ids.length,1);
+  assert.equal(proposal.context.messages.find(m=>m.id===proposal.context.trigger_id).sender,'VisitorOne');
+  assert.ok(proposal.context.messages.some(m=>m.sender==='BuilderTwo'));
+  const task=JSON.stringify(f.history.data.task);
+  const result=await f.request('/participation',{signature:proposal.signature,action:'hold',human_only:true});
+  assert.equal(result.queued,false);assert.equal(f.inbox.length,0);
+  assert.deepEqual((await f.request('/conversation/admission')).eligible_ids,[]);
+  assert.equal(await f.request('/participation?human_only=1'),null);
+  assert.equal(JSON.stringify(f.history.data.task),task);
+  assert.ok(f.history.data.events.some(e=>e.username==='BuilderTwo'&&e.accepted!==true));
+ }finally{f.close();}
+});

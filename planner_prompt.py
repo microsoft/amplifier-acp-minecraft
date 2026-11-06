@@ -19,6 +19,6 @@ Use tell intent=request only for a genuine needed action or answer; update for u
 
 
 def planner_prompt(messages, world, assessment=None, notifications=None):
-    return INSTRUCTIONS + json.dumps({'messages': messages, 'world': world,
+    return (INSTRUCTIONS + ('\nCONVERSATION-ONLY TURN: Reply to the fresh human input. Observe if needed, but do not move, build, transfer, manage watches or change any task. No construction allowance was granted. If a human requests work, explain that this reply does not start or queue it; a fresh request through ordinary capacity is needed. Do not claim accepted responsibility. Do not use work_report; end with your reply.\n' if world.get('conversation_only') else '')) + json.dumps({'messages': messages, 'world': world,
                                      'agent_assessment': assessment,
                                      'attention_notifications': notifications})

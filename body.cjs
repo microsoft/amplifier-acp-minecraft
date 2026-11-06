@@ -41,12 +41,14 @@ bot.on('path_update',result=>spatial.normalizePassages(bot,result));
 let ready=false, busy=false, activeAction=null, generation=0, turnUntil=0, actions=0, replies=0, sequence=0, shuttingDown=false;
 let lastHumanAt=Date.parse(history.data.events.filter(e=>e.kind==='chat'&&e.source==='human').at(-1)?.time)||0;
 let agentWakeTimes=[],lastNoticeAt=0;
+const {ConversationAdmission,REPLY_TOOLS}=require('./conversation-admission.cjs');
+const replyAdmission=new ConversationAdmission(history,cfg);
 const events=[], inbox=history.data.inbox||(history.data.inbox=[]), receipts=[];
 const routeHuman=conversationRouter(cfg.username,{aliases:cfg.aliases||{}});
 const participation=new Participation(history,cfg);
 const conversation=new Conversation(history,cfg.username);
-const participationProposal=()=>{
- const proposal=participation.proposal(Object.keys(bot.players));
+const participationProposal=(humanOnly=false)=>{
+ const proposal=participation.proposal(Object.keys(bot.players),{humanOnly});
  if(proposal)proposal.delivery=participation.deliveryStatus(proposal,inbox,{lastHumanAt,agentWakeTimes});
  return proposal;
 };
@@ -102,7 +104,7 @@ function snapshot(){
   if(!ready)return {username:cfg.username,ready:false,events:events.slice(-15)};
   const p=bot.entity.position;
   const blocks=bot.findBlocks({matching:b=>b.name!=='air'&&b.name!=='water'&&b.name!=='grass_block'&&b.name!=='dirt'&&b.name!=='stone',maxDistance:16,count:50});
-  return {username:bot.username,ready,busy,generation,turn_active:Date.now()<turnUntil,pending_messages:inbox.length,position:p,health:bot.health,food:bot.food,time:bot.time.timeOfDay,
+  return {username:bot.username,ready,busy,generation,turn_active:Date.now()<turnUntil,pending_messages:inbox.length,conversation_only:history.data.turn?.conversation_only===true,position:p,health:bot.health,food:bot.food,time:bot.time.timeOfDay,
     inventory:bot.inventory.items().map(i=>({name:i.name,count:i.count})),
     terrain:spatial.localMap(bot,3),
     players:Object.values(bot.players).map(p=>({name:p.username,position:p.entity?.position})),
@@ -124,13 +126,16 @@ async function watchOperation(action){
 function coord(a){const p=new Vec3(a.x,a.y,a.z);if(![p.x,p.y,p.z].every(Number.isInteger)||p.y< -64||p.y>319||p.distanceTo(bot.entity.position)>64)throw Error('Coordinates must be whole blocks within 64 blocks of this player');return p;}
 function speak(text){
  const s=text.replace(/[\r\n\x00-\x1f]/g,' ').trim();if(!s||s.startsWith('/'))throw Error('Use ordinary chat, not slash commands');
- const result={sent:s.slice(0,240)};bot.chat(result.sent);
- // Record only text handed to public chat, never an attempted/failed tool input.
+ const recipient=history.data.turn?.conversation_only?history.data.turn.reply_recipient:null;
+ const result={sent:s.slice(0,240),...(recipient?{whisper:true,provenance:'minecraft_whisper',recipient}:{})};
+ if(recipient)bot.whisper(recipient,result.sent);else bot.chat(result.sent);
+ // Record only text handed to its bound audience, never an attempted/failed tool input.
  // This transport receipt is not proof of delivery to every player.
  record('chat_sent',result);return result;
 }
 async function operate(name,a={}){
   if(!ready)throw Error('Player is not connected');
+  if(history.data.turn?.conversation_only&&!REPLY_TOOLS.has(name))throw Error('Conversation-only turn: observation and replies only. No game effects, task changes or watch changes.');
   if(name==='observe')return a.detail==='full'?snapshot():worldView(snapshot());
   if(name==='conversation')return conversation.snapshot();
   if(name==='entities')return survival.entities(bot,a);
@@ -384,12 +389,13 @@ const server=http.createServer(async(req,res)=>{
         }
       }else result={action:'hold'};
     }
-    else if(req.method==='GET'&&req.url==='/status')result={ready,busy,turn_active:Date.now()<turnUntil,task:history.task(),action_lease:lease.view(history.task())};
+    else if(req.method==='GET'&&req.url==='/status')result={ready,busy,turn_active:Date.now()<turnUntil,conversation_only:history.data.turn?.conversation_only===true,task:history.task(),action_lease:lease.view(history.task())};
     else if(req.method==='GET'&&req.url==='/inbox/peek')result=inbox.slice(0,8);
-    else if(req.method==='GET'&&req.url==='/participation')result=participation.enabled?participationProposal():null;
+    else if(req.method==='GET'&&req.url==='/conversation/admission')result=replyAdmission.status(inbox);
+    else if(req.method==='GET'&&['/participation','/participation?human_only=1'].includes(req.url))result=participation.enabled?participationProposal(req.url.endsWith('human_only=1')):null;
     else if(req.method==='POST'&&req.url==='/participation'){
       if(!participation.enabled)throw new ParticipationRejection('disabled');
-      const a=await json(req),proposal=participationProposal();
+      const a=await json(req),proposal=participationProposal(a.human_only===true);
       participation.validate(proposal,a);
       const peerCount=proposal?proposal.ids.filter(id=>history.data.events.find(e=>e.id===id)?.source==='agent').length:0;
       agentWakeTimes=agentWakeTimes.filter(t=>t>Date.now()-3600000);
@@ -406,8 +412,13 @@ const server=http.createServer(async(req,res)=>{
       if(a.expected_generation!==undefined&&a.expected_generation!==generation)throw Error('Turn was superseded by Stop or a connection change');
       const ids=a.message_ids||[];
       if(!Array.isArray(ids)||ids.length>8||new Set(ids).size!==ids.length||ids.some(id=>!inbox.some(m=>m.id===id)))throw Error('Queued request changed before turn start');
+      if(a.conversation_only===true){
+       replyAdmission.start(ids,inbox);stop();turnUntil=Date.now()+240000;
+       leaseTimer=setTimeout(()=>{stop();record('conversation_window_expired');},240000);leaseTimer.unref?.();
+       actions=0;replies=0;conversation.expose();result={active:true,conversation_only:true,action_lease:lease.view(history.task())};
+      }else {
       if(a.continuation&&history.task()?.status!=='running')throw Error('Task is no longer running');
-      if(history.budgetCheckpoint()&&a.continuation)throw Error('Task budget saved for review');history.startTurn({peerOnly:!!a.peer_only,requestIds:ids});for(let i=inbox.length-1;i>=0;i--)if(ids.includes(inbox[i].id))inbox.splice(i,1);history.save();stop();lease.begin(history.data.turn,history.task(),a.renewable_lease===true);scheduleLease();actions=0;replies=0;conversation.expose();result={active:true,action_lease:lease.view(history.task())};}
+      if(history.budgetCheckpoint()&&a.continuation)throw Error('Task budget saved for review');history.startTurn({peerOnly:!!a.peer_only,requestIds:ids});for(let i=inbox.length-1;i>=0;i--)if(ids.includes(inbox[i].id))inbox.splice(i,1);history.save();stop();lease.begin(history.data.turn,history.task(),a.renewable_lease===true);scheduleLease();actions=0;replies=0;conversation.expose();result={active:true,action_lease:lease.view(history.task())};}}
     else if(req.method==='POST'&&req.url==='/turn/renew'){
       const a=await json(req);if(!ready)throw Error('Player disconnected');
       result=lease.renew(a,history.task(),history.data.turn);scheduleLease();

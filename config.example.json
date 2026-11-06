@@ -18,5 +18,6 @@
     "YourAgent": [
       "FriendlyName"
     ]
-  }
+  },
+  "human_reply_turns_per_hour": 12
 }

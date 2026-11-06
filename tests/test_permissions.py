@@ -1,11 +1,12 @@
 import json,sys,unittest
 from pathlib import Path
-from acp_client import Client, GAME_TOOLS
+from acp_client import Client, GAME_TOOLS, REPLY_TOOLS
 class Permissions(unittest.IsolatedAsyncioTestCase):
- async def check(self,scenario,active=True):
+ async def check(self,scenario,active=True,reply=False):
   c=Client({'command':[sys.executable,str(Path(__file__).with_name('permission_fixture.py')),scenario],'cwd':'/tmp'},lambda *a,**kw:None)
   try:
    await c.start();await c.open_session();c.permission_active=lambda:active
+   if reply:c.permission_tools=lambda:REPLY_TOOLS
    return json.loads((await c.prompt('test',5))['text'])['outcome']
   finally:await c.close()
  async def test_only_game_tool_once(self):self.assertEqual(await self.check('game'),{'outcome':'selected','optionId':'once'})
@@ -70,3 +71,8 @@ class Permissions(unittest.IsolatedAsyncioTestCase):
    self.assertNotIn('I will inspect first.',result['final_text'])
    self.assertEqual(json.loads(result['final_text'])['outcome']['outcome'],'selected')
   finally:await c.close()
+
+ async def test_reply_scope_denies_all_game_effects_and_task_changes(self):
+  for tool in GAME_TOOLS:
+   result=await self.check('game:'+tool,reply=True)
+   self.assertEqual(result['outcome'],'selected' if tool in REPLY_TOOLS else 'cancelled',tool)
