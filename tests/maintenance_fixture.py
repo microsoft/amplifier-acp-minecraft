@@ -29,7 +29,7 @@ for line in sys.stdin:
         if mode=='closed':sys.exit(0)
         send({'id':'permission','method':'session/request_permission','params':{'sessionId':sid,
             'toolCall':{'toolCallId':'mutation','rawInput':{'server':'minecraft','tool':'place'}},
-            'options':[{'kind':'allow_once','optionId':'once'}]}})
+            'options':[{'name':'Permission','kind':'allow_once','optionId':'once'}]}})
     elif v.get('id')=='permission':
         assert v['result']['outcome']=={'outcome':'cancelled'}
         finish()

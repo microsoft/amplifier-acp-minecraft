@@ -1,0 +1,2 @@
+# Official SDK: immutable upstream revision supplies typed compaction and message IDs.
+agent-client-protocol @ git+https://github.com/agentclientprotocol/python-sdk.git@9853d8b514d6340000bcbd01ec07808436db80cf

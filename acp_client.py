@@ -1,4 +1,8 @@
-"""Minimal ACP v1 stdio client. Endpoint ownership stays outside the lab."""
+"""Minecraft policy/collection around the official ACP Python SDK.
+
+The SDK owns protocol models, framing, request IDs, correlation and callbacks.
+This wrapper owns process lifetime, game permissions and bounded observations.
+"""
 import asyncio
 import hashlib
 import json
@@ -6,6 +10,36 @@ import os
 from pathlib import Path
 import signal
 from prompt_lifecycle import PromptLifecycle
+from acp import connect_to_agent
+from acp.connection import StreamDirection
+from acp.exceptions import RequestError
+from pydantic import ValidationError
+from acp.schema import (InitializeRequest, NewSessionRequest, LoadSessionRequest,
+                        PromptRequest, SessionNotification, RequestPermissionResponse)
+from acp.utils import model_to_kwargs
+
+
+def wire(model):
+    return model.model_dump(mode='json', by_alias=True, exclude_none=True, exclude_unset=True)
+
+
+class _Callbacks:
+    def __init__(self, owner):
+        self.owner = owner
+
+    async def session_update(self, session_id, update, **kwargs):
+        # The public SDK observer queues typed updates in receive order, before
+        # the SDK's independent callback tasks can overtake one another.
+        # Do this synchronously in the SDK callback, before its next permission
+        # callback. The raw observer may already have seen later wire frames;
+        # those must not retroactively authorize an earlier permission request.
+        item = wire(update)
+        if item.get('sessionUpdate') in ('tool_call', 'tool_call_update'):
+            tid = item['toolCallId']
+            self.owner.tool_calls[tid] = {**self.owner.tool_calls.get(tid, {}), **item}
+
+    async def request_permission(self, session_id, tool_call, options, **kwargs):
+        return self.owner._permission(session_id, wire(tool_call), [wire(o) for o in options])
 
 __version__ = "0.1.0"
 
@@ -35,17 +69,23 @@ class Client:
     def __init__(self, endpoint, observe, *, load_timeout=180, idle_timeout=30):
         self.endpoint, self.observe = endpoint, observe
         self.process = None
-        self.next_id = 0
+        self.requests_sent = 0
         self.session = None
         self.info = None
-        self.write_lock = asyncio.Lock()
+        self.connection = None
         self.tool_calls = {}
         self.permission_active = lambda: False
         self.permission_tools = lambda: GAME_TOOLS
         self.load_timeout, self.idle_timeout = load_timeout, idle_timeout
         self.replaying = False
-        self.reader = None
-        self.pending = {}
+        self.update_queue = asyncio.Queue(maxsize=1024)
+        self.update_worker = None
+        self.update_handler = None
+        self.foreground = False
+        self.failed = None
+        self.fatal = None
+        self.activity_at = 0
+        self.frames = self.observed_bytes = 0
         self.active_prompt_id = None
         self.lifecycle = None
         self.available_commands = {}
@@ -53,7 +93,7 @@ class Client:
 
     def transport_closed(self):
         """Known local closure only; this makes no ACP request or health promise."""
-        return (self.process is None or (self.reader is not None and self.reader.done()) or self.process.returncode is not None
+        return (self.process is None or self.failed is not None or self.process.returncode is not None
                 or self.process.stdin.is_closing() or self.process.stdout.at_eof())
 
     async def start(self):
@@ -69,7 +109,9 @@ class Client:
             stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.DEVNULL, limit=4 * 1024 * 1024,
             start_new_session=os.name != "nt")
-        self.reader = asyncio.create_task(self._read_frames())
+        self.fatal = asyncio.get_running_loop().create_future()
+        self.connection = connect_to_agent(_Callbacks(self), self.process.stdin,
+                                           self.process.stdout, observers=[self._stream_event])
         self.info = await asyncio.wait_for(self.request("initialize", {
             "protocolVersion": 1, "clientInfo": {"name": "minecraft-adapter", "version": __version__},
             "clientCapabilities": {"session": {"compaction": {}}},
@@ -104,15 +146,9 @@ class Client:
             self.observe("session_recreated" if previous else "session_created", session_id=self.session)
         return self.session
 
-    async def send(self, value):
-        async with self.write_lock:
-            self.process.stdin.write((json.dumps({"jsonrpc": "2.0", **value}) + "\n").encode())
-            await self.process.stdin.drain()
-
     async def cancel(self, timeout=5):
-        # Bound transport delivery, not planner work. A blocked pipe must not
-        # prevent cleanup after authority closes; sending is not settlement.
-        await asyncio.wait_for(self.send({"method": "session/cancel", "params": {"sessionId": self.session}}), timeout)
+        # Notification delivery is bounded; it does not prove settlement.
+        await asyncio.wait_for(self.connection.cancel(session_id=self.session), timeout)
 
     def permission_context(self):
         """Describe this client's current policy, never grant a tool invocation."""
@@ -141,105 +177,153 @@ class Client:
         return (isinstance(steering, dict) and steering.get('supported') is True
                 and steering.get('receiptsMethod') == '_session/input_receipts')
 
-    async def _callback(self, value):
-        if value['method'] != 'session/request_permission':
-            await self.send({'id': value['id'], 'error': {'code': -32601, 'message': 'Client capability not offered'}})
-            self.observe('unsupported_callback', method=value['method'])
-            return
-        params = value.get('params', {})
-        update_call = params.get('toolCall', {})
+    def _permission(self, session_id, update_call, options):
         call = {**self.tool_calls.get(update_call.get('toolCallId'), {}), **update_call}
         raw = call.get('rawInput') or {}
-        valid = (params.get('sessionId') == self.session and isinstance(raw, dict)
+        valid = (session_id == self.session and isinstance(raw, dict)
                  and raw.get('server') == 'minecraft' and raw.get('tool') in self.permission_tools()
-                 and not self.replaying and not self.maintenance_active and self.permission_active())
-        option = next((o for o in params.get('options', []) if o.get('kind') == 'allow_once'), None)
+                 and not self.replaying and not self.maintenance_active and self.failed is None
+                 and self.permission_active())
+        option = next((o for o in options if o.get('kind') == 'allow_once'), None)
         outcome = {'outcome': 'selected', 'optionId': option['optionId']} if valid and option else {'outcome': 'cancelled'}
         self.observe('game_permission_allowed' if valid and option else 'permission_cancelled',
                      tool=raw.get('tool') if isinstance(raw, dict) else None)
-        await self.send({'id': value['id'], 'result': {'outcome': outcome}})
+        return RequestPermissionResponse.model_validate({'outcome': outcome})
 
-    async def _read_frames(self):
-        # One reader owns stdout. Prompt notifications retain wire order while
-        # independent steering/receipt responses route by their own request ID.
+    def _fail(self, error):
+        # Never replay an operation after unknown delivery or observer failure.
+        if self.failed is None:
+            self.failed = error
+        if self.fatal is not None and not self.fatal.done():
+            self.fatal.set_result(self.failed)
+
+    def _stream_event(self, event):
+        value = event.message
+        if event.direction == StreamDirection.OUTGOING:
+            if 'id' in value and 'method' in value:
+                self.requests_sent += 1
+                if value['method'] == 'session/prompt':
+                    # Read-only observation of SDK-assigned correlation, needed
+                    # by negotiated Instance steering. Never allocate our own ID.
+                    self.active_prompt_id = value['id']
+            return
+        self.activity_at = asyncio.get_running_loop().time()
+        self.frames += 1
+        self.observed_bytes += len(json.dumps(value).encode())
+        if value.get('method') != 'session/update' or 'id' in value:
+            return
         try:
-            while True:
-                line = await self.process.stdout.readline()
-                if not line:
-                    raise ProtocolError('ACP closed before replying')
-                value = json.loads(line)
-                if not isinstance(value, dict) or value.get('jsonrpc') != '2.0':
-                    raise ProtocolError('Invalid JSON-RPC frame')
-                if 'method' not in value:
-                    pending = self.pending.get(value.get('id'))
-                    if pending:
-                        pending[1].put_nowait((value, len(line)))
-                    continue
-                if value.get('method') == 'session/update':
-                    message = value.get('params', {})
-                    if (self.active_prompt_id is not None or self.replaying) and message.get('sessionId') != self.session:
-                        raise ProtocolError('Update addressed a different ACP session')
-                    item = message.get('update', {})
-                    if item.get('sessionUpdate') == 'available_commands_update':
-                        sid=message.get('sessionId');commands=item.get('availableCommands')
-                        if isinstance(sid,str) and isinstance(commands,list):
-                            self.available_commands[sid]={c['name'] for c in commands[:128]
-                                if isinstance(c,dict) and isinstance(c.get('name'),str)}
-                            if len(self.available_commands)>64:self.available_commands.pop(next(iter(self.available_commands)))
-                    if item.get('sessionUpdate') in ('tool_call', 'tool_call_update'):
-                        tid = item.get('toolCallId')
-                        self.tool_calls[tid] = {**self.tool_calls.get(tid, {}), **{k: v for k, v in item.items() if v is not None}}
-                if 'id' in value:
-                    await self._callback(value)
-                for method, queue in tuple(self.pending.values()):
-                    if method in ('session/prompt', 'session/load'):
-                        queue.put_nowait((value, len(line)))
-        except asyncio.CancelledError:
-            raise
+            message = SessionNotification.model_validate(value.get('params'))
+            if (self.foreground or self.replaying) and message.session_id != self.session:
+                raise ProtocolError('Update addressed a different ACP session')
+            item = wire(message.update)
+            if item.get('sessionUpdate') == 'available_commands_update':
+                self.available_commands[message.session_id] = {
+                    c['name'] for c in item.get('availableCommands', [])[:128]}
+                if len(self.available_commands) > 64:
+                    self.available_commands.pop(next(iter(self.available_commands)))
+            if self.update_handler:
+                self.update_queue.put_nowait((self.update_handler, item))
         except Exception as error:
-            # A broken pipe is ambiguous delivery, never a reason to resend work.
-            for _, queue in tuple(self.pending.values()):
-                queue.put_nowait((error, 0))
+            # SDK observer exceptions are otherwise logged and swallowed. Keep
+            # a payload-free application failure visible to the active caller.
+            self._fail(error if isinstance(error, ProtocolError) else
+                       ProtocolError('Invalid or excessive ACP session updates'))
+
+    async def _collect_updates(self):
+        while True:
+            handler, item = await self.update_queue.get()
+            try:
+                if self.failed is None:
+                    await handler(item)
+            except Exception as error:
+                self._fail(error)
+            finally:
+                self.update_queue.task_done()
+
+    async def _invoke(self, method, params):
+        # Generated upstream models validate both directions; extension payloads
+        # stay negotiated and are carried by the SDK's documented escape hatch.
+        methods = {
+            'initialize': (InitializeRequest, self.connection.initialize),
+            'session/new': (NewSessionRequest, self.connection.new_session),
+            'session/load': (LoadSessionRequest, self.connection.load_session),
+            'session/prompt': (PromptRequest, self.connection.prompt),
+        }
+        if method in methods:
+            model, call = methods[method]
+            result = await call(**model_to_kwargs(model.model_validate(params), model))
+            return wire(result)
+        if method.startswith('_'):
+            return await self.connection.ext_method(method[1:], params)
+        raise ProtocolError('Unsupported ACP request method')
 
     async def request(self, method, params, update=None, idle_timeout=None):
-        if self.reader is not None and self.reader.done():
+        if self.transport_closed():
             raise ProtocolError('ACP closed before request')
-        if method == 'session/prompt' and self.active_prompt_id is not None:
-            raise ProtocolError('A prompt is already active on this connection')
-        self.next_id += 1
-        request_id = self.next_id
-        queue = asyncio.Queue()
-        self.pending[request_id] = (method, queue)
-        if method == 'session/prompt':
-            self.active_prompt_id = request_id
-        frames, size, reported = 0, 0, asyncio.get_running_loop().time()
+        foreground = method in ('session/prompt', 'session/load')
+        if foreground and self.foreground:
+            raise ProtocolError('A prompt or replay is already active on this connection')
+        if foreground:
+            self.foreground = True
+            self.update_handler = update
+            self.update_queue = asyncio.Queue(maxsize=1024)
+            self.update_worker = asyncio.create_task(self._collect_updates())
+        started = asyncio.get_running_loop().time()
+        if foreground:
+            self.activity_at = started
+        reported = started
+        frames, size = self.frames, self.observed_bytes
+        operation = asyncio.create_task(self._invoke(method, params))
+        drain = None
         try:
-            await self.send({'id': request_id, 'method': method, 'params': params})
             while True:
-                try:
-                    value, length = await asyncio.wait_for(queue.get(), idle_timeout) if idle_timeout else await queue.get()
-                except asyncio.TimeoutError as error:
-                    raise ProtocolError(f'ACP {method} stopped making replay progress') from error
-                if isinstance(value, Exception):
-                    raise value
-                frames += 1
-                size += length
+                remaining = max(0, idle_timeout - (asyncio.get_running_loop().time() - self.activity_at)) if idle_timeout else None
+                if method == 'session/load':
+                    remaining = min(remaining, 5) if remaining is not None else 5
+                done, _ = await asyncio.wait([operation, self.fatal], timeout=remaining,
+                                             return_when=asyncio.FIRST_COMPLETED)
+                if self.failed is not None:
+                    raise self.failed
+                if operation in done:
+                    result = operation.result()
+                    if foreground:
+                        drain = asyncio.create_task(self.update_queue.join())
+                        await asyncio.wait([drain, self.fatal], return_when=asyncio.FIRST_COMPLETED)
+                        if self.failed is not None:
+                            raise self.failed
+                    return result
                 now = asyncio.get_running_loop().time()
+                if idle_timeout and now - self.activity_at >= idle_timeout:
+                    raise ProtocolError(f'ACP {method} stopped making replay progress')
                 if method == 'session/load' and now - reported >= 5:
-                    self.observe('session_load_progress', frames=frames, bytes=size)
+                    self.observe('session_load_progress', frames=self.frames-frames,
+                                 bytes=self.observed_bytes-size)
                     reported = now
-                if 'method' not in value:
-                    if 'error' in value:
-                        code = value['error'].get('code')
-                        code = code if isinstance(code, int) else 'unknown'
-                        raise ProtocolError(f'ACP {method} rejected (code {code}; see endpoint logs)')
-                    return value.get('result', {})
-                if value.get('method') == 'session/update' and update:
-                    await update(value.get('params', {}).get('update', {}))
+        except ValidationError:
+            self._fail(ProtocolError(f'ACP {method} violated its SDK schema'))
+            raise self.failed from None
+        except RequestError as error:
+            raise ProtocolError(f'ACP {method} rejected (code {error.code}; see endpoint logs)') from None
+        except (ConnectionError, OSError) as error:
+            self._fail(ProtocolError('ACP transport closed; delivery is unknown'))
+            raise self.failed from error
         finally:
-            self.pending.pop(request_id, None)
-            if method == 'session/prompt' and self.active_prompt_id == request_id:
+            if not operation.done():
+                operation.cancel()
+            await asyncio.gather(operation, return_exceptions=True)
+            if drain is not None and not drain.done():
+                drain.cancel()
+                await asyncio.gather(drain, return_exceptions=True)
+            if foreground:
+                self.foreground = False
+                self.update_handler = None
                 self.active_prompt_id = None
+                self.update_worker.cancel()
+                await asyncio.gather(self.update_worker, return_exceptions=True)
+                while not self.update_queue.empty():
+                    self.update_queue.get_nowait()
+                    self.update_queue.task_done()
 
     async def prompt(self, text, timeout=None, on_chunk=None, attention_offer=None):
         if self.maintenance_active:
@@ -325,9 +409,11 @@ class Client:
             raise
 
     async def close(self):
-        if self.reader:
-            self.reader.cancel()
-            await asyncio.gather(self.reader, return_exceptions=True)
+        if self.connection:
+            await self.connection.close()
+        if self.update_worker:
+            self.update_worker.cancel()
+            await asyncio.gather(self.update_worker, return_exceptions=True)
         if not self.process:
             return
         if self.process.returncode is None:

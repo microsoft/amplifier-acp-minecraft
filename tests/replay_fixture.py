@@ -10,7 +10,7 @@ for line in sys.stdin:
    for i in range(6):
     time.sleep(.03);send({'method':'session/update','params':{'sessionId':'saved','update':{'sessionUpdate':'user_message_chunk','content':{'type':'text','text':'archived'}}}})
   if scenario=='permission':
-   send({'id':'permission','method':'session/request_permission','params':{'sessionId':'saved','toolCall':{'rawInput':{'server':'minecraft','tool':'move'}},'options':[{'kind':'allow_once','optionId':'allow'}]}})
+   send({'id':'permission','method':'session/request_permission','params':{'sessionId':'saved','toolCall':{'toolCallId':'replay','rawInput':{'server':'minecraft','tool':'move'}},'options':[{'name':'Permission','kind':'allow_once','optionId':'allow'}]}})
    response=json.loads(sys.stdin.readline());assert response['result']['outcome']['outcome']=='cancelled'
   send({'id':v['id'],'result':{}})
  else:send({'id':v['id'],'error':{'code':-32601,'message':'unsupported'}})

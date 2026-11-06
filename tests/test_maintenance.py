@@ -69,4 +69,4 @@ class Maintenance(unittest.IsolatedAsyncioTestCase):
             with self.assertRaises(ValueError):await compact(c,tmp,'no-send',active)
             c.maintenance_active=True
             with self.assertRaises(ProtocolError):await c.prompt('No competing work')
-            self.assertEqual(c.next_id,0)
+            self.assertEqual(c.requests_sent,0)

@@ -11,6 +11,8 @@ class Permissions(unittest.IsolatedAsyncioTestCase):
   finally:await c.close()
  async def test_only_game_tool_once(self):self.assertEqual(await self.check('game'),{'outcome':'selected','optionId':'once'})
  async def test_display_title_does_not_authorize_other_server(self):self.assertEqual((await self.check('external'))['outcome'],'cancelled')
+ async def test_future_tool_update_cannot_authorize_earlier_callback(self):
+  self.assertEqual((await self.check('future_tool'))['outcome'],'cancelled')
  async def test_wrong_session_denied(self):self.assertEqual((await self.check('wrong_session'))['outcome'],'cancelled')
  async def test_stopped_turn_denied(self):self.assertEqual((await self.check('game',False))['outcome'],'cancelled')
  async def test_cancel_movement_uses_active_turn_permission_boundary(self):
