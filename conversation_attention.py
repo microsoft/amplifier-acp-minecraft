@@ -3,6 +3,7 @@ import hashlib
 import json
 import math
 import time
+from harness_capabilities import attention_context
 from urllib.error import HTTPError
 
 META='com.microsoft.amplifier.attention'
@@ -82,7 +83,8 @@ class ConversationAttention:
             supported=capability.get('version')==1 and capability.get('enabled') is True and capability.get('method')==METHOD
             if supported:
                 stage='host_evaluation';evaluation_requested=True
-                offer=await client.request(METHOD,{'sessionId':client.session,'occurredAt':proposal['occurred_at'],'context':proposal['context']})
+                context=attention_context(proposal['context'],proposal.get('sources'),client.info)
+                offer=await client.request(METHOD,{'sessionId':client.session,'occurredAt':proposal['occurred_at'],'context':context})
                 stage='offer_validation'
                 if not isinstance(offer,dict) or offer.get('action') not in ('engage','hold'):
                     raise InvalidOffer('invalid_host_response')

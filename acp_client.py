@@ -44,6 +44,8 @@ class Client:
         self.pending = {}
         self.active_prompt_id = None
         self.lifecycle = None
+        self.available_commands = {}
+        self.maintenance_active = False
 
     def transport_closed(self):
         """Known local closure only; this makes no ACP request or health promise."""
@@ -79,6 +81,7 @@ class Client:
         if previous and not self.info.get("agentCapabilities", {}).get("loadSession"):
             raise ProtocolError("Saved session cannot be loaded by this endpoint; refusing to replace it")
         if previous:
+            self.available_commands.pop(previous, None)
             params["sessionId"] = previous
             self.session = previous
             self.replaying = True
@@ -112,7 +115,7 @@ class Client:
         policy = {'server': 'minecraft', 'tools': sorted(GAME_TOOLS),
                   'approval': 'allow_once', 'scope': 'same ACP session, active game turn, not session replay'}
         revision = hashlib.sha256(json.dumps(policy, sort_keys=True).encode()).hexdigest()
-        active = bool(self.session) and not self.replaying and bool(self.permission_active())
+        active = bool(self.session) and not self.replaying and not self.maintenance_active and bool(self.permission_active())
         return {'policy_revision': revision, 'session_id': self.session, 'active': active,
                 'server': policy['server'], 'allow_once_tools': policy['tools'] if active else [],
                 'scope': policy['scope']}
@@ -145,7 +148,7 @@ class Client:
         raw = call.get('rawInput') or {}
         valid = (params.get('sessionId') == self.session and isinstance(raw, dict)
                  and raw.get('server') == 'minecraft' and raw.get('tool') in GAME_TOOLS
-                 and not self.replaying and self.permission_active())
+                 and not self.replaying and not self.maintenance_active and self.permission_active())
         option = next((o for o in params.get('options', []) if o.get('kind') == 'allow_once'), None)
         outcome = {'outcome': 'selected', 'optionId': option['optionId']} if valid and option else {'outcome': 'cancelled'}
         self.observe('game_permission_allowed' if valid and option else 'permission_cancelled',
@@ -173,6 +176,12 @@ class Client:
                     if (self.active_prompt_id is not None or self.replaying) and message.get('sessionId') != self.session:
                         raise ProtocolError('Update addressed a different ACP session')
                     item = message.get('update', {})
+                    if item.get('sessionUpdate') == 'available_commands_update':
+                        sid=message.get('sessionId');commands=item.get('availableCommands')
+                        if isinstance(sid,str) and isinstance(commands,list):
+                            self.available_commands[sid]={c['name'] for c in commands[:128]
+                                if isinstance(c,dict) and isinstance(c.get('name'),str)}
+                            if len(self.available_commands)>64:self.available_commands.pop(next(iter(self.available_commands)))
                     if item.get('sessionUpdate') in ('tool_call', 'tool_call_update'):
                         tid = item.get('toolCallId')
                         self.tool_calls[tid] = {**self.tool_calls.get(tid, {}), **{k: v for k, v in item.items() if v is not None}}
@@ -229,6 +238,8 @@ class Client:
                 self.active_prompt_id = None
 
     async def prompt(self, text, timeout=None, on_chunk=None, attention_offer=None):
+        if self.maintenance_active:
+            raise ProtocolError('Maintenance is still settling; no game prompt sent')
         self.lifecycle = PromptLifecycle(self.observe)
         parts, characters = [], 0
         messages = {}
