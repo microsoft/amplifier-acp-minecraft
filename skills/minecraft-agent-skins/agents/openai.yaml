@@ -1,0 +1,4 @@
+interface:
+  display_name: "Minecraft Agent Skins"
+  short_description: "Create crisp, recognizable Minecraft agent skins"
+  default_prompt: "Use $minecraft-agent-skins to create or refine an agent skin from its portrait and validate it for Minecraft."
