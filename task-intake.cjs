@@ -36,7 +36,7 @@ class TaskIntake {
    ceilings:limits?{cumulative_turns:limits.max_turns,seconds_from_amendment:limits.max_seconds}:null,
    blocked_reason:policy_error?'invalid_task_policy':!enabled&&configured_chat_only?'installation_chat_only':conversation_only?'reply_turn_no_world_effects':null,
    task_revision:this.history.task()?.authority_revision??0,
-   reviewed_requests:(this.history.data.reviewed_task_sources||[]).filter(x=>x.valid_until>this.now()&&!this.used(x.source.id)).map(x=>({id:x.source.id,username:x.source.username,message:x.source.message,valid_until:x.valid_until})),
+   reviewed_requests:(this.history.data.reviewed_task_sources||[]).filter(x=>x.valid_until>this.now()&&!this.used(x.source.id)&&Date.parse(x.source.time)>(this.history.data.task_source_cutoff||0)).map(x=>({id:x.source.id,username:x.source.username,message:x.source.message,valid_until:x.valid_until})),
    capacity_note:'Reply admission and autonomous hourly/provider capacity are separate. Task acceptance is not a planner-turn reservation.'};
  }
  persist(changes){const previous=this.history.data;this.history.data={...previous,...changes};try{this.history.save();}catch(error){this.history.data=previous;throw error;}}
