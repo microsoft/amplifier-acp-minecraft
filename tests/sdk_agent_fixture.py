@@ -30,7 +30,13 @@ class Peer(Agent):
         mode = prompt[-1].text
         if mode == 'fail':
             raise RequestError(-32001, 'private error must not appear in adapter diagnostics')
-        if mode == 'wrong-session':
+        if mode == 'filesystem':
+            try:
+                await self.connection.read_text_file(session_id=session_id, path='/must-not-read')
+                raise AssertionError('Unadvertised filesystem callback allowed')
+            except RequestError as error:
+                await self.chunk(session_id, str(error.code))
+        elif mode == 'wrong-session':
             await self.chunk('other', 'private')
         elif mode == 'oversize':
             await self.chunk(session_id, 'x' * 250001)

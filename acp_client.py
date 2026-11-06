@@ -210,6 +210,8 @@ class Client:
         self.activity_at = asyncio.get_running_loop().time()
         self.frames += 1
         self.observed_bytes += len(json.dumps(value).encode())
+        if 'id' in value and value.get('method') and value['method'] != 'session/request_permission':
+            self.observe('unsupported_callback', method=value['method'])
         if value.get('method') != 'session/update' or 'id' in value:
             return
         try:

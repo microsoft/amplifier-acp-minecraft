@@ -42,6 +42,11 @@ class SdkBoundary(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result['source']['activePromptId'], prompt_id)
         self.assertEqual((await prompt)['final_text'], 'ready done')
 
+    async def test_sdk_rejects_unadvertised_filesystem_callback(self):
+        result = await self.client.prompt('filesystem', timeout=3)
+        self.assertEqual(result['final_text'], '-32601')
+        self.assertIn(('unsupported_callback', {'method': 'fs/read_text_file'}), self.events)
+
     async def test_sdk_load_same_session_does_not_copy_replay_into_reply(self):
         sid = self.client.session
         await self.client.open_session(sid)
