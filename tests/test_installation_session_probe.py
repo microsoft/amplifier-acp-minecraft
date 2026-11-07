@@ -7,6 +7,7 @@ import tempfile
 import unittest
 from pathlib import Path
 from installation_session_probe import probe
+from installation_participant import LocalInstallation
 
 
 class SessionProbeTests(unittest.IsolatedAsyncioTestCase):
@@ -50,14 +51,53 @@ class SessionProbeTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.events(), [{'action':'initialize'},{'action':'load','session':self.saved['session']}])
         self.assertEqual(json.loads((self.home/'session.json').read_text()),self.saved)
 
-    async def test_absent_local_session_does_not_create_or_initialize(self):
+    async def test_absent_local_session_initializes_only_even_without_load_capability(self):
+        self.endpoint['env']['PROBE_MODE']='unsupported';self.write()
         (self.home/'session.json').unlink()
         result=await probe(self.home,3)
-        self.assertFalse(result['saved_session_present']);self.assertFalse(result['new_session_created'])
-        self.assertEqual(self.events(),[])
+        self.assertTrue(result['initialized'])
+        self.assertFalse(result['saved_session_present']);self.assertFalse(result['saved_session_loaded'])
+        self.assertFalse(result['new_session_created']);self.assertFalse(result['prompt_sent'])
+        self.assertEqual(self.events(),[{'action':'initialize'}])
+        self.assertFalse((self.home/'session.json').exists())
+
+    async def test_absent_session_failed_initialize_cannot_claim_compatibility(self):
+        self.endpoint['env']['PROBE_MODE']='initialize-error';self.write()
+        (self.home/'session.json').unlink()
+        with self.assertRaises(Exception):await probe(self.home,3)
+        self.assertEqual(self.events(),[{'action':'initialize'}])
+        self.assertFalse((self.home/'session.json').exists())
+
+    async def test_absent_session_initialize_timeout_is_not_success(self):
+        self.endpoint['env']['PROBE_MODE']='initialize-slow';self.write()
+        (self.home/'session.json').unlink()
+        with self.assertRaises((asyncio.TimeoutError,RuntimeError)):await probe(self.home,1)
+        self.assertEqual(self.events(),[{'action':'initialize'}])
+        self.assertFalse((self.home/'session.json').exists())
+
+    async def test_participant_runs_initialize_only_in_installed_environment(self):
+        (self.home/'session.json').unlink()
+        cfg={'home':str(self.home),'state':str(self.home/'owner-state'),
+             'venv':sys.prefix,'units':{'body':'acp-minecraft-body-fixture.service',
+                                      'controller':'acp-minecraft-agent-fixture.service'}}
+        result=await asyncio.to_thread(LocalInstallation(cfg).session,10)
+        self.assertTrue(result['initialized']);self.assertFalse(result['saved_session_loaded'])
+        self.assertEqual(self.events(),[{'action':'initialize'}])
+        self.assertFalse((self.home/'session.json').exists())
+
+    async def test_session_appearing_during_initialize_is_not_accepted(self):
+        (self.home/'session.json').unlink()
+        home,saved=self.home,self.saved
+        class Client:
+            def __init__(self,*args,**kwargs):pass
+            async def start(self):(home/'session.json').write_text(json.dumps(saved))
+            async def close(self):pass
+            async def open_session(self,*args):raise AssertionError('No load or create allowed')
+        with self.assertRaisesRegex(ValueError,'binding changed'):
+            await probe(self.home,3,client_factory=Client)
 
     async def test_invalid_or_changed_binding_refuses_before_connection(self):
-        for saved in ({'session':'','binding':self.saved['binding']},{**self.saved,'binding':'changed'}):
+        for saved in (None, [], {'session':'','binding':self.saved['binding']},{**self.saved,'binding':'changed'}):
             (self.home/'session.json').write_text(json.dumps(saved))
             with self.assertRaises(ValueError):await probe(self.home,3)
             self.assertEqual(self.events(),[])

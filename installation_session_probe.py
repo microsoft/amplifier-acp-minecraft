@@ -1,4 +1,4 @@
-"""Load only the original game binding through the installed official-SDK client.
+"""Initialize and load only an existing binding through the official-SDK client.
 
 Invoked with the installation's Python environment, while admission is closed.
 No session creation, prompt, maintenance, input acknowledgment or local writes.
@@ -15,11 +15,12 @@ from pathlib import Path
 
 def saved_endpoint(home):
     path = home/'session.json'
-    if not path.exists():
-        return None
-    saved = json.loads(path.read_text())
-    session = saved.get('session')
-    if not isinstance(session, str) or not session.strip():
+    present = path.exists()
+    saved = json.loads(path.read_text()) if present else None
+    if present and not isinstance(saved, dict):
+        raise ValueError('Invalid original game session; never replace malformed state')
+    session = saved.get('session') if isinstance(saved, dict) else None
+    if saved is not None and (not isinstance(session, str) or not session.strip()):
         raise ValueError('Invalid original game session; never create a replacement')
     cfg = json.loads((home/'config.json').read_text())
     endpoint = json.loads((home/'endpoint.json').read_text())
@@ -30,16 +31,13 @@ def saved_endpoint(home):
         endpoint['session_meta'] = {'io.github.bkrabach.conversation':{
             'provider_id':cfg['context_provider_id'], 'grant':cfg['context_grant']}}
     binding = hashlib.sha256(json.dumps(endpoint, sort_keys=True).encode()).hexdigest()
-    if saved.get('binding') != binding:
+    if saved is not None and saved.get('binding') != binding:
         raise ValueError('Original game session binding changed')
     return endpoint, session, binding
 
 
 async def probe(home, timeout, client_factory=None):
     original = saved_endpoint(home)
-    if original is None:
-        return {'verified':True, 'saved_session_present':False, 'saved_session_loaded':False,
-                'new_session_created':False, 'prompt_sent':False}
     if client_factory is None:
         if not (home/'app/acp_client.py').is_file():
             raise ValueError('Installed Minecraft client is unavailable')
@@ -53,7 +51,8 @@ async def probe(home, timeout, client_factory=None):
     client.permission_tools = lambda: set()
     async def load():
         await client.start()
-        await client.open_session(session)  # Validated nonempty; never session/new.
+        if session is not None:
+            await client.open_session(session)  # Validated nonempty; never session/new.
     try:
         await asyncio.wait_for(load(), timeout)
     finally:
@@ -70,9 +69,12 @@ async def probe(home, timeout, client_factory=None):
                 await asyncio.wait_for(process.wait(), 1)
     if saved_endpoint(home) != original:
         raise ValueError('Original binding changed during verification')
-    return {'verified':True, 'saved_session_present':True, 'saved_session_loaded':True,
-            'session_id':session, 'binding':binding, 'new_session_created':False,
-            'prompt_sent':False}
+    result = {'verified':True, 'initialized':True, 'saved_session_present':session is not None,
+              'saved_session_loaded':session is not None, 'new_session_created':False,
+              'prompt_sent':False}
+    if session is not None:
+        result.update(session_id=session, binding=binding)
+    return result
 
 
 if __name__ == '__main__':

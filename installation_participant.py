@@ -112,10 +112,9 @@ class LocalInstallation:
 
     def session(self, timeout):
         # Use the enrolled installation SDK, not the owner helper interpreter.
-        # No missing-session repair: an unused installation needs no new session.
-        if not (self.home/'session.json').exists():
-            return {'verified':True, 'saved_session_present':False,
-                    'saved_session_loaded':False, 'new_session_created':False, 'prompt_sent':False}
+        # An unused installation still needs initialize compatibility, but must
+        # stay unused: never create a replacement or prime session persistence.
+        present = (self.home/'session.json').exists()
         python = Path(self.c['venv'])/'bin/python'
         script = Path(__file__).with_name('installation_session_probe.py')
         if timeout <= 7:
@@ -123,9 +122,12 @@ class LocalInstallation:
         value = json.loads(subprocess.check_output(
             [str(python), str(script), '--home', str(self.home), '--timeout', str(min(12, timeout-6))],
             text=True, timeout=timeout))
-        if (value.get('verified') is not True or value.get('saved_session_loaded') is not True
+        if (value.get('verified') is not True or value.get('initialized') is not True
+                or value.get('saved_session_present') is not present
+                or value.get('saved_session_loaded') is not present
+                or (self.home/'session.json').exists() != present
                 or value.get('new_session_created') is not False or value.get('prompt_sent') is not False):
-            raise ContinuityError('Original saved session did not load')
+            raise ContinuityError('ACP initialization or original session verification failed')
         return value
 
 

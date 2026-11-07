@@ -64,7 +64,8 @@ IDs and restart scope. Protocol-2 providers also receive
    admission stays closed. Binding mismatch, unsupported load, missing backend
    session or bounded operation timeout fails verification; never create a
    replacement or prompt to prime persistence. An installation with no saved
-   session records that absence without opening one. A helper-only change does
+   session performs initialize only and verifies the local session remains absent;
+   it never opens a new session to prime persistence. A helper-only change does
    not open ACP. Recheck continuity after loading, including on engine rollback.
 5. The worker persists successful verification before any participant restores.
    Restore only transaction-owned admission/mask changes and previously active
