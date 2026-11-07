@@ -111,8 +111,8 @@ class Prerequisites:
             exact_file(path, expected)
         matched = [p for p in self.providers() if p.get('id') == context['provider_id']]
         if (len(matched) != 1 or matched[0].get('url') != context['url']
-                or matched[0].get('secret_ref') != context['secret_ref'] or matched[0].get('enabled', True) is not True):
-            raise ContinuityError('Actual Instance context registration is missing, disabled or changed')
+                or matched[0].get('secret_ref') != context['secret_ref'] or matched[0].get('enabled') is not False):
+            raise ContinuityError('Prepared context must match and remain explicitly disabled until mapped offline')
         if cfg.get('incoming_chat_only') is not True or cfg.get('human_task_intake', {}).get('enabled') is True:
             raise ContinuityError('A fresh saved connection must have no task-intake opt-in')
         verify_sdk(Path(self.cfg['venv']), Path(self.cfg['app']))
@@ -191,7 +191,10 @@ def operation(c, request, backend=None):
             connection = {'id':'minecraft-'+slot['id'], 'label':values['label'],
                 'revision':digest({'template':c['revision'],'identity':identity}),
                 'context_provider_ids':[route['context']['provider_id']]}
-            saved_cfg = {**cfg,'service_connection':connection}; descriptor(saved_cfg)
+            saved_cfg = {**cfg,'service_connection':connection,
+                'prepared_context':{'agent_home':c['agent_home'],'provider':{
+                    'id':route['context']['provider_id'],'url':route['context']['url'],
+                    'secret_ref':route['context']['secret_ref']}}}; descriptor(saved_cfg)
             saved_path = state/'saved-connection-config.json'
             if saved_path.exists():
                 raise ContinuityError('Saved connection configuration already exists')
@@ -215,7 +218,7 @@ def operation(c, request, backend=None):
     write_once(home/'installation-updates/gate.json',{'version':1,'transaction_id':rid,'closed':True})
     write_once(home/'installation-connections/state.json',{'schema':1,'phase':'disconnected','request_id':rid})
     args = [c['python'],str(Path(c['helpers'])/'installation_connection.py'),'--config',journal['config_path']]
-    response.update(state='saved',settled=True,message='Connection saved offline. Choose Connect to join; no work was authorized.',
+    response.update(state='saved',settled=True,message='Saved offline. Owner setup must confirm the mapped context gate is closed and enable this prepared provider before Connect. No work was authorized.',
         connection={**entry,'service':'minecraft','commands':{a:args+[a] for a in ('status','connect','disconnect')}})
     journal.update(phase='saved',result=response);durable_write(path,journal)
     return response

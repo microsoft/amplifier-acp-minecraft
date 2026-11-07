@@ -59,7 +59,10 @@ It saves a new connection from an **unused, separately prepared installation**.
 It does not provision arbitrary destinations supplied by a browser. Prepare one
 slot per available connection using the setup guide: its own home, source,
 pinned SDK environment, identity/endpoint, private game route, registered own
-context/MCP route and installed but inactive, disabled systemd units. Preserve
+context/MCP route and installed but inactive, disabled systemd units. Keep the
+prepared context provider explicitly `enabled: false` until its saved connection
+has been reported to Instance with a closed per-connection gate; an enabled dead
+provider can break unrelated conversations. Preserve
 any existing server player data. Do not clone used sessions or tasks to make a
 slot. Its domain state must have no task, turn, active sequence or saved session;
 use `incoming_chat_only: true` with human task intake disabled.
@@ -114,8 +117,15 @@ gateway is not an offline agent route. Never invent namespace verification
 because a host port responds. Add checks this original owner evidence, the
 unchanged configuration files and the actual Instance provider registration.
 It does **not** claim a fresh runtime-namespace reachability test while the
-body is stopped. Missing, disabled or changed registration prevents saving.
-Connect later checks the live body and initializes the actual ACP endpoint.
+body is stopped. Missing, prematurely enabled or changed registration prevents
+saving. After Add settles, the setup owner confirms the mapped connection is
+reported disconnected with its context gate closed, then explicitly enables
+only that prepared provider through the supported registration API/read-back.
+Do not enable a provider against a host without the matching connection gate.
+This one-time setup step is separate from Add and never overrides a deliberately
+disabled existing connection. Connect remains pending without starting services
+until the exact provider metadata and enabled state match; it then checks the
+live body and initializes the actual ACP endpoint.
 
 Run the installed helper with `--config /owner/add-template.json enrollment`.
 It prints one service descriptor with a revision bound to that template, a

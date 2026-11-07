@@ -69,6 +69,16 @@ class Backend(LocalInstallation):
         with urllib.request.urlopen(request,timeout=2) as response:
             return json.load(response).get('ready') is True
 
+    def prepared_context_ready(self):
+        prepared = self.c['prepared_context']
+        agent = Path(prepared['agent_home'])
+        result = subprocess.run([str(agent/'bin/agent-instance'), '--home', str(agent),
+            'api', 'GET', 'context/providers'], capture_output=True, text=True, timeout=5, check=True)
+        expected = prepared['provider']
+        matches = [p for p in json.loads(result.stdout)['providers'] if p.get('id')==expected['id']]
+        return (len(matches)==1 and all(matches[0].get(k)==v for k,v in expected.items())
+                and matches[0].get('enabled',True) is True)
+
     def start_probe(self, result):
         job = Path(__file__).with_name('connection_session_job.py')
         process = subprocess.Popen([str(Path(self.c['venv'])/'bin/python'), str(job),
@@ -146,6 +156,9 @@ class Connection:
         return self.result('unknown',False,'Listener and game connection do not agree.')
 
     def start(self):
+        if (self.value['action']=='connect' and self.c.get('prepared_context') is not None
+                and not self.backend.prepared_context_ready()):
+            return self.result(message='Owner setup must enable the matching prepared context provider after its mapped offline gate is confirmed. Nothing has been started.')
         if self.active.exists():
             prior = read(self.root/'connections'/(read(self.active)['request_id']+'.json'))
             if prior['phase'] != 'terminal':

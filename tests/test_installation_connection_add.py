@@ -52,7 +52,7 @@ class AddTests(unittest.TestCase):
                 'route_sha256':add.file_hash(self.route_file)}]})
         self.c = add.load(self.template)
         self.backend = add.Prerequisites(self.c,self.cfg); self.backend.game = self.game
-        self.providers = [{'id':'minecraft:visit','url':'http://127.0.0.1:45846','secret_ref':'owner-secret-ref'}]
+        self.providers = [{'id':'minecraft:visit','url':'http://127.0.0.1:45846','secret_ref':'owner-secret-ref','enabled':False}]
         self.backend.providers = lambda:copy.deepcopy(self.providers)
         sdk = patch.object(add,'verify_sdk'); self.sdk = sdk.start(); self.addCleanup(sdk.stop)
         self.request = {'schema':1,'service_id':'minecraft','revision':self.c['revision'],
@@ -107,8 +107,8 @@ class AddTests(unittest.TestCase):
                 add.operation(self.c,{**self.request,**change},self.backend)
         self.assert_untouched()
 
-    def test_missing_disabled_or_changed_actual_context_registration_refused(self):
-        for providers in ([],[{**self.providers[0],'enabled':False}],
+    def test_missing_prematurely_enabled_or_changed_context_registration_refused(self):
+        for providers in ([],[{**self.providers[0],'enabled':True}],
                           [{**self.providers[0],'url':'http://other'}]):
             self.providers=providers
             self.request['request_id']=str(uuid.uuid4())
@@ -165,6 +165,12 @@ class AddTests(unittest.TestCase):
         result=self.run_add(); cfg=read(Path(self.cfg['state'])/'saved-connection-config.json')
         request={'schema':1,'action':'connect','connection_id':result['connection']['id'],
                  'revision':result['connection']['revision'],'request_id':str(uuid.uuid4())}
+        self.game.prepared_context_ready=lambda:False
+        pending=Connection(cfg,request,self.game).run()
+        self.assertFalse(pending['settled']);self.assertIn('Owner setup',pending['message'])
+        self.assertEqual(self.game.actions,[])
+        self.game.prepared_context_ready=lambda:True
+        request['action']='status'
         for _ in range(12):
             output=Connection(cfg,request,self.game).run(); request['action']='status'
             if getattr(self.game,'probe_path',None):
@@ -175,6 +181,20 @@ class AddTests(unittest.TestCase):
         self.assertEqual(output['state'],'connected');self.assertTrue(output['settled'])
         self.assertFalse((self.home/'session.json').exists())
         self.assertEqual((self.home/'workshop.json').read_bytes(),self.original['workshop.json'])
+
+    def test_prepared_connect_checks_actual_registration_read_only(self):
+        import json
+        from types import SimpleNamespace
+        from installation_connection import Backend
+        self.run_add();cfg=read(Path(self.cfg['state'])/'saved-connection-config.json')
+        backend=Backend(cfg)
+        for changed,expected in (({'enabled':False},False),({'enabled':True},True),
+                                 ({'enabled':True,'url':'http://changed'},False)):
+            response=SimpleNamespace(stdout=json.dumps({'providers':[{**self.providers[0],**changed}]}))
+            with patch('installation_connection.subprocess.run',return_value=response) as command:
+                self.assertEqual(backend.prepared_context_ready(),expected)
+                self.assertEqual(command.call_args.args[0][-3:],['api','GET','context/providers'])
+        self.assert_untouched()
 
 
 if __name__=='__main__':unittest.main()
