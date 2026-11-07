@@ -150,6 +150,8 @@ class Participant:
             services = self.backend.services()
             # Validate captured restoration evidence before introducing any gate.
             restore_plan(services, services)
+            if any(s['ActiveState']=='active' and (s.get('LoadState')=='masked' or 'masked' in s.get('UnitFileState','')) for s in services.values()):
+                raise NotIdle('Preserve an already-active masked unit; automatic stop cannot restore that state')
             self.save(context_hash=digest(self.envelope), config_hash=digest(self.c), transaction_id=self.tx,
                       phase='gating', original=services, game=self.game)
             durable_write(active, {'transaction_id':self.tx})

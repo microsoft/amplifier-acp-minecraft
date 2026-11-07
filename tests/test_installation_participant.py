@@ -4,7 +4,7 @@ import tempfile
 import unittest
 import uuid
 from pathlib import Path
-from installation_guard import ContinuityError, durable_write, read, snapshot
+from installation_guard import ContinuityError, NotIdle, durable_write, read, snapshot
 from installation_participant import Participant
 from update_admission import held
 
@@ -95,6 +95,10 @@ class ParticipantTests(unittest.TestCase):
         p=self.ready();p.verify('applied');self.backend.units['controller']['LoadState']='masked'
         with self.assertRaises(ContinuityError): p.restore('applied')
         self.assertTrue(held(self.home))
+    def test_active_but_already_masked_unit_is_not_interrupted(self):
+        self.backend.units['controller']['LoadState']='masked'
+        with self.assertRaises(NotIdle):self.participant().prepare()
+        self.assertFalse(held(self.home));self.assertEqual(self.backend.actions,[])
     def test_lost_restore_reply_never_rolls_back_or_rechecks_resumed_authority(self):
         p=self.ready();p.verify('applied');p.restore('applied')
         actions=list(self.backend.actions);durable_write(self.home/'session.json',{'id':'new-real-input'})

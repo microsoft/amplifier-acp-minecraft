@@ -78,6 +78,10 @@ class SourceProviderTests(unittest.TestCase):
         with self.assertRaises(ContinuityError):self.provider.apply(self.envelope,self.tx)
         self.provider.rollback(self.envelope,self.tx)
         self.assertFalse((self.home/'app').is_symlink());self.assertFalse((self.home/'venv').is_symlink())
+    def test_rollback_before_any_mutation_has_a_verifiable_unchanged_receipt(self):
+        self.assertTrue(self.provider.rollback(self.envelope,self.tx)['verified'])
+        self.assertTrue(self.provider.verify(self.envelope)['verified'])
+        self.assertEqual(self.provider.status()['version'],'a'*40)
     def test_corrupted_candidate_can_still_restore_verified_previous_code(self):
         self.provider.apply(self.envelope,self.tx)
         (Path(self.plan['stage'])/'app/body.cjs').write_text('damaged')

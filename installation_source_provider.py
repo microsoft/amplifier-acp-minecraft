@@ -256,7 +256,11 @@ class Provider:
     def rollback(self,envelope,transaction):
         plan,stage,path = self.frozen(envelope,candidate=False)
         self.require_prepared(transaction,rollback=True)
-        if not path.exists():return {'untouched':True}
+        if not path.exists():
+            if read(self.home/'app-source.json')!=plan['source_marker'] or any(fingerprint(p)!=plan['before'][k] for k,p in self.paths.items()):
+                raise ContinuityError('No cutover receipt and installed source changed')
+            durable_write(path,{'state':'rolled_back','transaction_id':transaction,'untouched':True})
+            return self.verify(envelope)
         backup = self.root/'backups'/envelope['id']
         durable_write(path,{'state':'rolling_back','transaction_id':transaction})
         for key,target in self.paths.items():
