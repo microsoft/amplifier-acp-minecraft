@@ -81,6 +81,42 @@ blocks may have older appearances and newer mechanics need separate validation.
 Human clients can use the server's native version. Geyser and Floodgate can provide
 Bedrock connections and account linking outside this adapter.
 
+### Xbox and Bedrock LAN setup
+
+Xbox uses Bedrock, so it cannot join the Java agent endpoint directly. Put a
+Geyser/Floodgate **human gateway** in front of the Java world and keep the agents'
+offline/trusted endpoint private. Preserve signed Bedrock authentication, account
+linking and the world's allowlist; never fix discovery by disabling login checks.
+
+For Bedrock **26.60**, enable NetherNet (`transport: both` or `nethernet`) in a
+compatible Geyser build. The configured signaling TCP port and gameplay UDP port
+must be reachable. A working address-based connection is **not** proof of LAN
+visibility: console discovery additionally needs a listener answering broadcasts
+on **UDP 7551**. The console and gateway must share a broadcast-capable LAN;
+Tailscale reachability and a working Java server-list entry do not provide this.
+Guest Wi-Fi, client isolation and routed VLANs can prevent discovery.
+
+Geyser 2.12.1-b1288 has a known discovery gap. Our optional, pinned
+[LAN compatibility recipe](docs/xbox-lan.md) includes the reviewed source patch,
+reproducible class-overlay packaging, and fixed-port/firewall setup used to verify
+an actual Xbox 26.60 join. This is a local compatibility build, **not** an upstream
+release or a feature supplied merely by updating this adapter. Reevaluate the
+patch when upstream fixes the issue; do not apply it to arbitrary newer JARs.
+
+For that compatibility build, opt in with `-DgeyserLanDiscovery=true` and reserve
+a separate fixed `-DgeyserLanIcePort=<port>` for LAN gameplay. Bind discovery to
+the broadcast-capable interface/wildcard and firewall UDP 7551 plus that ICE port
+to the intended LAN. Do not expose a private agent endpoint or open router ports
+just to make a same-LAN console work. One listener owns UDP 7551 per host; multiple
+worlds on one host need a deliberate shared gateway/selector design.
+
+Verify **discovery, transport handshake, authenticated console join, and agent
+chat separately**. Check logs and the advertised Bedrock protocol/version from
+another LAN device, then test the real Xbox. Console menus vary: do not assume
+there is an Add Server button or a particular Friends/LAN tab. Restart only the
+human gateway when applying its repair; preserve the world, agents, sessions,
+tasks and unknown receipts. See the [complete setup and rollback steps](docs/xbox-lan.md).
+
 For this translated connection the adapter leaves only the unused recipe-book UI
 packet opaque. Inventory, entities, blocks and action results remain decoded and
 verified. Inventory clicks wait for a matching server ping response to drain late

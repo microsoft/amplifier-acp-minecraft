@@ -1,0 +1,524 @@
+diff --git a/core/src/main/java/org/geysermc/geyser/network/bedrock/nethernet/NetherNetServer.java b/core/src/main/java/org/geysermc/geyser/network/bedrock/nethernet/NetherNetServer.java
+index 15966f4..426bf33 100644
+--- a/core/src/main/java/org/geysermc/geyser/network/bedrock/nethernet/NetherNetServer.java
++++ b/core/src/main/java/org/geysermc/geyser/network/bedrock/nethernet/NetherNetServer.java
+@@ -32,7 +32,9 @@ import io.netty.util.NetUtil;
+ import io.netty.util.concurrent.DefaultThreadFactory;
+ import org.checkerframework.checker.nullness.qual.Nullable;
+ import org.cloudburstmc.netty.channel.nethernet.NetherNetChannelFactory;
++import org.cloudburstmc.netty.channel.nethernet.NetherNetConstants;
+ import org.cloudburstmc.netty.channel.nethernet.config.NetherChannelOption;
++import org.cloudburstmc.netty.channel.nethernet.signaling.NetherNetDiscoverySignaling;
+ import org.cloudburstmc.netty.channel.nethernet.signaling.NetherNetHTTPServerSignaling;
+ import org.cloudburstmc.netty.channel.nethernet.signaling.PongData;
+ import org.cloudburstmc.netty.signaling.ProviderClient;
+@@ -95,6 +97,10 @@ import java.util.stream.Stream;
+  * The NetherNet (WebRTC) transport, used instead of RakNet: inbuilt HTTP signaling, NXS provider registration, or both,
+  * all on the Bedrock address, and on the Bedrock port unless "webrtc-port" or -DgeyserSignalingPort move them.
+  * Its state (signing identity, provider registration and DTLS identity) lives in the "nethernet" folder next to the config.
++ * <p>
++ * LAN discovery answers the broadcasts Bedrock 26.60+ sends to UDP {@value NetherNetConstants#DISCOVERY_PORT}, which is how
++ * clients discover servers on the same network. Opt in with {@code -DgeyserLanDiscovery=true}
++ * and set an explicit separate {@code -DgeyserLanIcePort}; discovery is disabled by default.
+  */
+ public final class NetherNetServer implements EventRegistrar {
+     private static final long GUID = new Random().nextLong();
+@@ -163,6 +169,14 @@ public final class NetherNetServer implements EventRegistrar {
+     private EventLoopGroup inbuiltEventLoopGroup;
+     private volatile Channel inbuiltChannel;
+     private NetherNetChannelInitialiser inbuiltInitialiser;
++    /** Answers LAN discovery broadcasts and signals LAN joins; null while LAN discovery is not running. */
++    private volatile @Nullable NetherNetDiscoverySignaling lanDiscovery;
++    private final String lanNonce = String.format("%016x", new java.security.SecureRandom().nextLong());
++
++    public boolean isLanNonce(@Nullable String value) { return lanNonce.equals(value); }
++    private EventLoopGroup lanEventLoopGroup;
++    private volatile Channel lanChannel;
++    private NetherNetChannelInitialiser lanInitialiser;
+ 
+     public NetherNetServer(GeyserImpl geyser) {
+         this.geyser = geyser;
+@@ -241,6 +255,7 @@ public final class NetherNetServer implements EventRegistrar {
+         warnIfBuiltinSettingsUnused(inbuilt);
+         if (inbuilt) startInbuilt(advertised);
+         if (provider) startProvider(advertised);
++        if (lanDiscoveryEnabled()) startLanDiscovery();
+     }
+ 
+     /** Settings only built-in signaling uses, the proxy address one also needing a proxy in one of its lists. */
+@@ -326,21 +341,8 @@ public final class NetherNetServer implements EventRegistrar {
+                     // setting already accepts the login chain it forwards
+                     .setTokenTrust(geyser.config().advanced().bedrock().validateBedrockLogin()
+                             ? TokenTrust.MINECRAFT_AUTH : TokenTrust.ANY)
+-                    .setMotdProvider((host, remoteAddress, client) -> {
+-                        // host is the HTTP Host header the client sent, which may be absent
+-                        BedrockPong pong = pingResponder.onQuery(GUID, remoteAddress, host);
+-
+-                        return new PongData.Builder()
+-                                .setServerName(pong.motd())
+-                                .setLevelName(pong.subMotd())
+-                                .setProtocol(pong.protocolVersion())
+-                                .setVersion(pong.version())
+-                                .setPlayerCount(pong.playerCount())
+-                                .setMaxPlayerCount(pong.maximumPlayerCount())
+-                                // As BDS sets it from online-mode, telling clients signed in to no Xbox account whether they may join
+-                                .setSelfSignedAuth(!geyser.config().advanced().bedrock().validateBedrockLogin())
+-                                .build();
+-                    });
++                    // host is the HTTP Host header the client sent, which may be absent
++                    .setMotdProvider((host, remoteAddress, client) -> pongData(pingResponder.onQuery(GUID, remoteAddress, host)));
+ 
+             GeyserConfig.SignalingConfig.BuiltinConfig.HttpsConfig https = builtin.https();
+             if (!https.certificate().isBlank()) {
+@@ -389,6 +391,98 @@ public final class NetherNetServer implements EventRegistrar {
+         }
+     }
+ 
++    /** What signaling answers and discovery responses say about this server, as a RakNet pong does. */
++    private PongData pongData(BedrockPong pong) { return pongData(pong, null); }
++
++    private PongData pongData(BedrockPong pong, @Nullable String nonce) {
++        return new PongData.Builder()
++                .setNonce(nonce)
++                .setServerName(pong.motd())
++                .setLevelName(pong.subMotd())
++                .setProtocol(pong.protocolVersion())
++                .setVersion(pong.version())
++                .setPlayerCount(pong.playerCount())
++                .setMaxPlayerCount(pong.maximumPlayerCount())
++                // As BDS sets it from online-mode, telling clients signed in to no Xbox account whether they may join
++                .setSelfSignedAuth(!geyser.config().advanced().bedrock().validateBedrockLogin())
++                .build();
++    }
++
++    /**
++     * Whether LAN discovery runs: {@code -DgeyserLanDiscovery}, false unless explicitly enabled. Only one process on a machine
++     * can hold UDP {@value NetherNetConstants#DISCOVERY_PORT}, so a second Geyser, a BDS or a Bedrock client on this
++     * machine needs it off here.
++     */
++    private static boolean lanDiscoveryEnabled() {
++        return Boolean.parseBoolean(System.getProperty("geyserLanDiscovery", "false"));
++    }
++
++    /**
++     * The required fixed UDP port LAN joins play on: {@code -DgeyserLanIcePort}. It cannot be "webrtc-port", which built-in signaling holds.
++     */
++    private int lanIcePort() {
++        int port = Integer.parseInt(System.getProperty("geyserLanIcePort", "0"));
++        if (port < 1 || port > 65535 || port == webrtcPort || port == NetherNetConstants.DISCOVERY_PORT) {
++            throw new IllegalArgumentException("LAN discovery requires a separate explicit geyserLanIcePort within 1..65535");
++        }
++        return port;
++    }
++
++    /**
++     * Advertises this server to LAN discovery on this network: binds UDP {@value NetherNetConstants#DISCOVERY_PORT}
++     * on the configured discovery bind address, answers the discovery broadcasts Bedrock clients send there, and signals their joins over
++     * the same socket. The LAN-only answer omits its SDP identity for Xbox compatibility. Signed login data and
++     * the advertised nonce remain required when no transport identity binding exists. ICE goes on {@link #lanIcePort()}, as "webrtc-port" belongs to built-in signaling.
++     */
++    private void startLanDiscovery() {
++        GeyserConfig.BedrockConfig listener = geyser.config().bedrock();
++        OperatorIdentity identity;
++        try {
++            // The same identity file built-in signaling keeps, so a player who trusted this server once is not asked again
++            identity = OperatorIdentity.fromPemOrCreate(dataFolder.resolve("identity.pem").toFile(),
++                    GeyserImpl.NAME + "-" + geyser.config().gameplay().serverName());
++        } catch (Exception e) {
++            logger().error("LAN discovery will not start! Could not load or create this server's identity file, "
++                    + dataFolder.resolve("identity.pem") + ".", e);
++            return;
++        }
++
++        InetSocketAddress discoveryAddress = new InetSocketAddress(System.getProperty("geyserLanBind", "0.0.0.0"), NetherNetConstants.DISCOVERY_PORT);
++        try {
++            NetherNetDiscoverySignaling discovery = new NetherNetDiscoverySignaling(GUID, discoveryAddress);
++            discovery.setServerIdentity(identity);
++            discovery.setTokenTrust(geyser.config().advanced().bedrock().validateBedrockLogin()
++                    ? TokenTrust.MINECRAFT_AUTH : TokenTrust.ANY);
++            // Nothing was typed to reach this server, so there is no host name to pass on
++            discovery.setMotdProvider((host, remoteAddress, client) -> pongData(pingResponder.onQuery(GUID, remoteAddress, null), lanNonce));
++            this.lanDiscovery = discovery;
++
++            this.lanEventLoopGroup = TransportHelper.TRANSPORT_TYPE.eventLoopGroupFactory()
++                .apply(0, new DefaultThreadFactory("NetherNet LAN Discovery", true));
++            this.lanInitialiser = new NetherNetChannelInitialiser(geyser);
++
++            int icePort = lanIcePort();
++            ServerBootstrap b = new ServerBootstrap();
++            b.group(lanEventLoopGroup)
++                    .channelFactory(NetherNetChannelFactory.server(new UnsignedAnswerSignaling(discovery)))
++                    .childHandler(lanInitialiser);
++            if (icePort != 0) {
++                b.option(NetherChannelOption.NETHER_SERVER_ICE_ADDRESS, new InetSocketAddress(listener.address(), icePort));
++            }
++
++            this.lanChannel = b.bind(discoveryAddress).sync().channel();
++
++            logger().info("LAN discovery started on UDP port " + NetherNetConstants.DISCOVERY_PORT
++                + ": advertising to Bedrock LAN discovery"
++                + (icePort != 0 ? ", and join it on UDP port " + icePort : ""));
++        } catch (Throwable e) {
++            // Throwable: the WebRTC natives are not available on every platform
++            closeLanResources();
++            logger().error("LAN discovery could not start on UDP port " + NetherNetConstants.DISCOVERY_PORT + ". Another Bedrock "
++                + "server or client on this machine may hold that port; -DgeyserLanDiscovery=false turns LAN discovery off.", e);
++        }
++    }
++
+     /**
+      * The addresses both signaling modes announce: those in {@code -DgeyserAdvertiseAddresses}, comma separated, else
+      * those in the config. An address this machine does not hold is announced as the public side of a NAT forwarding
+@@ -799,6 +893,7 @@ public final class NetherNetServer implements EventRegistrar {
+             stopping = true;
+             geyser.eventBus().unregisterAll(this);
+             closeInbuiltResources();
++            closeLanResources();
+             stopProvider();
+         }
+     }
+@@ -840,6 +935,15 @@ public final class NetherNetServer implements EventRegistrar {
+         if (inbuiltInitialiser != null) inbuiltInitialiser.getEventLoopGroup().shutdownGracefully();
+     }
+ 
++    private void closeLanResources() {
++        if (lanChannel != null) lanChannel.close();
++        NetherNetDiscoverySignaling discovery = lanDiscovery;
++        if (discovery != null) discovery.close();
++        lanDiscovery = null;
++        if (lanEventLoopGroup != null) lanEventLoopGroup.shutdownGracefully();
++        if (lanInitialiser != null) lanInitialiser.getEventLoopGroup().shutdownGracefully();
++    }
++
+     private void closeNetworkResources() {
+         if (this.netherNetChannel != null) {
+             this.netherNetChannel.close();
+diff --git a/core/src/main/java/org/geysermc/geyser/session/auth/BedrockClientData.java b/core/src/main/java/org/geysermc/geyser/session/auth/BedrockClientData.java
+index 57aa40d..9e56ff4 100644
+--- a/core/src/main/java/org/geysermc/geyser/session/auth/BedrockClientData.java
++++ b/core/src/main/java/org/geysermc/geyser/session/auth/BedrockClientData.java
+@@ -53,6 +53,9 @@ import java.util.regex.Pattern;
+ 
+ @Getter
+ public final class BedrockClientData {
++    @SerializedName(value = "Nonce")
++    private String nonce;
++
+     /**
+      * Shape of the codes Bedrock sends, such as en_US.
+      */
+diff --git a/core/src/main/java/org/geysermc/geyser/util/LoginEncryptionUtils.java b/core/src/main/java/org/geysermc/geyser/util/LoginEncryptionUtils.java
+index a2ff71e..89504cc 100644
+--- a/core/src/main/java/org/geysermc/geyser/util/LoginEncryptionUtils.java
++++ b/core/src/main/java/org/geysermc/geyser/util/LoginEncryptionUtils.java
+@@ -25,6 +25,10 @@
+ 
+ package org.geysermc.geyser.util;
+ 
++import io.netty.channel.Channel;
++import org.cloudburstmc.netty.channel.nethernet.AddressSource;
++import org.cloudburstmc.netty.channel.nethernet.NetherNetChannel;
++import org.geysermc.geyser.network.bedrock.nethernet.LanLoginPolicy;
+ import net.raphimc.minecraftauth.msa.model.MsaDeviceCode;
+ import org.cloudburstmc.protocol.bedrock.data.auth.AuthPayload;
+ import org.cloudburstmc.protocol.bedrock.data.auth.AuthType;
+@@ -111,8 +115,16 @@ public class LoginEncryptionUtils {
+             // Every other transport binds the chain through the encryption handshake below instead.
+             if (!geyser.config().advanced().bedrock().useWaterdogpeForwarding()
+                     && session.getUpstream().getSession().getPeer() instanceof NetherNetPeer) {
+-                if (refusedByBinding(geyser, session, TransportIdentityBinding.mismatch(
+-                        session.getUpstream().getSession().getPeer().getChannel(), identityPublicKey))) {
++                Channel transport = session.getUpstream().getSession().getPeer().getChannel();
++                boolean lan = transport instanceof NetherNetChannel channel
++                        && channel.signaledAddress() != null
++                        && channel.signaledAddress().source() == AddressSource.SIGNALING_LAN;
++                boolean nonceMatches = geyser.getNetherNetServer() != null
++                        && geyser.getNetherNetServer().isLanNonce(data.getNonce());
++                boolean trustedLan = LanLoginPolicy.trusted(result.signed(), lan,
++                        TransportIdentityBinding.state(transport), nonceMatches);
++                if (!trustedLan && refusedByBinding(geyser, session,
++                        TransportIdentityBinding.mismatch(transport, identityPublicKey))) {
+                     return false;
+                 }
+             }
+diff --git a/core/src/test/java/org/geysermc/geyser/scoreboard/network/ScoreboardIssueTests.java b/core/src/test/java/org/geysermc/geyser/scoreboard/network/ScoreboardIssueTests.java
+index 64a8fb3..2682a0d 100644
+--- a/core/src/test/java/org/geysermc/geyser/scoreboard/network/ScoreboardIssueTests.java
++++ b/core/src/test/java/org/geysermc/geyser/scoreboard/network/ScoreboardIssueTests.java
+@@ -97,9 +97,11 @@ public class ScoreboardIssueTests {
+         // Needed because some tests here require a proper ENTITY_TYPE registry.
+         // This is a temp fix: ideally we wouldn't have a single globally initialised registry for all tests
+         // (because some future tests may want to test registering to a registry).
+-        DataComponentRegistryPopulator.load(GeyserResources.DEFAULT);
+-        BuiltInJavaRegistries.bootstrap();
+-        BuiltInJavaRegistries.freeze();
++        org.geysermc.geyser.scoreboard.network.util.GeyserMockContext.mockContext(() -> {
++            DataComponentRegistryPopulator.load(GeyserResources.DEFAULT);
++            BuiltInJavaRegistries.bootstrap();
++            BuiltInJavaRegistries.freeze();
++        });
+     }
+ 
+     /**
+diff --git a/core/src/main/java/org/geysermc/geyser/network/bedrock/nethernet/LanLoginPolicy.java b/core/src/main/java/org/geysermc/geyser/network/bedrock/nethernet/LanLoginPolicy.java
+new file mode 100644
+--- /dev/null
++++ b/core/src/main/java/org/geysermc/geyser/network/bedrock/nethernet/LanLoginPolicy.java
+@@ -0,0 +1,12 @@
++package org.geysermc.geyser.network.bedrock.nethernet;
++
++import org.cloudburstmc.netty.util.nethernet.TransportIdentityBinding;
++
++/** Only an authenticated discovery login echoing this server lifetime nonce can use LAN compatibility. */
++public final class LanLoginPolicy {
++    private LanLoginPolicy() { }
++    public static boolean trusted(boolean signedChain, boolean lanSource,
++            TransportIdentityBinding.State state, boolean nonceMatches) {
++        return signedChain && lanSource && state == TransportIdentityBinding.State.NONE && nonceMatches;
++    }
++}
+diff --git a/core/src/main/java/org/geysermc/geyser/network/bedrock/nethernet/UnsignedAnswerSignaling.java b/core/src/main/java/org/geysermc/geyser/network/bedrock/nethernet/UnsignedAnswerSignaling.java
+new file mode 100644
+--- /dev/null
++++ b/core/src/main/java/org/geysermc/geyser/network/bedrock/nethernet/UnsignedAnswerSignaling.java
+@@ -0,0 +1,109 @@
++/*
++ * Copyright (c) 2026 GeyserMC. http://geysermc.org
++ *
++ * Permission is hereby granted, free of charge, to any person obtaining a copy
++ * of this software and associated documentation files (the "Software"), to deal
++ * in the Software without restriction, including without limitation the rights
++ * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
++ * copies of the Software, and to permit persons to whom the Software is
++ * furnished to do so, subject to the following conditions:
++ *
++ * The above copyright notice and this permission notice shall be included in
++ * all copies or substantial portions of the Software.
++ *
++ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
++ * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
++ * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
++ * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
++ * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
++ * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
++ * THE SOFTWARE.
++ *
++ * @author GeyserMC
++ * @link https://github.com/GeyserMC/Geyser
++ */
++
++
++package org.geysermc.geyser.network.bedrock.nethernet;
++
++import io.netty.channel.EventLoop;
++import org.checkerframework.checker.nullness.qual.Nullable;
++import org.cloudburstmc.netty.channel.nethernet.NetherNetConstants;
++import org.cloudburstmc.netty.channel.nethernet.signaling.NetherNetServerSignaling;
++import org.cloudburstmc.netty.channel.nethernet.signaling.PongData;
++import org.cloudburstmc.netty.util.nethernet.OperatorIdentity;
++
++import java.net.ConnectException;
++import java.net.InetSocketAddress;
++import java.net.SocketAddress;
++import java.util.regex.Pattern;
++
++final class UnsignedAnswerSignaling implements NetherNetServerSignaling {
++    private static final String CONNECT_RESPONSE = NetherNetConstants.RTC_NEGOTIATION_CONNECT_RESPONSE + " ";
++    private static final Pattern IDENTITY_LINE = Pattern.compile("a=identity:[^\r\n]*\r?\n");
++
++    private final NetherNetServerSignaling delegate;
++
++    UnsignedAnswerSignaling(NetherNetServerSignaling delegate) {
++        this.delegate = delegate;
++    }
++
++    static String withoutIdentity(String signal) {
++        return signal.startsWith(CONNECT_RESPONSE) ? IDENTITY_LINE.matcher(signal).replaceAll("") : signal;
++    }
++
++    @Override
++    public void sendSignal(String targetNetworkId, String data) {
++        delegate.sendSignal(targetNetworkId, withoutIdentity(data));
++    }
++
++    @Override
++    public void bind(SocketAddress localAddress, @Nullable InetSocketAddress iceAddress, EventLoop eventLoop) throws ConnectException {
++        delegate.bind(localAddress, iceAddress, eventLoop);
++    }
++
++    @Override
++    public void setNewConnectionHandler(NewConnectionHandler handler) {
++        delegate.setNewConnectionHandler(handler);
++    }
++
++    @Override
++    public void setAdvertisementData(PongData pongData) {
++        delegate.setAdvertisementData(pongData);
++    }
++
++    @Override
++    public OperatorIdentity serverIdentity() {
++        return delegate.serverIdentity();
++    }
++
++    @Override
++    public boolean allowsIceOnLocalPort() {
++        return delegate.allowsIceOnLocalPort();
++    }
++
++    @Override
++    public void setSignalHandler(String connectionId, SignalHandler handler) {
++        delegate.setSignalHandler(connectionId, handler);
++    }
++
++    @Override
++    public void removeSignalHandler(String connectionId) {
++        delegate.removeSignalHandler(connectionId);
++    }
++
++    @Override
++    public String getLocalNetworkId() {
++        return delegate.getLocalNetworkId();
++    }
++
++    @Override
++    public boolean isActive() {
++        return delegate.isActive();
++    }
++
++    @Override
++    public void close() {
++        delegate.close();
++    }
++}
+diff --git a/core/src/test/java/org/geysermc/geyser/network/bedrock/nethernet/LanLoginPolicyTest.java b/core/src/test/java/org/geysermc/geyser/network/bedrock/nethernet/LanLoginPolicyTest.java
+new file mode 100644
+--- /dev/null
++++ b/core/src/test/java/org/geysermc/geyser/network/bedrock/nethernet/LanLoginPolicyTest.java
+@@ -0,0 +1,14 @@
++package org.geysermc.geyser.network.bedrock.nethernet;
++import org.cloudburstmc.netty.util.nethernet.TransportIdentityBinding;
++import org.junit.jupiter.api.Test;
++import static org.junit.jupiter.api.Assertions.*;
++class LanLoginPolicyTest {
++ @Test void acceptsOnlyAuthenticatedLanNonceWithNoBinding() {
++  for (boolean signed : new boolean[]{false,true})
++   for (boolean lan : new boolean[]{false,true})
++    for (boolean nonce : new boolean[]{false,true})
++     for (var state : TransportIdentityBinding.State.values())
++      assertEquals(signed && lan && nonce && state == TransportIdentityBinding.State.NONE,
++       LanLoginPolicy.trusted(signed,lan,state,nonce));
++ }
++}
+diff --git a/core/src/test/java/org/geysermc/geyser/network/bedrock/nethernet/UnsignedAnswerSignalingTest.java b/core/src/test/java/org/geysermc/geyser/network/bedrock/nethernet/UnsignedAnswerSignalingTest.java
+new file mode 100644
+--- /dev/null
++++ b/core/src/test/java/org/geysermc/geyser/network/bedrock/nethernet/UnsignedAnswerSignalingTest.java
+@@ -0,0 +1,49 @@
++/*
++ * Copyright (c) 2026 GeyserMC. http://geysermc.org
++ *
++ * Permission is hereby granted, free of charge, to any person obtaining a copy
++ * of this software and associated documentation files (the "Software"), to deal
++ * in the Software without restriction, including without limitation the rights
++ * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
++ * copies of the Software, and to permit persons to whom the Software is
++ * furnished to do so, subject to the following conditions:
++ *
++ * The above copyright notice and this permission notice shall be included in
++ * all copies or substantial portions of the Software.
++ *
++ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
++ * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
++ * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
++ * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
++ * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
++ * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
++ * THE SOFTWARE.
++ *
++ * @author GeyserMC
++ * @link https://github.com/GeyserMC/Geyser
++ */
++
++
++package org.geysermc.geyser.network.bedrock.nethernet;
++
++import org.junit.jupiter.api.Test;
++
++import static org.junit.jupiter.api.Assertions.assertEquals;
++
++class UnsignedAnswerSignalingTest {
++    private static final String ANSWER_START = "CONNECTRESPONSE 42 v=0\r\no=rtc 1 0 IN IP4 127.0.0.1\r\n";
++    private static final String ANSWER_END = "m=application 46330 UDP/DTLS/SCTP webrtc-datachannel\r\na=setup:active\r\n"
++        + "a=candidate:1 1 UDP 2114977791 192.168.1.150 46330 typ host\r\n";
++
++    @Test
++    void answerLosesOnlyItsIdentityLine() {
++        String signed = ANSWER_START + "a=identity:eyJpZHAiOnsiZG9tYWluIjoic2VsZiJ9\r\n" + ANSWER_END;
++        assertEquals(ANSWER_START + ANSWER_END, UnsignedAnswerSignaling.withoutIdentity(signed));
++    }
++
++    @Test
++    void otherSignalsPassUnchanged() {
++        String candidate = "CANDIDATEADD 42 candidate:1 1 udp 1 192.168.1.150 46330 typ host a=identity:x\r\n";
++        assertEquals(candidate, UnsignedAnswerSignaling.withoutIdentity(candidate));
++    }
++}
+diff --git a/core/src/test/java/org/geysermc/geyser/util/LanLoginIdentityTest.java b/core/src/test/java/org/geysermc/geyser/util/LanLoginIdentityTest.java
+new file mode 100644
+--- /dev/null
++++ b/core/src/test/java/org/geysermc/geyser/util/LanLoginIdentityTest.java
+@@ -0,0 +1,53 @@
++package org.geysermc.geyser.util;
++import io.netty.channel.DefaultChannelPromise;
++import io.netty.util.DefaultAttributeMap;
++import io.netty.util.concurrent.GlobalEventExecutor;
++import org.cloudburstmc.netty.channel.nethernet.*;
++import org.cloudburstmc.protocol.bedrock.data.auth.CertificateChainPayload;
++import org.cloudburstmc.protocol.bedrock.packet.LoginPacket;
++import org.cloudburstmc.protocol.bedrock.util.ChainValidationResult;
++import org.cloudburstmc.protocol.bedrock.util.EncryptionUtils;
++import org.geysermc.geyser.network.bedrock.CodecProcessor;
++import org.geysermc.geyser.network.bedrock.nethernet.NetherNetPeer;
++import org.geysermc.geyser.session.GeyserSession;
++import org.geysermc.geyser.session.auth.AuthData;
++import org.geysermc.geyser.text.GeyserLocale;
++import org.jose4j.jws.JsonWebSignature;
++import org.junit.jupiter.api.Test;
++import java.net.InetSocketAddress;
++import java.util.Base64;
++import java.util.List;
++import static org.junit.jupiter.api.Assertions.*;
++import static org.mockito.ArgumentMatchers.*;
++import static org.mockito.Mockito.*;
++class LanLoginIdentityTest {
++ @Test void actualClientSignatureNonceAndLanOriginAreAllRequired() throws Exception {
++  for(boolean signed:new boolean[]{true,false})
++   for(boolean validSignature:new boolean[]{true,false})
++    for(boolean lan:new boolean[]{true,false})
++     for(boolean nonce:new boolean[]{true,false}) run(signed,validSignature,lan,nonce);
++ }
++ void run(boolean signed,boolean validSignature,boolean lan,boolean nonce) throws Exception {
++  var key=EncryptionUtils.createKeyPair();var channel=mock(NetherNetChildChannel.class);var attrs=new DefaultAttributeMap();
++  when(channel.attr(any())).thenAnswer(call->attrs.attr(call.getArgument(0)));
++  when(channel.closeFuture()).thenReturn(new DefaultChannelPromise(channel,GlobalEventExecutor.INSTANCE));
++  if(lan)when(channel.signaledAddress()).thenReturn(new SourcedAddress(new InetSocketAddress("127.0.0.1",1234),AddressSource.SIGNALING_LAN,null));
++  var session=mock(GeyserSession.class,RETURNS_DEEP_STUBS);var peer=mock(NetherNetPeer.class);
++  when(peer.getChannel()).thenReturn(channel);when(session.getUpstream().getSession().getPeer()).thenReturn(peer);
++  when(session.getGeyser().config().advanced().bedrock().validateBedrockLogin()).thenReturn(true);
++  when(session.getGeyser().getNetherNetServer().isLanNonce("original-server-nonce")).thenReturn(true);
++  var payload=new CertificateChainPayload(List.of("verified-service-boundary-fixture"));
++  var result=new ChainValidationResult(signed,"{\"identityPublicKey\":\""+Base64.getEncoder().encodeToString(key.getPublic().getEncoded())+"\",\"extraData\":{\"displayName\":\"Fixture\",\"identity\":\"00000000-0000-0000-0000-000000000001\",\"XUID\":\"2535412345678901\"}}");
++  var jwt=new JsonWebSignature();jwt.setAlgorithmHeaderValue("ES384");jwt.setKey(validSignature?key.getPrivate():EncryptionUtils.createKeyPair().getPrivate());
++  jwt.setPayload("{\"GameVersion\":\"26.60\",\"Nonce\":\""+(nonce?"original-server-nonce":"stale-server-nonce")+"\"}");
++  var packet=new LoginPacket();packet.setAuthPayload(payload);packet.setClientJwt(jwt.getCompactSerialization());
++  try(var encryption=mockStatic(EncryptionUtils.class,CALLS_REAL_METHODS);var locale=mockStatic(GeyserLocale.class);var codec=mockStatic(CodecProcessor.class)){
++   encryption.when(()->EncryptionUtils.validatePayload(payload)).thenReturn(result);
++   locale.when(()->GeyserLocale.getLocaleStringLog(anyString())).thenReturn("invalid account");
++   if(signed&&!validSignature)assertThrows(RuntimeException.class,()->LoginEncryptionUtils.encryptPlayerConnection(session,packet));
++   else LoginEncryptionUtils.encryptPlayerConnection(session,packet);
++   if(signed&&validSignature&&lan&&nonce)verify(session).setAuthData(any(AuthData.class));
++   else verify(session,never()).setAuthData(any());
++  }
++ }
++}
