@@ -98,6 +98,14 @@ class Provider:
         revision = source.get('revision')
         if not re.fullmatch('[0-9a-f]{40}', revision or ''):
             raise ContinuityError('Installed exact source revision is missing')
+        if self.paths['app'].is_symlink():
+            stage=self.paths['app'].resolve().parent
+            if stage.parent==self.root/'stages':
+                manifest=read(stage/'manifest.json')
+                if manifest['revision']!=revision or self.paths['venv'].resolve()!=stage/'venv':
+                    raise ContinuityError('Installed source/environment binding changed')
+                if any(fingerprint(stage/k)!=manifest['fingerprints'][k] for k in self.paths):
+                    raise ContinuityError('Installed source/dependency bytes changed')
         return {'version':revision}
 
     def candidate(self):
@@ -288,7 +296,8 @@ class Provider:
             for key,target in self.paths.items():
                 if not target.is_symlink() or os.readlink(target)!=str(stage/key):
                     raise ContinuityError('Installed source pointer mismatch')
-            if read(self.home/'app-source.json').get('revision')!=plan['version']:
+            expected={**plan['source_marker'],'revision':plan['version'],'python':str(self.paths['venv']/'bin/python')}
+            if read(self.home/'app-source.json')!=expected:
                 raise ContinuityError('Installed source revision mismatch')
         elif any(fingerprint(p)!=plan['before'][k] for k,p in self.paths.items()) or read(self.home/'app-source.json')!=plan['source_marker']:
             raise ContinuityError('Source rollback verification failed')

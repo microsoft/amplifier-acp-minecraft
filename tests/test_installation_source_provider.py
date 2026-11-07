@@ -86,7 +86,12 @@ class SourceProviderTests(unittest.TestCase):
         self.provider.apply(self.envelope,self.tx)
         (Path(self.plan['stage'])/'app/body.cjs').write_text('damaged')
         with self.assertRaises(ContinuityError):self.provider.verify(self.envelope)
+        with self.assertRaises(ContinuityError):self.provider.status()
         self.assertTrue(self.provider.rollback(self.envelope,self.tx)['verified'])
+    def test_private_source_metadata_is_preserved_and_verified(self):
+        self.provider.apply(self.envelope,self.tx)
+        marker=read(self.home/'app-source.json');marker['private_label']='unexpected';durable_write(self.home/'app-source.json',marker)
+        with self.assertRaises(ContinuityError):self.provider.verify(self.envelope)
     def test_unknown_pointer_during_rollback_is_not_deleted(self):
         self.provider.apply(self.envelope,self.tx)
         (self.home/'app').unlink();(self.home/'app').mkdir();(self.home/'app/other').write_text('keep')
