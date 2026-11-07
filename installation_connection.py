@@ -258,10 +258,12 @@ class Connection:
         catalog = self.backend.context_api('GET','service-connections')
         entry = [c for c in catalog.get('connections',[]) if c.get('id')==self.entry['id']]
         command = (catalog.get('request') or {}).get('command',{})
+        # A lost command acknowledgement is reported as unknown. Only the same
+        # pending Connect with its gate still closed may reconcile that state.
         if (len(entry)!=1 or any(entry[0].get(k)!=v for k,v in self.entry.items())
                 or entry[0].get('service')!='minecraft' or entry[0].get('enrolled') is not True
                 or entry[0].get('context_active') is not False
-                or entry[0].get('request_id')!=self.id or entry[0].get('state')!='busy'
+                or entry[0].get('request_id')!=self.id or entry[0].get('state') not in ('busy','unknown')
                 or any(command.get(k)!=v for k,v in {'action':'connect','connection_id':self.entry['id'],
                     'revision':self.entry['revision'],'request_id':self.id}.items())):
             raise ContinuityError('Prepared activation requires the matching saved Connect and closed host context gate')

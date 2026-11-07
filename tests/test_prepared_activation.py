@@ -85,6 +85,9 @@ class ActivationTests(unittest.TestCase):
         self.prepare();self.lose=True
         with self.assertRaises(TimeoutError):self.op('connect').run()
         self.assertEqual(self.game.actions,[])
+        # Worker reports lost command acknowledgement as unknown while retaining
+        # the SAME pending Connect and closed context gate.
+        self.catalog['connections'][0]['state']='unknown'
         self.assertEqual(self.settle()['state'],'connected');self.assertEqual(len(self.patches()),1)
         receipt=read(Path(self.cfg['state'])/'connections/prepared-context-activation.json')
         self.assertEqual(receipt['phase'],'verified');self.assertTrue(receipt['read_back']['enabled'])
@@ -124,7 +127,7 @@ class ActivationTests(unittest.TestCase):
     def test_actual_host_gate_request_and_exact_descriptor_required(self):
         self.prepare();original=copy.deepcopy(self.catalog)
         for key,value in [('context_active',True),('revision','changed'),('request_id',str(uuid.uuid4())),
-                          ('label','changed'),('context_provider_ids',['other']),('enrolled',False)]:
+                          ('label','changed'),('context_provider_ids',['other']),('enrolled',False),('state','connected')]:
             self.catalog=copy.deepcopy(original);self.catalog['connections'][0][key]=value
             with self.subTest(key=key),self.assertRaises(ContinuityError):self.op('connect').run()
         self.assertEqual(self.patches(),[]);self.assertEqual(self.game.actions,[])
