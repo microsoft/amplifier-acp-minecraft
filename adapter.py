@@ -172,6 +172,7 @@ async def run(home):
     reply_calls=json.loads(reply_calls_path.read_text()) if reply_calls_path.exists() else []
     notice_path=home/'capacity-notice.json'
     budget_waiting=load_capacity_notice(notice_path)
+    activity_attention=ConversationAttention(observe) if (cfg.get('human_engagement') or {}).get('activity_scope')=='conversation_only' else None
     connection_failures=0
     last_continuation=None
     async def request(path,payload=None):
@@ -192,7 +193,7 @@ async def run(home):
         def permission_tools():
             status=control(cfg,'/status')
             if status.get('conversation_only'):
-                return REPLY_TOOLS | ({'task_accept','task_amend'} if status.get('task_intake_enabled') else set())
+                return REPLY_TOOLS | ({'task_accept','task_amend'} if status.get('task_intake_enabled') and not status.get('ambient_activity') else set())
             return GAME_TOOLS
         client.permission_tools=permission_tools
         if not client.info.get('agentCapabilities',{}).get('mcpCapabilities',{}).get('http'):
@@ -266,6 +267,13 @@ async def run(home):
             messages=[]
             if intake_enabled or not work_allowed or len(calls)>=30:
                 messages=await human_reply_messages(request,connect,conversation_attention)
+                conversation_only=bool(messages)
+            if not messages and activity_attention:
+                if await request('/activity/participation'):
+                    await activity_attention.consider(request,await connect(),activity=True)
+                admission=await request('/conversation/admission')
+                eligible=set(admission.get('eligible_ids',[]))
+                messages=[m for m in await request('/inbox/peek') if m.get('source')=='activity' and m.get('id') in eligible][:1]
                 conversation_only=bool(messages)
             if not work_allowed and not conversation_only:
                 await asyncio.sleep(2);continue

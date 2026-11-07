@@ -18,7 +18,7 @@ function fixture(name,semantic=false,extra={}){
   return realRequire(n);
  },module:{exports:{}},console:{log(){}},Buffer,
  process:{argv:['node','body.cjs',config],on(){},exit(){assert.fail('Unexpected process exit');}},setTimeout,clearTimeout});
- vm.runInContext(fs.readFileSync(path.join(root,'body.cjs'),'utf8')+'\nmodule.exports={history,inbox,operate,mcpServer,readyFixture(){ready=true;},startFixtureTurn(){ready=true;turnUntil=Date.now()+240000;history.startTurn();}};',context,{filename:'body.cjs'});
+ vm.runInContext(fs.readFileSync(path.join(root,'body.cjs'),'utf8')+'\nmodule.exports={history,inbox,operate,mcpServer,activityParticipation,readyFixture(){ready=true;},startFixtureTurn(){ready=true;turnUntil=Date.now()+240000;history.startTurn();}};',context,{filename:'body.cjs'});
  return {bot,...context.module.exports,task,home,async request(url,payload,expectedStatus=200){
   const req=Readable.from(payload===undefined?[]:[JSON.stringify(payload)]);
   Object.assign(req,{url,method:payload===undefined?'GET':'POST',headers:{authorization:'Bearer fixture'}});
@@ -360,5 +360,19 @@ test('real participation delivery targets one source despite later human arrival
   assert.equal(f.history.data.participation_pending.length,1);
   await f.request('/participation',{source_id:second.context.trigger_id,signature:second.signature,action:'engage'});
   assert.equal(f.inbox.length,1);assert.equal(f.inbox[0].message,'Second question');assert.deepEqual(f.history.task(),f.task);
+ }finally{f.close();}
+});
+
+test('actual activity reply turn cannot accept/amend tasks or perform world effects',async()=>{
+ const f=fixture('BuilderOne',true,{human_engagement:{enabled:true,activity_scope:'conversation_only'},human_task_intake:{enabled:true}});try{
+  f.bot.pathfinder={setGoal(){}};f.bot.clearControlStates=()=>{};f.bot.stopDigging=()=>{};f.readyFixture();f.activityParticipation.observe({uuid:'12345678-1234-1234-1234-123456789abc',name:'Visitor',from:{x:0,y:64,z:0},to:{x:1,y:64,z:0},at:Date.now()});
+  const proposal=await f.request('/activity/participation');assert.equal(proposal.context.messages.length,0);
+  await f.request('/activity/participation',{source_id:proposal.context.trigger_id,signature:proposal.signature,action:'engage',offer:{id:'decision',ticket:'ticket'}});
+  const before=JSON.stringify(f.history.task());
+  await f.request('/turn',{conversation_only:true,message_ids:[proposal.context.trigger_id]});
+  assert.equal(f.history.data.turn.ambient_activity,true);
+  for(const name of ['task_accept','task_amend','move','work_begin','attention_watch'])await assert.rejects(f.operate(name,{}),/Task intake|Conversation-only/);
+  assert.equal(JSON.stringify(f.history.task()),before);
+  await f.request('/stop',{});assert.equal(await f.request('/activity/participation'),null);
  }finally{f.close();}
 });
