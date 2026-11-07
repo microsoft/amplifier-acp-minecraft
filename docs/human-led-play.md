@@ -55,3 +55,12 @@ idle model polling from movement. Movement-driven social engagement, default
 completion-bound assignments and independently accepted delegation require their
 own policy integration. None are implied by a cosmetic change or transport
 health check.
+
+Public participation inputs have independent durable outcomes. Each evaluation
+binds one source ID and its original time; later messages do not consume it or
+replace its bounded context snapshot. A hold consumes only that source. Pending
+source evidence survives observation-journal rollover within the existing
+10-minute input lifetime. Expired/unavailable sources receive an explicit local
+outcome, and accepted sources cannot be replayed after a lost delivery reply.
+Stop clears pending sources and their snapshots. This does not renew task limits
+or make unknown participants human.

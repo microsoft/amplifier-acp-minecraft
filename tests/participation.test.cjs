@@ -31,20 +31,29 @@ test('holding consumes the candidate without a turn or private-context disclosur
   assert.equal(f.p.proposal([]),null);
  }finally{f.close();}
 });
-test('new replies invalidate a delayed decision; newest snapshot remains eligible',()=>{
+test('later messages do not invalidate or consume an independent pending human request',()=>{
  const f=fixture();try{
-  f.chat('What is the plan?');const old=f.p.proposal([]);
-  f.chat('Lead already answered that.');const fresh=f.p.proposal([]);
-  assert.throws(()=>f.p.apply(fresh,{signature:old.signature,action:'engage'},f.inbox),/changed/);
-  assert.equal(f.inbox.length,0);assert.ok(f.p.proposal([]));
+  const first=f.chat('What is the plan?'),old=f.p.proposal([]);
+  const second=f.chat('Another independent question.');
+  const fresh=f.p.proposal([]);assert.equal(fresh.signature,old.signature);
+  f.p.apply(fresh,{signature:old.signature,action:'hold'},f.inbox);
+  const next=f.p.proposal([]);assert.deepEqual(next.ids,[second.id]);
+  assert.notEqual(next.signature,old.signature);assert.equal(first.accepted,false);
+  assert.throws(()=>f.p.apply(next,{signature:old.signature,action:'engage'},f.inbox),/changed/);
  }finally{f.close();}
 });
-test('candidate bursts stay bounded and expired messages cannot authorize replay',()=>{
+test('human bursts retain each source, bounded context and original expiry across restart',()=>{
  const f=fixture();try{
-  for(let i=0;i<30;i++)f.chat('Question '+i);
-  const r=f.p.proposal([]);assert.equal(r.ids.length,8);assert.ok(r.context.messages.length<=24);
-  f.p.apply(r,{signature:r.signature,action:'hold'},f.inbox);assert.equal(f.p.proposal([]),null);
-  const e=f.chat('Old question');e.time='2000-01-01T00:00:00Z';assert.equal(f.p.proposal([]),null);
+  const events=Array.from({length:30},(_,i)=>f.chat('Question '+i));
+  const first=f.p.proposal([]),restored=new WorkshopState(f.history.file),p=new Participation(restored,f.p.cfg);
+  assert.equal(p.proposal([]).signature,first.signature);
+  for(const e of events){
+   const r=p.proposal([]);assert.deepEqual(r.ids,[e.id]);assert.ok(r.context.messages.length<=24);
+   assert.equal(r.occurred_at,Date.parse(e.time));p.apply(r,{signature:r.signature,action:'hold'},restored.data.inbox);
+  }
+  assert.equal(p.proposal([]),null);assert.equal(restored.data.participation_outcomes.length,30);
+  const e=f.chat('Old question');e.time='2000-01-01T00:00:00Z';f.history.data.participation_pending=[e.id];
+  assert.equal(f.p.proposal([]),null);assert.equal(f.history.data.participation_outcomes.at(-1).outcome,'expired_or_unavailable');
  }finally{f.close();}
 });
 test('management briefs stay outside public candidates, messages and participants across reload',()=>{
@@ -148,5 +157,30 @@ test('verified chat does not promote unattributed same-name history after reload
   assert.equal(Object.hasOwn(participants.find(p=>p.id==='Visitor'),'is_agent'),false);
   assert.equal(participants.find(p=>p.id==='Lead').is_agent,true);
   assert.equal(restored.data.events.length,f.history.data.events.length);
+ }finally{f.close();}
+});
+
+test('pending human provenance survives observation journal rollover without refreshing time',()=>{
+ const f=fixture();try{
+  const e=f.chat('Please help'),time=e.time,r=f.p.proposal([]);
+  f.history.data.events.push(...Array.from({length:1001},(_,i)=>({id:'noise-'+i,kind:'action_result',time:new Date().toISOString()})));
+  f.history.record({kind:'action_result',time:new Date().toISOString()});
+  assert.equal(f.history.data.events.find(x=>x.id===e.id).time,time);
+  const restored=new WorkshopState(f.history.file),p=new Participation(restored,f.p.cfg);
+  assert.equal(p.proposal([]).signature,r.signature);
+  p.apply(p.proposal([]),{signature:r.signature,action:'engage',offer:{id:'one',ticket:'one'}},restored.data.inbox);
+  const again=new WorkshopState(f.history.file),after=new Participation(again,f.p.cfg);
+  assert.equal(after.proposal([]),null);assert.equal(again.data.inbox.filter(m=>m.id===e.id).length,1);
+  assert.throws(()=>after.apply(r,{signature:r.signature,action:'engage'},again.data.inbox),/changed/);
+ }finally{f.close();}
+});
+test('source edits, expiry and explicit stop invalidate cached proposals without replay',()=>{
+ const f=fixture();try{
+  const e=f.chat('Original'),r=f.p.proposal([]);e.message='Changed';
+  const changed=f.p.proposal([]);assert.notEqual(changed.signature,r.signature);
+  assert.throws(()=>f.p.apply(changed,{signature:r.signature,action:'engage'},f.inbox),/changed/);
+  e.time='2000-01-01T00:00:00Z';assert.equal(f.p.proposal([]),null);
+  const next=f.chat('Later');f.p.proposal([]);f.history.data.participation_pending=[];
+  assert.equal(f.p.proposal([]),null);assert.equal(next.accepted,false);
  }finally{f.close();}
 });

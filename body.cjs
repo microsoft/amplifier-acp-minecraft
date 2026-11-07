@@ -54,8 +54,8 @@ const events=[], inbox=history.data.inbox||(history.data.inbox=[]), receipts=[];
 const routeHuman=conversationRouter(cfg.username,{aliases:cfg.aliases||{}});
 const participation=new Participation(history,cfg);
 const conversation=new Conversation(history,cfg.username);
-const participationProposal=(humanOnly=false)=>{
- const proposal=participation.proposal(Object.keys(bot.players),{humanOnly});
+const participationProposal=(humanOnly=false,sourceId=null)=>{
+ const proposal=participation.proposal(Object.keys(bot.players),{humanOnly,sourceId});
  if(proposal)proposal.delivery=participation.deliveryStatus(proposal,inbox,{lastHumanAt,agentWakeTimes});
  return proposal;
 };
@@ -102,7 +102,7 @@ function hear(username,message,whisper=false,transport=null){
   const e=record('chat',{username,message,whisper,provenance:whisper?'minecraft_whisper':'minecraft_public_chat',source:'human',transport,accepted:!!route&&!semantic});
   lastHumanAt=Date.now();
   record('chat_routing',{username,route:priority?'human_priority_'+route:semantic?'participation_pending':route||'context_only'});
-  if(route&&/\b(stop|pause)\b/i.test(message)){stop();inbox.length=0;history.data.participation_pending=[];history.stop();taskIntake.revokeSources();history.save();record('stopped_by_player',{username});bot.chat('Stopped.');return;}
+  if(route&&/\b(stop|pause)\b/i.test(message)){stop();inbox.length=0;history.data.participation_pending=[];history.data.participation_proposals={};history.stop();taskIntake.revokeSources();history.save();record('stopped_by_player',{username});bot.chat('Stopped.');return;}
   if(semantic){participation.queue(e);return;}
   if(!route)return;
   if(priority||inbox.length<8){inbox.push({id:e.id,username,message,whisper,source:'human'});history.save();}
@@ -432,7 +432,7 @@ const server=http.createServer(async(req,res)=>{
     else if(req.method==='GET'&&['/participation','/participation?human_only=1'].includes(req.url))result=participation.enabled?participationProposal(req.url.endsWith('human_only=1')):null;
     else if(req.method==='POST'&&req.url==='/participation'){
       if(!participation.enabled)throw new ParticipationRejection('disabled');
-      const a=await json(req),proposal=participationProposal(a.human_only===true);
+      const a=await json(req),proposal=participationProposal(a.human_only===true,a.source_id);
       participation.validate(proposal,a);
       const peerCount=proposal?proposal.ids.filter(id=>history.data.events.find(e=>e.id===id)?.source==='agent').length:0;
       agentWakeTimes=agentWakeTimes.filter(t=>t>Date.now()-3600000);
@@ -475,7 +475,7 @@ const server=http.createServer(async(req,res)=>{
     else if(req.method==='POST'&&req.url==='/finish'){const a=await json(req);if(ready)history.checkpoint({position:bot.entity.position.clone(),health:bot.health,recent_actions:receipts.slice(-8)});history.finish(!!a.error||busy,!!a.budget_limited&&!busy);stop();result={stopped:true};}
     else if(req.method==='POST'&&req.url==='/wake'){if(!workAllowed())throw Error('Current mode/task cannot wake construction');const a=await json(req);if(a.generation!==generation||Date.now()<turnUntil)throw Error('Observation superseded or turn already active');result=history.wake(a.task_id);record('attention_wake',{task_id:a.task_id});}
     else if(req.method==='POST'&&req.url==='/resume-reviewed'){const a=await json(req);if(!ready||busy||Date.now()<turnUntil||a.generation!==generation)throw Error('Recovery review superseded or player not idle');result=history.resumeReviewed(a);record('operator_recovery',{task_id:result.id,reason:a.reason});}
-    else if(req.method==='POST'&&req.url==='/stop'){stop();inbox.length=0;history.data.participation_pending=[];history.stop();taskIntake.revokeSources();history.save();result={stopped:true};}
+    else if(req.method==='POST'&&req.url==='/stop'){stop();inbox.length=0;history.data.participation_pending=[];history.data.participation_proposals={};history.stop();taskIntake.revokeSources();history.save();result={stopped:true};}
     else if(req.method==='POST'&&req.url==='/task-source/review'){
       if(!ready||busy||Date.now()<turnUntil)throw Error('Source review requires a verified idle body');
       result=taskIntake.reviewSource(await json(req));record('task_source_reviewed',{source_id:result.source.id,valid_until:result.valid_until});
