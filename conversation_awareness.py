@@ -27,6 +27,7 @@ class Awareness:
             fact=sources([message.get('source_fact')])
             if fact:self.source_revisions[fact[0]['id']]=fact[0]['revision']
         self.limit, self.sent = limit, []
+        self.deferred_revision = None
         self.available = True
         try:
             if self.path.exists() and self.path.stat().st_size > 4 * 1024 * 1024:
@@ -78,9 +79,26 @@ class Awareness:
         included={m['id'] for m in fresh}
         fresh=[m for m in messages if m['id'] in included or m['id'] in changed]
         fresh = fresh[-16:]
+        # Seeing a correction invalidates old final-answer freshness even when
+        # delivery is deferred; it does not acknowledge or consume the source.
+        self.changed_sources.update(changed)
+        # Background steering can interrupt a backend's pending tool approval.
+        # Keep source evidence unconsumed until its observed tools have settled;
+        # the next observation coalesces updates using their original identities.
+        # This is not an atomic backend scheduling guarantee. Stop/effect
+        # enforcement remains in the body, independently of optional awareness.
+        if (fresh and self.available and self.client.supports_awareness()
+                and self.client.active_prompt_id is not None and snapshot.get('turn_active')
+                and (snapshot.get('exposed_revision') != revision or changed)
+                and any(call.get('status') not in ('completed', 'failed')
+                        for call in getattr(self.client, 'tool_calls', {}).values())):
+            if self.deferred_revision != revision:
+                self.observe('awareness_deferred', revision=revision, reason='tool_unsettled')
+                self.deferred_revision = revision
+            return
+        self.deferred_revision = None
         self.cursor = revision
         self.source_revisions.update(facts)
-        self.changed_sources.update(changed)
         if not fresh:
             return
         ids = [message['id'] for message in fresh]

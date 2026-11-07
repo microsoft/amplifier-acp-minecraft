@@ -21,7 +21,6 @@ def update(item):
 def finish():
     global active
     if active is not None and steered and permission:
-        update({'sessionUpdate': 'tool_call_update', 'toolCallId': 'inspect', 'status': 'completed'})
         update({'sessionUpdate': 'agent_message_chunk', 'content': {'type': 'text', 'text': 'Fresh peer evidence received.'}})
         send({'id': active, 'result': {'stopReason': 'end_turn'}})
         active = None
@@ -48,6 +47,7 @@ for line in sys.stdin:
     elif message.get('id') == 'permission':
         assert message['result']['outcome'] == {'outcome': 'selected', 'optionId': 'once'}
         permission = True
+        update({'sessionUpdate': 'tool_call_update', 'toolCallId': 'inspect', 'status': 'completed'})
         finish()
     elif method == '_session/steering':
         meta = message['params']['_meta']['steering']
