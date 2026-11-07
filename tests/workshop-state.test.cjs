@@ -265,3 +265,18 @@ test('explicit stopped-task review cannot bypass stale identity, active work, re
   assert.equal(task.status,'stopped');
  }
 });
+test('settled successful work missing its report gets one truthful reassessment, not a silent permanent block or replay',t=>{
+ const s=fixture(t);s.startTurn();const task=s.begin({request_id:request(s),goal:'Finish the inn'});const before={deadline:task.deadline,max_turns:task.max_turns,turns:task.turns};
+ s.actionStarted('placed');s.actionSettled('placed',true);s.finish();
+ assert.equal(s.task().status,'running');assert.equal(task.progress.at(-1).kind,'missing_report_checkpoint');assert.equal(s.data.last_turn.missing_report,true);
+ for(const k of Object.keys(before))assert.equal(task[k],before[k]);
+ const reloaded=new WorkshopState(s.file);reloaded.startTurn();reloaded.actionStarted('another');reloaded.actionSettled('another',true);reloaded.finish();
+ assert.equal(reloaded.task().status,'blocked','Repeated missing reports must not spin model turns');
+});
+test('missing report never authorizes continuation after uncertain effects, errors, Stop or expiry',t=>{
+ for(const condition of ['uncertain','error','stop','expired']){
+ const s=fixture(t);s.startTurn();s.begin({request_id:request(s),goal:'Inn'});s.actionStarted('effect');s.actionSettled('effect',condition!=='uncertain');
+ if(condition==='stop')s.stop();if(condition==='expired')s.data.task.deadline=1;s.finish(condition==='error');
+ assert.notEqual(s.task().status,'running',condition);
+ }
+});

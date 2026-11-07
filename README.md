@@ -910,3 +910,7 @@ On Windows use `.venv\Scripts\python.exe` and `.venv\Scripts\Activate.ps1`.
 Do not replace an active controller's environment during an update: stage a new
 environment, verify it, then coordinate an idle cutover that preserves saved
 sessions and authority. Installing requirements does not start game work.
+
+Human-priority participation and interruptible ordered plans are described in
+[Human-led play](docs/human-led-play.md). Enable the installation policy explicitly;
+this does not renew existing assignments or change provider limits.

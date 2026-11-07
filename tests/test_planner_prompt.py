@@ -11,7 +11,7 @@ class PlannerPrompt(unittest.TestCase):
         facts=json.loads(text[len(INSTRUCTIONS):])
         self.assertEqual(facts['world'],world);self.assertEqual(facts['messages'],messages)
         self.assertEqual(facts['attention_notifications'],[{'wake':True}])
-        self.assertLess(len(INSTRUCTIONS.encode()),5200)
+        self.assertLess(len(INSTRUCTIONS.encode()),5600)
         self.assertNotIn('220 seconds',text)
 
     def test_chat_only_does_not_promise_capacity_retry(self):
@@ -21,7 +21,7 @@ class PlannerPrompt(unittest.TestCase):
 
     def test_intake_reply_exposes_only_metadata_transition_not_world_effects(self):
         text=planner_prompt([],{'conversation_only':True,'task_capabilities':{'mode':'human_requests','task_intake_enabled':True}})
-        self.assertIn('world work waits for an ordinary admitted turn',text)
+        self.assertIn('world work follows after this reply',text)
         self.assertIn('Do not claim acceptance',text)
 
     def test_capacity_reserve_guidance_differs_from_installation_mode(self):

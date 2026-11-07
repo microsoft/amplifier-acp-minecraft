@@ -38,7 +38,7 @@ class TaskIntake {
    blocked_reason:policy_error?'invalid_task_policy':!enabled&&configured_chat_only?'installation_chat_only':conversation_only?'reply_turn_no_world_effects':null,
    task_revision:task?.authority_revision??0,
    assignment:task?{id:task.id,status:task.status,consumed_turns:task.turns,cumulative_cap:task.max_turns,deadline:task.deadline,remaining_turns:Math.max(0,task.max_turns-task.turns),remaining_ms:Math.max(0,task.deadline-this.now())}:null,
-   capacity:{autonomous_turns_per_hour:30,reply_turns_per_hour:new ConversationAdmission(this.history,this.cfg).limit(),provider_remaining:null,provider_limits:'Enforced independently by the connected host/provider; remaining capacity is not known to this body.'},
+   capacity:{autonomous_turns_per_hour:this.cfg.human_engagement?.enabled===true?null:30,reply_turns_per_hour:new ConversationAdmission(this.history,this.cfg).limit(),human_priority:this.cfg.human_engagement?.enabled===true,provider_remaining:null,provider_limits:'Enforced independently by the connected host/provider; remaining capacity is not known to this body.'},
    reviewed_requests:(this.history.data.reviewed_task_sources||[]).filter(x=>x.valid_until>this.now()&&!this.used(x.source.id)&&Date.parse(x.source.time)>(this.history.data.task_source_cutoff||0)).map(x=>({id:x.source.id,username:x.source.username,message:x.source.message,valid_until:x.valid_until})),
    capacity_note:'Reply admission and autonomous hourly/provider capacity are separate. Task acceptance is not a planner-turn reservation.'};
  }

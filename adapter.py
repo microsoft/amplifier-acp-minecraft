@@ -123,7 +123,9 @@ async def capacity_gate(calls,state,request,observe,waiting,*,now=None,sleep=asy
 
 
 async def human_reply_messages(request,connect,attention):
-    """A bounded human-only resource lane; engage/hold still belongs to Instance."""
+    """Human-only input lane; source/ticket integrity survives unmetered replies."""
+    def available(admission):
+        return admission.get('version')==1 and (admission.get('unmetered') is True or (admission.get('remaining') or 0)>0)
     def select(messages,admission):
         eligible=set(admission.get('eligible_ids',[]))
         selected=[m for m in messages if m.get('id') in eligible and m.get('source')=='human']
@@ -137,13 +139,13 @@ async def human_reply_messages(request,connect,attention):
                 (m.get('username') if m.get('whisper') else None)==audience][:8]
 
     admission=await request('/conversation/admission')
-    if admission.get('version')!=1 or admission.get('remaining',0)<=0:return []
+    if not available(admission):return []
     selected=select(await request('/inbox/peek'),admission)
     if not selected and attention and await request('/participation?human_only=1'):
         client=await connect()
         await attention.consider(request,client,human_only=True)
         admission=await request('/conversation/admission')
-        if admission.get('version')!=1 or admission.get('remaining',0)<=0:return []
+        if not available(admission):return []
         selected=select(await request('/inbox/peek'),admission)
     return selected
 
@@ -268,7 +270,10 @@ async def run(home):
             if not work_allowed and not conversation_only:
                 await asyncio.sleep(2);continue
             if not conversation_only:
-                if not await capacity_gate(calls,state,request,observe,budget_waiting,while_waiting=observe_capacity_wait,notice_path=notice_path):continue
+                # Explicit installation policy removes connector pacing, not
+                # task authority or host/provider limits. Calls remain counted.
+                if (cfg.get('human_engagement') or {}).get('enabled') is not True:
+                    if not await capacity_gate(calls,state,request,observe,budget_waiting,while_waiting=observe_capacity_wait,notice_path=notice_path):continue
                 messages=await request('/inbox/peek')
             if not messages and conversation_attention and await request('/participation'):
                 await connect()
@@ -279,7 +284,7 @@ async def run(home):
                 if (state.get('task') or {}).get('status')!='running':
                     await asyncio.sleep(1);continue
                 messages=[{'source':'continuation','message':'Continue the accepted game task. Inspect current world state and progress before acting.'}]
-                await asyncio.sleep(3)
+                await asyncio.sleep(0 if (cfg.get('human_engagement') or {}).get('enabled') is True else 3)
                 newer=await request('/inbox/peek')
                 if newer:messages=newer
             await connect()

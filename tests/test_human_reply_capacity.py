@@ -138,3 +138,12 @@ class HumanReplyCapacity(unittest.IsolatedAsyncioTestCase):
    with patch.object(adapter,'control',control),patch.object(adapter,'Client',side_effect=AssertionError('No planner needed')),patch.object(adapter.asyncio,'sleep',stop_after_idle):
     with self.assertRaises(asyncio.CancelledError):await adapter.run(home)
   self.assertNotIn('/continuation',seen);self.assertNotIn('/turn',seen);self.assertNotIn('/watch-context',seen)
+
+ async def test_unmetered_human_lane_preserves_source_binding_without_quota(self):
+  async def request(path,payload=None):
+   if path=='/conversation/admission':return {'version':1,'unmetered':True,'remaining':None,'eligible_ids':['human']}
+   if path=='/inbox/peek':return [{'id':'human','source':'human'},{'id':'peer','source':'agent'}]
+   raise AssertionError(path)
+  async def connect():self.fail('Already queued human source needs no connection')
+  result=await adapter.human_reply_messages(request,connect,None)
+  self.assertEqual([m['id'] for m in result],['human'])
