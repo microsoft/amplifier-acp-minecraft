@@ -32,6 +32,13 @@ class ContextRegistrationTests(unittest.TestCase):
         old=registration(self.cfg(),[])['provider']
         with self.assertRaises(ValueError):registration(self.cfg(),[old,old])
 
+    def test_invalid_or_reserved_metadata_refused_before_writes(self):
+        for delta in ({'context_provider_id':'bad/id'}, {'context_secret_ref':'control-token'},
+                      {'context_secret_ref':'bad.secret'}, {'world_label':'x'*201}):
+            with self.assertRaises(ValueError):registration({**self.cfg(),**delta},[])
+        with self.assertRaises(ValueError):
+            registration(self.cfg(),[{'id':str(i),'url':'http://127.0.0.1:1','secret_ref':'s'+str(i)} for i in range(16)])
+
 class RegistrationCommandTests(unittest.TestCase):
     def test_no_start_staging_makes_no_instance_or_network_calls_and_keeps_secrets(self):
         import tempfile,json
