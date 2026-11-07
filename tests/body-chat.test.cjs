@@ -327,3 +327,23 @@ test('actual body applies a human exhausted reduction and rejects the next work 
   await f.request('/finish',{});await f.request('/turn',{continuation:true,renewable_lease:true,message_ids:[]},400);assert.equal((await f.request('/status')).action_lease.lease_id,null);assert.equal(f.history.task().turns,1);
  }finally{f.close();}
 });
+
+test('verified addressed human bypasses optional attention budget; other-agent speech remains context',async()=>{
+ const f=fixture('BuilderOne',true,{human_engagement:{enabled:true}});try{
+  const uuid='00000000-0000-0000-0000-000000000123';f.bot.players.Visitor={uuid};
+  const say=text=>{const raw={};f.bot.emit('message',raw,'chat',uuid,false);f.bot.emit('chat','Visitor',text,null,raw);};
+  say('BuilderOne, can you answer me?');assert.equal(f.inbox.length,1);assert.equal(f.inbox[0].source,'human');
+  assert.equal(f.history.data.events.filter(e=>e.kind==='chat').at(-1).accepted,true);
+  assert.equal(f.history.data.participation_pending?.length||0,0);
+  say('BuilderTwo, please look here.');assert.equal(f.inbox.length,1);assert.equal(f.history.data.participation_pending.length,1);
+  assert.equal(f.history.data.task.status,'budget_exhausted');
+ }finally{f.close();}
+});
+test('human priority retains a burst beyond one turn batch without dropping or promoting peers',async()=>{
+ const f=fixture('BuilderOne',true,{human_engagement:{enabled:true}});try{
+  const uuid='00000000-0000-0000-0000-000000000123';f.bot.players.Visitor={uuid};
+  for(let i=0;i<12;i++){const raw={};f.bot.emit('message',raw,'chat',uuid,false);f.bot.emit('chat','Visitor','BuilderOne, message '+i,null,raw);}
+  assert.equal(f.inbox.length,12);assert.equal((await f.request('/inbox/peek')).length,8);
+  assert.equal(new Set(f.inbox.map(m=>m.id)).size,12);
+ }finally{f.close();}
+});

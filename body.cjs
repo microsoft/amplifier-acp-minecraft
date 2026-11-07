@@ -36,6 +36,9 @@ const {TaskIntake,INTAKE_TOOLS}=require('./task-intake.cjs');
 const chatProvenance=new (require('./chat-provenance.cjs').ChatProvenance)();
 const history=new WorkshopState(path.join(path.dirname(process.argv[2]),'workshop.json'),{maxTurns:cfg.task_max_turns||12,maxSeconds:cfg.task_max_seconds||2400});
 const taskIntake=new TaskIntake(history,cfg);
+const {ActionSequence,SEQUENCE_TOOLS}=require('./action-sequence.cjs');
+const actionSequence=new ActionSequence(history);
+const humanActivity=new (require('./human-activity.cjs').HumanActivity)([cfg.username,...(cfg.bot_names||[])]);
 const workAllowed=()=>taskIntake.capabilities().autonomous_work_allowed;
 const bot = mineflayer.createBot({host:cfg.host || '127.0.0.1',port:cfg.port || 25565,
   username:cfg.username,version,auth:cfg.auth || 'offline',hideErrors:true,
@@ -63,7 +66,7 @@ const screenshots=cfg.screenshots?.enabled?new (require('./screenshots.cjs').Scr
  browserPath:cfg.screenshots.browser_path,world:cfg.world_label||'Minecraft',isReady:()=>ready,
  onSaved:info=>record('screenshot_saved',{capture_id:info.id,path:info.path,sha256:info.sha256,bytes:info.bytes,camera:info.camera})}):null;
 function cancelAction(){ generation++;bot.pathfinder.setGoal(null);bot.clearControlStates();try{bot.stopDigging();}catch{} }
-function stop(){ clearTimeout(leaseTimer);lease.clear();turnUntil=0;cancelAction(); }
+function stop(){ actionSequence.cancel('action_authority_closed');clearTimeout(leaseTimer);lease.clear();turnUntil=0;cancelAction(); }
 function scheduleLease(){
  clearTimeout(leaseTimer);turnUntil=lease.until;
  const id=lease.id;
@@ -94,19 +97,22 @@ function hear(username,message,whisper=false,transport=null){
     else if(accepted){agentWakeTimes.push(Date.now());inbox.push({id:e.id,username,message,source:'agent'});history.save();}
     return;
   }
-  const semantic=participation.enabled&&!whisper;
+  const priority=cfg.human_engagement?.enabled===true&&!!route&&transport?.kind==='server_player_uuid'&&transport.username===username&&!!transport.uuid;
+  const semantic=participation.enabled&&!whisper&&!priority;
   const e=record('chat',{username,message,whisper,provenance:whisper?'minecraft_whisper':'minecraft_public_chat',source:'human',transport,accepted:!!route&&!semantic});
   lastHumanAt=Date.now();
-  record('chat_routing',{username,route:semantic?'participation_pending':route||'context_only'});
+  record('chat_routing',{username,route:priority?'human_priority_'+route:semantic?'participation_pending':route||'context_only'});
   if(route&&/\b(stop|pause)\b/i.test(message)){stop();inbox.length=0;history.data.participation_pending=[];history.stop();taskIntake.revokeSources();history.save();record('stopped_by_player',{username});bot.chat('Stopped.');return;}
   if(semantic){participation.queue(e);return;}
   if(!route)return;
-  if(inbox.length<8){inbox.push({id:e.id,username,message,whisper,source:'human'});history.save();}
+  if(priority||inbox.length<8){inbox.push({id:e.id,username,message,whisper,source:'human'});history.save();}
 }
 bot.on('message',(m,position,sender,verified)=>chatProvenance.observe(m,position,sender,verified,bot.players));
 bot.on('chat',(u,m,_translation,json)=>hear(u,m,false,chatProvenance.get(u,json)));bot.on('whisper',(u,m,_translation,json)=>hear(u,m,true,chatProvenance.get(u,json)));
+bot.on('entityMoved',()=>humanActivity.sample(bot.players));
 function snapshot(){
   if(!ready)return {username:cfg.username,ready:false,events:events.slice(-15)};
+  humanActivity.sample(bot.players);
   const p=bot.entity.position;
   const blocks=bot.findBlocks({matching:b=>b.name!=='air'&&b.name!=='water'&&b.name!=='grass_block'&&b.name!=='dirt'&&b.name!=='stone',maxDistance:16,count:50});
   return {username:bot.username,ready,busy,generation,turn_active:Date.now()<turnUntil,pending_messages:inbox.length,incoming_chat_only:cfg.incoming_chat_only===true,conversation_only:history.data.turn?.conversation_only===true,task_capabilities:taskIntake.capabilities(),position:p,health:bot.health,food:bot.food,time:bot.time.timeOfDay,
@@ -114,7 +120,7 @@ function snapshot(){
     terrain:spatial.localMap(bot,3),
     players:Object.values(bot.players).map(p=>({name:p.username,position:p.entity?.position})),
     nearby_blocks:blocks.map(p=>({name:bot.blockAt(p)?.name,position:p})),
-    conversation:conversation.snapshot(),
+    conversation:conversation.snapshot(),human_activity:humanActivity.snapshot(),action_sequence:actionSequence.status(),
     public_chat:history.data.events.filter(isPublicChatEvent).slice(-20),
     events:history.data.events.filter(e=>!e.whisper).slice(-35),task:history.task(),receipts:receipts.slice(-15),remaining_actions:Math.max(0,24-actions),action_lease:lease.view(history.task())};
 }
@@ -138,7 +144,7 @@ function speak(text){
  // This transport receipt is not proof of delivery to every player.
  record('chat_sent',result);return result;
 }
-async function operate(name,a={}){
+async function operate(name,a={},sequenceId=null){
   if(!ready)throw Error('Player is not connected');
   if(name==='task_capabilities')return taskIntake.capabilities();
   if(INTAKE_TOOLS.has(name)){
@@ -166,7 +172,20 @@ async function operate(name,a={}){
       next:'Wait for the original action to settle, then inspect your position. Arrival is not confirmed; no action is replayed.'};
   }
   if(Date.now()>=turnUntil)throw Error('No active action lease; inspect current task authority. Do not replay prior actions.');
+  if(name==='cancel_sequence')return actionSequence.cancel();
+  if(actionSequence.active&&sequenceId!==actionSequence.active.id)throw Error('An action sequence is running; observe, steer or cancel it before another action');
   if(busy)throw Error('Another action is running; wait for its result');
+  if(name==='action_sequence'){
+    const turn=history.data.turn,epoch=generation;
+    const humanRevision=()=>history.data.events.filter(e=>e.kind==='chat'&&e.source==='human'&&e.transport?.kind==='server_player_uuid').at(-1)?.id||null;
+    const originalHuman=humanRevision();
+    // Validate every step before any effects, even through the local API.
+    const steps=a.steps.map(step=>{if(!SEQUENCE_TOOLS.includes(step.tool))throw Error('Tool is not allowed in a sequence');return {tool:step.tool,arguments:z.object(definitions[step.tool][1]).strict().parse(step.arguments)};});
+    return actionSequence.run({plan_id:a.plan_id,steps},{guard:()=>{
+      if(history.data.turn!==turn||generation!==epoch||Date.now()>=turnUntil||!workAllowed())throw Error('Sequence authority changed; inspect without replay');
+      if(humanRevision()!==originalHuman)throw Error('New human input: reconsider the remaining plan');
+    },execute:(step,id)=>operate(step.tool,step.arguments,id)});
+  }
   if(name==='work_note'){const result=history.note(a,{position:bot.entity.position.clone(),health:bot.health,recent_actions:receipts.slice(-8)});record('work_status',{task_id:result.id,status:result.status,progress:result.progress.at(-1)});return taskView(result);}
   if(name==='attention_watch'||name==='attention_watches'||name==='attention_cancel'){
     const action=name==='attention_watch'?{operation:'arm',spec:a}:name==='attention_cancel'?{operation:'cancel',id:a.id}:{operation:'list'};
@@ -357,6 +376,8 @@ const definitions={
   cancel_movement:['Cancel only the current move/follow route; keep the existing task and turn allowance. Wait for that action to settle and inspect position before choosing another route. Does not cancel crafting, transfers or construction; no replay or budget renewal.',{}],
   stop:['Stop movement AND end the entire current work task. Use cancel_movement to abandon a route without ending the assignment. Always stop the whole task when a human asks to stop.',{}]
 };
+definitions.cancel_sequence=['Stop pending steps in the current plan. The current operation must still settle; inspect before choosing a new plan. Does not stop the task or replay anything.',{}];
+definitions.action_sequence=['Execute an explicit ordered plan without a model round trip between steps. Each step uses its normal live checks. Stops on new human input, changed authority, cancellation, errors or partial results. Use a unique plan_id; retrying the same ID only reads its receipt, never replays. No arbitrary scripts. You may observe or cancel while it runs. Inspect results before further plans.',{plan_id:z.string().min(1).max(100),steps:z.array(z.discriminatedUnion('tool',SEQUENCE_TOOLS.map(tool=>z.object({tool:z.literal(tool),arguments:z.object(definitions[tool][1]).strict()}).strict()))).min(1).max(16)}];
 function mcpServer(){
   const m=new McpServer({name:'minecraft-player',version:'0.1.0'});
   require('./screenshots.cjs').registerTools(m,screenshots);
@@ -406,7 +427,7 @@ const server=http.createServer(async(req,res)=>{
       }else result={action:'hold'};
     }
     else if(req.method==='GET'&&req.url==='/status')result={ready,busy,turn_active:Date.now()<turnUntil,incoming_chat_only:cfg.incoming_chat_only===true,conversation_only:history.data.turn?.conversation_only===true,task_intake_enabled:taskIntake.capabilities().task_intake_enabled,task_capabilities:taskIntake.capabilities(),task:history.task(),action_lease:lease.view(history.task())};
-    else if(req.method==='GET'&&req.url==='/inbox/peek')result=inbox.slice(0,8);
+    else if(req.method==='GET'&&req.url==='/inbox/peek')result=(cfg.human_engagement?.enabled===true&&inbox.some(m=>m.source==='human'&&!m.attention_offer)?inbox.filter(m=>m.source==='human'&&!m.attention_offer):inbox).slice(0,8);
     else if(req.method==='GET'&&req.url==='/conversation/admission')result=replyAdmission.status(inbox);
     else if(req.method==='GET'&&['/participation','/participation?human_only=1'].includes(req.url))result=participation.enabled?participationProposal(req.url.endsWith('human_only=1')):null;
     else if(req.method==='POST'&&req.url==='/participation'){

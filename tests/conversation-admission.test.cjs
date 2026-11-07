@@ -38,3 +38,9 @@ test('body reservation refuses a partial attention ticket even if controller sel
  assert.equal(h.data.turn,null);assert.equal(h.data.inbox.length,2);
  assert.throws(()=>f.admit.start([human,peer],h.data.inbox),/No fresh/);
 });
+test('human-priority policy removes only reply quota, retaining source deduplication and peer exclusion',t=>{
+ const f=fixture(t),h=f.history;f.admit.cfg.human_engagement={enabled:true};f.admit.cfg.human_reply_turns_per_hour=0;
+ for(let i=0;i<70;i++){const id=f.add();assert.equal(f.admit.status(h.data.inbox).remaining,null);assert.equal(f.admit.status(h.data.inbox).unmetered,true);f.admit.start([id],h.data.inbox);h.finish();assert.throws(()=>f.admit.start([id],[{id,source:'human'}]),/No fresh/);}
+ assert.throws(()=>f.admit.start([f.add('agent')],h.data.inbox),/No fresh/);
+ assert.equal(h.data.conversation_admissions.length,70);
+});

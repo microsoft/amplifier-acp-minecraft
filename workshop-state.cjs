@@ -131,7 +131,19 @@ class WorkshopState {
     this.appendProgress(task,{at:new Date().toISOString(),kind:'controller_checkpoint',summary:'The model reached a turn limit after its reported tool calls settled. Inspect current observations and receipts before continuing the existing responsibility.'});
     if(task.turns>=task.max_turns)task.status='budget_exhausted';
    }
-   else if(turn?.task_id===task.id&&turn.progress_revision===(task.progress_revision||0))task.status='blocked';
+   else if(turn?.task_id===task.id&&turn.progress_revision===(task.progress_revision||0)){
+    const succeeded=Array.isArray(turn.actions)&&turn.actions.length>0&&turn.actions.every(a=>a.status==='succeeded');
+    const prior=this.data.last_turn;
+    // A successful terminal with settled effects can omit work_report. Save
+    // a truthful checkpoint and allow one reassessment; never replay effects,
+    // infer completion, or spin indefinitely on missing reports/no-op tools.
+    const alreadyMissing=prior?.task_id===task.id&&prior.missing_report===true;
+    if(succeeded&&!alreadyMissing){
+     this.appendProgress(task,{at:new Date().toISOString(),kind:'missing_report_checkpoint',summary:'The planner ended without a progress report after all recorded actions settled successfully. Inspect current state and receipts, report the actual remaining work or blocker, and do not replay these actions.'});
+     turn.missing_report=true;
+    }else task.status='blocked';
+    if(task.turns>=task.max_turns)task.status='budget_exhausted';
+   }
    else if(task.turns>=task.max_turns)task.status='budget_exhausted';
   }
   if(turn)this.data.last_turn={...turn,interrupted:!!error};

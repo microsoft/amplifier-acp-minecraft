@@ -93,3 +93,22 @@ test('incoming-chat-only configuration cannot continue a valid stored task or op
   assert.equal(JSON.stringify(f.history.data.task),before);
  }finally{f.close();}
 });
+
+test('actual body sequence validates steps, executes ordinary guarded actions, and pauses for fresh human input',async()=>{
+ for(const steer of [false,true]){
+ const f=fixture();try{
+  const {Vec3}=realRequire('vec3');f.bot.entity.position=new Vec3(0,64,0);let effects=0;const opened=new Set();
+  f.bot.blockAt=p=>({name:'oak_door',position:p,getProperties:()=>({open:opened.has(p.x)})});
+  f.bot.activateBlock=async block=>{effects++;opened.add(block.position.x);if(steer)f.history.record({kind:'chat',source:'human',username:'Visitor',message:'Wait, check the other side',transport:{kind:'server_player_uuid',username:'Visitor',uuid:'human'},time:new Date().toISOString()});};
+  await f.request('/turn',{renewable_lease:true,continuation:true});
+  const args={plan_id:'door-plan',steps:[{tool:'set_open',arguments:{x:1,y:64,z:0,open:true}},{tool:'set_open',arguments:{x:2,y:64,z:0,open:true}}]};
+  const pending=f.request('/action',{name:'action_sequence',arguments:args});
+  for(let i=0;i<8;i++){await new Promise(setImmediate);f.advance(350);}
+  const r=await pending;
+  assert.equal(r.status,steer?'paused':'completed');assert.equal(effects,steer?1:2);
+  const duplicate=await f.request('/action',{name:'action_sequence',arguments:args});assert.equal(duplicate.duplicate,true);assert.equal(effects,steer?1:2);
+  const invalid=await f.request('/action',{name:'action_sequence',arguments:{plan_id:'bad',steps:[args.steps[0],{tool:'task_amend',arguments:{}}]}},400);
+  assert.ok(invalid.error);assert.equal(effects,steer?1:2);
+ }finally{f.close();}
+ }
+});
