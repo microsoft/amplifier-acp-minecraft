@@ -34,12 +34,13 @@ const { z } = require('zod');
 const { addressed, conversationRouter, peerIntent } = require('./routing.cjs');
 const cfg = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
 const version=cfg.version||'1.21.1';
+const taskHelperCommand=cfg.task_helpers?.command||cfg.decision_attention?.command;
 const {TaskIntake,INTAKE_TOOLS}=require('./task-intake.cjs');
 const chatProvenance=new (require('./chat-provenance.cjs').ChatProvenance)();
 const history=new WorkshopState(path.join(path.dirname(process.argv[2]),'workshop.json'),{maxTurns:cfg.task_max_turns||12,maxSeconds:cfg.task_max_seconds||2400});
-const taskIntake=new TaskIntake(history,cfg,{completionSupported:()=>helperCapabilities.ready(cfg.decision_attention?.command)});
+const taskIntake=new TaskIntake(history,cfg,{completionSupported:()=>helperCapabilities.ready(taskHelperCommand)});
 // Static discovery makes no home/session/model request. Missing support keeps new completion-bound intake closed.
-helperCapabilities.discover(cfg.decision_attention?.command);
+helperCapabilities.discover(taskHelperCommand);
 const {ActionSequence,SEQUENCE_TOOLS}=require('./action-sequence.cjs');
 const actionSequence=new ActionSequence(history);
 const activityParticipation=new (require('./activity-participation.cjs').ActivityParticipation)(history,cfg);
@@ -136,8 +137,8 @@ function watchContext(){
   players:ready?Object.values(bot.players).map(p=>({name:p.username,position:p.entity?.position})):[]});
 }
 async function watchOperation(action){
- if(!cfg.agent_watches||!cfg.decision_attention?.command)throw Error('Agent-authored watches are not enabled');
- return watchBridge.invoke(cfg.decision_attention.command,path.dirname(process.argv[2]),{...watchContext(),action});
+ if(!cfg.agent_watches||!taskHelperCommand)throw Error('Agent-authored watches are not enabled');
+ return watchBridge.invoke(taskHelperCommand,path.dirname(process.argv[2]),{...watchContext(),action});
 }
 function coord(a){const p=new Vec3(a.x,a.y,a.z);if(![p.x,p.y,p.z].every(Number.isInteger)||p.y< -64||p.y>319||p.distanceTo(bot.entity.position)>64)throw Error('Coordinates must be whole blocks within 64 blocks of this player');return p;}
 function actionsRemaining(){return cfg.human_engagement?.enabled===true?null:Math.max(0,24-actions);}
@@ -159,9 +160,9 @@ function speech(name,a){
 async function operate(name,a={},sequenceId=null){
   if(!ready)throw Error('Player is not connected');
   if(name==='sequence_status')return actionSequence.wait(a.plan_id,a.wait_ms||0);
-  if(name==='task_capabilities'){await helperCapabilities.discover(cfg.decision_attention?.command);return taskIntake.capabilities();}
+  if(name==='task_capabilities'){await helperCapabilities.discover(taskHelperCommand);return taskIntake.capabilities();}
   if(INTAKE_TOOLS.has(name)){
-    await helperCapabilities.discover(cfg.decision_attention?.command);
+    await helperCapabilities.discover(taskHelperCommand);
     if(history.data.turn?.ambient_activity||!taskIntake.capabilities().task_intake_enabled||!history.data.turn?.conversation_only||Date.now()>=turnUntil||busy)throw Error('Task intake requires a current idle human reply turn and enabled installation policy');
     const result=name==='task_accept'?taskIntake.accept(a):name==='task_accept_help'?taskIntake.acceptHelp(a):taskIntake.amend(a);
     record('task_authorization',{operation:name,...result});return result;
@@ -446,9 +447,9 @@ const server=http.createServer(async(req,res)=>{
       const a=await json(req);if(a.generation!==generation||busy||Date.now()<turnUntil)throw Error('Continuation observation changed');
       if(!workAllowed())result={action:'hold',reason:!taskIntake.enabled()&&cfg.incoming_chat_only===true?'incoming_chat_only':'task_authority_unavailable'};
       else if(history.budgetCheckpoint()){record('budget_checkpoint',{task_id:history.task().id});result={action:'checkpoint'};}
-      else if(cfg.automatic_recovery&&cfg.decision_attention?.command&&history.task()?.status==='needs_review'&&ready){
+      else if(cfg.automatic_recovery&&taskHelperCommand&&history.task()?.status==='needs_review'&&ready){
         const epoch=generation,taskId=history.task().id;
-        result=await watchBridge.invoke(cfg.decision_attention.command,path.dirname(process.argv[2]),{...history.recoveryFacts(),idle:true,observation_current:true},'continuation');
+        result=await watchBridge.invoke(taskHelperCommand,path.dirname(process.argv[2]),{...history.recoveryFacts(),idle:true,observation_current:true},'continuation');
         if(result.action==='inspect_then_continue'){
           if(epoch!==generation||busy||Date.now()<turnUntil||history.task()?.id!==taskId)throw Error('Recovery superseded');
           const task=history.reconcile({position:bot.entity.position.clone(),health:bot.health});record('receipt_reconciliation',{task_id:task.id,attempt:task.recovery_attempts});

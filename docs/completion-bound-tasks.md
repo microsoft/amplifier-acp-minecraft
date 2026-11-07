@@ -9,7 +9,8 @@ source evidence, durable acceptance and a later work turn; acceptance itself has
 no world effects.
 
 Before completion-bound intake, the body discovers the configured local
-`decision_attention.command` with `helper-capabilities`, without a home, provider,
+`task_helpers.command` (falling back to an existing `decision_attention.command`)
+with `helper-capabilities`, without a home, provider,
 session or model call. It requires schema version 1 and **both** helpers:
 
 - `watch`: version 2, command `watch-v2`, bound kinds `finite` and
@@ -24,6 +25,9 @@ local binary's filesystem identity and rechecked when task tools are used. A
 changed binary cannot retain the old capability result. Existing finite tasks
 continue using the legacy commands and exact numeric projection. Ordinary ACP
 engines can use the same domain tools with a separately configured local helper.
+`task_helpers.command` does not enable decision-model attention, automatic recovery,
+or authored watches. Those independent policies retain their existing settings;
+semantic watch evaluation still needs its separately authorized decision provider.
 
 New completion-bound records have `bounds.version: 1`, `bounds.deadline_ms` and
 `bounds.max_turns`. Each is explicitly `{ "kind": "finite", "value": N }` or

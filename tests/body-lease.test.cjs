@@ -173,7 +173,7 @@ test('actual body accepts completion-bound work only after local helper discover
  const dir=fs.mkdtempSync(path.join(os.tmpdir(),'body-helper-capabilities-')),command=path.join(dir,'runtime');
  const capabilities={schema_version:1,helpers:{watch:{version:2,command:'watch-v2',bound_kinds:['finite','no_configured_bound'],watch_ttl_seconds:{minimum:30,maximum:1800}},continuation:{version:2,command:'continuation-v2',bound_kinds:['finite','no_configured_bound']}}};
  fs.writeFileSync(command,`#!/usr/bin/env node\nif(process.argv.slice(2).join(' ')!=='helper-capabilities')process.exit(1);process.stdout.write(${JSON.stringify(JSON.stringify(capabilities))});`,{mode:0o700});
- const f=fixture({incoming_chat_only:true,decision_attention:{command},human_engagement:{enabled:true},human_task_intake:{enabled:true,default_bound_mode:'completion_bound'}});
+ const f=fixture({incoming_chat_only:true,task_helpers:{command},human_engagement:{enabled:true},human_task_intake:{enabled:true,default_bound_mode:'completion_bound'}});
  try{
   await realRequire('./helper-capabilities.cjs').discover(command);f.history.data.task.status='budget_exhausted';const old=structuredClone(f.history.data.task);
   function human(message){const e=f.history.record({kind:'chat',time:new Date().toISOString(),source:'human',username:'Visitor',message,accepted:true,provenance:'minecraft_public_chat',transport:{kind:'server_player_uuid',username:'Visitor',uuid:'human-uuid'}});f.history.data.inbox.push({id:e.id,source:'human',username:'Visitor',message});f.history.save();return e;}
