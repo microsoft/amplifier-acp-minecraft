@@ -184,3 +184,15 @@ test('source edits, expiry and explicit stop invalidate cached proposals without
   assert.equal(f.p.proposal([]),null);assert.equal(next.accepted,false);
  }finally{f.close();}
 });
+test('human-led peer delivery keeps backpressure pending across reload without another local quota',()=>{
+ const f=fixture();try{
+  f.p.cfg.human_engagement={enabled:true};const now=Date.now();
+  const e=f.history.record({kind:'chat',source:'agent',username:'Lead',message:'Your materials are ready',provenance:'minecraft_public_chat',whisper:false,time:new Date(now).toISOString()});
+  f.p.queue(e);const p=f.p.proposal([]),task=JSON.stringify(f.history.task());
+  assert.deepEqual(f.p.deliveryStatus(p,Array(8).fill({}),{lastHumanAt:0,agentWakeTimes:Array(60).fill(now)},now),{eligible:false,reason_code:'inbox_full'});
+  const h=new WorkshopState(f.history.file),again=new Participation(h,f.p.cfg),pending=again.proposal([]);
+  assert.equal(pending.signature,p.signature);assert.equal(pending.occurred_at,Date.parse(e.time));
+  assert.deepEqual(again.deliveryStatus(pending,[],{lastHumanAt:0,agentWakeTimes:Array(60).fill(now)},now),{eligible:true});
+  again.apply(pending,{signature:pending.signature,action:'hold'},[]);assert.equal(again.proposal([]),null);assert.equal(JSON.stringify(h.task()),task);
+ }finally{f.close();}
+});

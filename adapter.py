@@ -282,8 +282,8 @@ async def run(home):
                 eligible=set(admission.get('eligible_ids',[]))
                 messages=[m for m in await request('/inbox/peek') if m.get('source')=='activity' and m.get('id') in eligible][:1]
                 conversation_only=bool(messages)
-            if not messages and (cfg.get('human_task_intake',{}).get('delegation') or {}).get('enabled') is True:
-                # Peer proposals remain ambient, never the unmetered human lane.
+            if not messages and ((cfg.get('human_task_intake',{}).get('delegation') or {}).get('enabled') is True or ((cfg.get('human_engagement') or {}).get('enabled') is True and cfg.get('agent_dialogue') is True)):
+                # Peer delivery remains ambient at the host and grants no task authority.
                 if conversation_attention and await request('/participation'):
                     await conversation_attention.consider(request,await connect())
                 admission=await request('/conversation/admission')

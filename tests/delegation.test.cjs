@@ -45,3 +45,19 @@ test('peer proposal replies retain their own bound and cannot consume the unmete
 test('saving helper admission failure does not leave a live assignment in memory',t=>{
  const f=fixture(t);f.start();f.h.save=()=>{throw Error('disk failed');};assert.throws(()=>f.intake.acceptHelp(f.args),/disk failed/);assert.equal(f.h.data.task,null);assert.equal(f.h.data.accepted_delegation_sources,undefined);
 });
+test('host-engaged peer report can be answered after human source ages out, without helper authority',t=>{
+ const f=fixture(t);f.cfg.agent_dialogue=true;f.advance(700000);
+ const e=f.event('agent','Lead','The timber is in the marked chest',{intent:'update'});
+ const message={id:e.id,source:'agent',username:'Lead',message:e.message,attention_offer:{id:'offered',ticket:'unchanged-ticket'}};
+ f.h.data.inbox=[message];f.h.data.conversation_admissions=Array.from({length:20},(_,i)=>({at:Date.now(),ids:['old'+i],kind:'peer_proposal'}));
+ assert.equal(f.admit.eligible(message),true);
+ f.admit.start([e.id],f.h.data.inbox);assert.equal(f.h.data.turn.conversation_only,true);assert.equal(f.h.data.turn.may_mutate,false);
+ assert.throws(()=>f.intake.acceptHelp({...f.args,peer_request_id:e.id}));assert.equal(f.h.task(),null);
+ f.h.finish();const restored=new WorkshopState(f.h.file);assert.equal(new ConversationAdmission(restored,f.cfg).eligible(message),false);
+});
+test('peer conversation still requires attributed current accepted evidence and explicit dialogue policy',t=>{
+ for(const mutate of [f=>f.cfg.agent_dialogue=false,f=>f.peer.transport=null,f=>f.peer.accepted=false,f=>f.peer.username='Unknown',f=>f.peer.time='2000-01-01T00:00:00Z']){
+  const f=fixture(t);f.cfg.agent_dialogue=true;f.cfg.human_task_intake.delegation.enabled=false;mutate(f);
+  assert.equal(f.admit.eligible(f.message),false);assert.equal(f.h.task(),null);
+ }
+});

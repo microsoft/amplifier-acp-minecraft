@@ -97,12 +97,15 @@ function hear(username,message,whisper=false,transport=null){
   const route=agent?null:routeHuman({username,message,whisper,participants:Object.keys(bot.players).concat(cfg.bot_names||[])});
   if(agent){
     // Named requests can cross between independent agents through game chat.
-    // Never wake on general bot chatter; bound exchanges after human activity.
+    // Host attention owns public engage/hold. Legacy direct fallback keeps its
+    // configured bounds; human-led play does not add another peer quota.
     const direct=addressed(message,bot.username,false);
     const intent=peerIntent(message,bot.username);
     agentWakeTimes=agentWakeTimes.filter(t=>t>Date.now()-3600000);
-    const eligible=!!(cfg.agent_dialogue && ((participation.enabled&&!whisper)||intent==='request') && Date.now()-lastHumanAt<(cfg.agent_dialogue_window_seconds||2400)*1000 && agentWakeTimes.length<Math.min(60,Math.max(1,cfg.peer_wakes_per_hour||4)) && inbox.length<8);
-    const accepted=eligible&&direct&&(!participation.enabled||whisper);
+    const humanLed=cfg.human_engagement?.enabled===true;
+    const withinLegacyBounds=Date.now()-lastHumanAt<(cfg.agent_dialogue_window_seconds||2400)*1000 && agentWakeTimes.length<Math.min(60,Math.max(1,cfg.peer_wakes_per_hour||4));
+    const eligible=!!(cfg.agent_dialogue && ((participation.enabled&&!whisper)||intent==='request') && (humanLed||withinLegacyBounds));
+    const accepted=eligible&&direct&&(!participation.enabled||whisper)&&inbox.length<8;
     const e=record('chat',{username,message,whisper,provenance:whisper?'minecraft_whisper':'minecraft_public_chat',source:'agent',intent,accepted,transport});
     record('chat_routing',{username,route:direct&&intent!=='request'?'peer_'+intent:accepted?'peer_direct':direct?'peer_budget_or_window':'context_only'});
     if(participation.enabled&&eligible&&!whisper){participation.queue(e);}

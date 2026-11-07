@@ -10,4 +10,12 @@ function peer(history,cfg,message,now){
  const e=history.data.events.find(e=>e.id===message.id);
  return enabled(cfg)&&message.source==='agent'&&e?.source==='agent'&&e.accepted===true&&e.intent==='request'&&publicSource(e,now,history.data.task_source_cutoff||0)&&(cfg.bot_names||[]).some(n=>n.toLowerCase()===e.username.toLowerCase())&&humans(history,cfg,now).length>0?e:null;
 }
-module.exports={enabled,publicSource,humans,peer};
+// Conversational delivery is not helper-task admission. A peer can report a
+// dependency after the original human request has aged out of intake evidence.
+function conversation(history,cfg,message,now){
+ const e=history.data.events.find(e=>e.id===message.id);
+ return cfg.human_engagement?.enabled===true&&cfg.agent_dialogue===true&&message.source==='agent'&&e?.source==='agent'&&e.accepted===true&&
+  publicSource(e,now,history.data.task_source_cutoff||0)&&(cfg.bot_names||[]).some(n=>n.toLowerCase()===e.username.toLowerCase())&&
+  (message.attention_offer?.ticket||e.intent==='request')?e:null;
+}
+module.exports={enabled,publicSource,humans,peer,conversation};

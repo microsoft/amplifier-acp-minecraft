@@ -161,3 +161,13 @@ original two-minute lifetime. Continued walking cannot replace the source while
 host judgment is in flight. Expired observations still reject late results; the
 next actual action supplies a fresh source. This neither manufactures chat nor
 bypasses the host's social judgment, ambient quotas, explicit Stop or task scope.
+
+Peer conversation and work authorization are separate. With human-led play and
+`agent_dialogue` enabled, public peer inputs remain independently pending while
+the inbox is full, and host engagement is not overridden by another local
+four-replies-per-hour or recent-human window. Host attention/provider limits and
+source expiry still apply; plain ACP retains ordinary prompt fallback. An
+attributed, admitted peer report can receive an effect-free reply even after the
+original human intake source expires. Accepting helper work still requires the
+original human authorization; conversation never grants or renews it. Legacy
+installations retain their configured peer limits.

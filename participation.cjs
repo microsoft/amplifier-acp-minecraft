@@ -79,7 +79,7 @@ class Participation {
   if(!proposal)return {eligible:false,reason_code:'source_changed'};
   const ids=new Set(proposal.ids),data=this.history.data;
   const peerCount=data.events.filter(e=>ids.has(e.id)&&e.source==='agent').length;
-  if(peerCount){
+  if(peerCount&&this.cfg.human_engagement?.enabled!==true){
    if(now-lastHumanAt>=(this.cfg.agent_dialogue_window_seconds||2400)*1000)return {eligible:false,reason_code:'peer_window_expired'};
    const recent=agentWakeTimes.filter(t=>t>now-3600000).length;
    if(recent+peerCount>Math.min(60,Math.max(1,this.cfg.peer_wakes_per_hour||4)))return {eligible:false,reason_code:'peer_budget_exhausted'};
