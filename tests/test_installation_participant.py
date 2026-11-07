@@ -34,6 +34,9 @@ class FakeInstallation:
         if action=='stop': self.units[kind].update(ActiveState='inactive',MainPID='0')
         else: self.units[kind].update(ActiveState='active',MainPID='200',ExecMainStartTimestamp='new')
     def helper(self): return {'capabilities':'static-only'}
+    def session(self, timeout):
+        self.actions.append(('session','load-only'))
+        return {'verified':True,'saved_session_loaded':True,'new_session_created':False,'prompt_sent':False}
 
 
 class ParticipantTests(unittest.TestCase):
@@ -59,13 +62,13 @@ class ParticipantTests(unittest.TestCase):
         before=(self.home/'workshop.json').read_bytes();p=self.ready()
         self.assertEqual(self.backend.actions,[('controller','stop')])
         self.assertTrue(p.verify('applied')['verified']);self.assertTrue(p.restore('applied')['restored'])
-        self.assertEqual(self.backend.actions,[('controller','stop'),('controller','start')])
+        self.assertEqual(self.backend.actions,[('controller','stop'),('session','load-only'),('controller','start')])
         self.assertEqual((self.home/'workshop.json').read_bytes(),before)
     def test_game_update_stops_body_then_verifies_before_opening_admission(self):
         self.envelope['plan']['components']=['minecraft'];p=self.ready()
         self.assertEqual(self.backend.actions,[('controller','stop'),('body','stop')])
         p.verify('applied');self.assertTrue(held(self.home))
-        self.assertEqual(self.backend.actions[-1],('body','start'))
+        self.assertEqual(self.backend.actions[-2:],[('body','start'),('session','load-only')])
         p.restore('applied');self.assertFalse(held(self.home))
         self.assertEqual(self.backend.actions[-1],('controller','start'))
     def test_busy_prepare_closes_admission_without_interrupting_work(self):
@@ -81,7 +84,7 @@ class ParticipantTests(unittest.TestCase):
         for unit in self.backend.units.values():
             unit.update(ActiveState='inactive',MainPID='0',LoadState='masked',UnitFileState='masked')
         p=self.participant();self.assertTrue(p.prepare()['ready'])
-        p.verify('applied');p.restore('applied');self.assertEqual(self.backend.actions,[])
+        p.verify('applied');p.restore('applied');self.assertEqual(self.backend.actions,[('session','load-only')])
     def test_repeated_prepare_does_not_recapture_or_repeat_stop(self):
         p=self.ready();baseline=copy.deepcopy(p.value['baseline']);actions=list(self.backend.actions)
         p=self.participant();self.assertTrue(p.prepare()['ready'])
@@ -131,6 +134,33 @@ class ParticipantTests(unittest.TestCase):
         durable_write(self.home/'workshop.json',state)
         p.verify('applied');p.restore('applied')
         self.assertEqual(read(self.home/'workshop.json')['inbox'],state['inbox'])
+
+    def test_engine_update_checks_original_session_and_failure_keeps_listener_closed(self):
+        from unittest.mock import patch
+        self.envelope['plan']['components']=['engine'];p=self.ready()
+        with patch.object(self.backend,'session',side_effect=RuntimeError('incompatible old session')):
+            with self.assertRaises(RuntimeError):p.verify('applied')
+        self.assertTrue(held(self.home))
+        self.assertEqual(self.backend.units['controller']['ActiveState'],'inactive')
+        self.assertNotEqual(p.value['phase'],'verified')
+        # Old engine restored by worker: verify the same binding before resuming.
+        p.verify('rolled_back');p.restore('rolled_back')
+        self.assertEqual(p.value['session']['saved_session_loaded'],True)
+
+    def test_helper_only_and_unchanged_busy_failure_do_not_load_session(self):
+        self.envelope['plan']['components']=['task-helpers'];p=self.ready()
+        p.verify('applied');p.restore('applied')
+        self.assertNotIn(('session','load-only'),self.backend.actions)
+
+    def test_session_load_cannot_mutate_authority_and_call_it_verified(self):
+        from unittest.mock import patch
+        p=self.ready()
+        def load(timeout):
+            durable_write(self.home/'session.json',{'id':'replacement'})
+            return {'verified':True,'saved_session_loaded':True}
+        with patch.object(self.backend,'session',side_effect=load):
+            with self.assertRaises(ContinuityError):p.verify('applied')
+        self.assertTrue(held(self.home));self.assertNotEqual(p.value['phase'],'verified')
 
 
 if __name__=='__main__': unittest.main()

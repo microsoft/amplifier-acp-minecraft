@@ -110,6 +110,24 @@ class LocalInstallation:
             raise ContinuityError('Helper watch TTL contract changed')
         return {'sha256': hashlib.sha256(Path(command).read_bytes()).hexdigest(), 'capabilities': caps}
 
+    def session(self, timeout):
+        # Use the enrolled installation SDK, not the owner helper interpreter.
+        # No missing-session repair: an unused installation needs no new session.
+        if not (self.home/'session.json').exists():
+            return {'verified':True, 'saved_session_present':False,
+                    'saved_session_loaded':False, 'new_session_created':False, 'prompt_sent':False}
+        python = Path(self.c['venv'])/'bin/python'
+        script = Path(__file__).with_name('installation_session_probe.py')
+        if timeout <= 7:
+            raise ContinuityError('Insufficient operation budget for saved-session verification')
+        value = json.loads(subprocess.check_output(
+            [str(python), str(script), '--home', str(self.home), '--timeout', str(min(12, timeout-6))],
+            text=True, timeout=timeout))
+        if (value.get('verified') is not True or value.get('saved_session_loaded') is not True
+                or value.get('new_session_created') is not False or value.get('prompt_sent') is not False):
+            raise ContinuityError('Original saved session did not load')
+        return value
+
 
 class Participant:
     def __init__(self, cfg, envelope, backend=None):
@@ -205,6 +223,7 @@ class Participant:
         return {'ready':self.value['phase'] == 'ready'}
 
     def verify(self, outcome):
+        started = time.monotonic()
         if not self.changed:
             return {'verified':True}
         if not self.value:
@@ -256,7 +275,12 @@ class Participant:
                     raise ContinuityError('Body failed to reach verified readiness')
                 time.sleep(.2)
         helper = self.backend.helper() if 'task-helpers' in self.changed else None
-        self.save(phase='verified', outcome=outcome, checks=checks, helper=helper)
+        session = None
+        if outcome != 'unchanged' and self.changed.intersection({'instance','runtime','engine','container-image','minecraft'}):
+            session = self.backend.session(timeout=min(18, 26-(time.monotonic()-started)))
+            # Loading must not change game authority, binding, inventory or effects.
+            checks = continuity(self.value['baseline'], self.backend.capture(), body_restart=self.game)
+        self.save(phase='verified', outcome=outcome, checks=checks, helper=helper, session=session)
         return {'verified':True}
 
     def restore(self, outcome):

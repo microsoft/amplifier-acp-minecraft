@@ -59,6 +59,13 @@ IDs and restart scope. Protocol-2 providers also receive
    observations must be retained; never overwrite a full workshop snapshot to
    make a hash match. Changed authority or unsettled/unknown current effects
    require reconciliation rather than automatic rollback of state.
+   Instance/runtime/engine/container/source changes also initialize and load the
+   original saved game session through the installed official-SDK client while
+   admission stays closed. Binding mismatch, unsupported load, missing backend
+   session or bounded operation timeout fails verification; never create a
+   replacement or prompt to prime persistence. An installation with no saved
+   session records that absence without opening one. A helper-only change does
+   not open ACP. Recheck continuity after loading, including on engine rollback.
 5. The worker persists successful verification before any participant restores.
    Restore only transaction-owned admission/mask changes and previously active
    services, in body-then-controller order. Preserve pre-existing stopped/masked
@@ -134,6 +141,15 @@ updater merges that delta without deleting existing components/participants.
 Both `minecraft` and `task-helpers` explicitly request
 `restart_scope={services:[],instance:false,slack_homes:[]}`. The participant owns
 game units; the generic updater owns no game services.
+
+Include `installation_session_probe.py` with the fixed owner helpers. The
+participant invokes it using the stable enrolled game `venv/bin/python`, with
+only initialize/session-load operations and permission callbacks disabled.
+It does not send prompts, maintenance, receipt acknowledgments or session/new.
+The probe receives a bounded operation budget within the 30-second participant
+command limit; this does not change task lifetime, provider settings or action
+leases. Lost restore acknowledgment still skips all re-verification and resumes
+restoration only; no session load runs after listeners may have resumed.
 
 Before enrollment, the controller must use the stable enrolled
 `venv/bin/python` and `app/adapter.py` paths; the body must use the enrolled app.
