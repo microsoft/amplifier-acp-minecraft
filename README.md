@@ -50,6 +50,7 @@ specialist references. Agents that cannot discover repository skills can read
 | Start/amend tasks naturally in chat | [Human task intake](docs/human-task-intake.md) |
 | Completion-bound work and pure decision helpers | [Task bounds and helper discovery](docs/completion-bound-tasks.md) |
 | Safe source, engine and helper updates | [Installation-owned updates](INSTALLATION-UPDATES-DESIGN.md) |
+| Temporarily disconnect and reconnect saved players | [Saved connection controls](docs/saved-connections.md) |
 | Create recognizable skins | [Agent-skin skill](skills/minecraft-agent-skins/SKILL.md) |
 | Let agents take real screenshots | [Screenshot setup](docs/screenshots.md) |
 | Configure tools, recovery, context and lifecycle | [Adapter reference](docs/adapter-reference.md) |

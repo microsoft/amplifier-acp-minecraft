@@ -15,6 +15,7 @@ from installation_guard import (ContinuityError, NotIdle, continuity, digest,
                                 durable_write, installation_lock, read,
                                 require_idle, restore_plan, snapshot, OBSERVATIONS, enrollment_ids)
 from update_admission import process_identity
+from connection_state import deferred as connection_deferred
 
 COMPONENTS = {'minecraft', 'task-helpers', 'instance', 'runtime', 'engine', 'container-image'}
 
@@ -175,6 +176,8 @@ class Participant:
         if self.value and self.value['phase'] in ('ready', 'verified', 'restoring', 'restored'):
             return {'ready':True}
         if not self.value:
+            if connection_deferred(self.home):
+                return {'ready':False, 'reason':'saved_connection_disconnected_or_transitioning'}
             active = self.root/'active.json'
             if active.exists() and read(active)['transaction_id'] != self.tx:
                 previous = self.root/'transactions'/(read(active)['transaction_id']+'.json')
@@ -246,7 +249,7 @@ class Participant:
         if not self.value:
             # Worker journals attempted before invocation; process may have
             # failed before any participant mutation. Nothing to restore.
-            if outcome == 'unchanged' and not self.gate.exists():
+            if outcome == 'unchanged' and (not self.gate.exists() or connection_deferred(self.home)):
                 return {'verified':True}
             raise ContinuityError('Missing lifecycle receipt')
         if self.value['phase'] in ('verified', 'restoring', 'restored'):
@@ -308,7 +311,7 @@ class Participant:
         if not self.changed:
             return {'restored':True}
         if not self.value:
-            return {'restored':True} if not self.gate.exists() else {'restored':False}
+            return {'restored':True} if not self.gate.exists() or connection_deferred(self.home) else {'restored':False}
         if self.value.get('outcome') != outcome or self.value['phase'] not in ('verified', 'restoring', 'restored'):
             raise ContinuityError('Verify before restoration')
         if self.value['phase'] == 'restored':
