@@ -1,7 +1,8 @@
 # Human-led play
 
 `human_engagement.enabled: true` is an explicit installation policy. It removes
-this connector's hourly human-reply quota and autonomous planner pacing. Host
+this connector's hourly human-reply quota, autonomous planner pacing and legacy
+24-action turn cap. Host
 and provider limits still apply. Source IDs remain durably consumed, audiences
 remain separate, and possibly accepted input is never replayed after a lost
 reply. Existing assignment deadlines, consumed counts, explicit stops and
@@ -22,7 +23,8 @@ ordinary `move`, `place`, `build`, `craft`, `dig`, `set_open` or `till` operatio
 Every step uses the existing schema, authority, geometry and result checks.
 No arbitrary code executes. The planner can combine compatible steps without
 waiting for a new model response between each. The full plan is validated before
-its first effect. The normal current-turn action budget still applies.
+its first effect. Any configured current-turn action budget still applies; human-led mode reports
+no connector action-count cap, while actual assignment limits remain binding.
 
 A new human input, changed authority, Stop, explicit `cancel_sequence`, failed
 step or partial/unconfirmed result prevents further steps. Cancellation waits

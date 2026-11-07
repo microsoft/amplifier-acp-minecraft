@@ -123,7 +123,7 @@ function snapshot(){
     nearby_blocks:blocks.map(p=>({name:bot.blockAt(p)?.name,position:p})),
     conversation:conversation.snapshot(),human_activity:humanActivity.snapshot(),action_sequence:actionSequence.status(),
     public_chat:history.data.events.filter(isPublicChatEvent).slice(-20),
-    events:history.data.events.filter(e=>!e.whisper).slice(-35),task:history.task(),receipts:receipts.slice(-15),remaining_actions:Math.max(0,24-actions),action_lease:lease.view(history.task())};
+    events:history.data.events.filter(e=>!e.whisper).slice(-35),task:history.task(),receipts:receipts.slice(-15),remaining_actions:actionsRemaining(),action_lease:lease.view(history.task())};
 }
 function watchContext(){
  return watchBridge.context(cfg,history,{ready,position:bot.entity?.position,health:bot.health,
@@ -136,6 +136,7 @@ async function watchOperation(action){
  return watchBridge.invoke(cfg.decision_attention.command,path.dirname(process.argv[2]),{...watchContext(),action});
 }
 function coord(a){const p=new Vec3(a.x,a.y,a.z);if(![p.x,p.y,p.z].every(Number.isInteger)||p.y< -64||p.y>319||p.distanceTo(bot.entity.position)>64)throw Error('Coordinates must be whole blocks within 64 blocks of this player');return p;}
+function actionsRemaining(){return cfg.human_engagement?.enabled===true?null:Math.max(0,24-actions);}
 function speak(text){
  const s=text.replace(/[\r\n\x00-\x1f]/g,' ').trim();if(!s||s.startsWith('/'))throw Error('Use ordinary chat, not slash commands');
  const recipient=history.data.turn?.conversation_only?history.data.turn.reply_recipient:null;
@@ -185,7 +186,7 @@ async function operate(name,a={},sequenceId=null){
   // in-flight physical operation. The same audience/revision/lease checks apply.
   if(['chat','tell'].includes(name)&&actionSequence.active){
     conversation.guard(a.conversation_revision);
-    if(++actions>24)throw Error('This turn reached its 24-action budget; inspect the sequence before reporting');
+    if(++actions>24&&cfg.human_engagement?.enabled!==true)throw Error('This turn reached its 24-action budget; inspect the sequence before reporting');
     const actionId=crypto.randomUUID();history.actionStarted(actionId);record('action_started',{action_id:actionId,action:name,arguments:a});
     try{
       const result=speech(name,a);history.actionSettled(actionId,true);
@@ -219,7 +220,7 @@ async function operate(name,a={},sequenceId=null){
   const transfer=name==='give'||(name==='container'&&['deposit','withdraw'].includes(a.operation));
   if(transfer||['chat','tell'].includes(name))conversation.guard(a.conversation_revision);
   if(name==='container'&&transfer&&!a.contents_revision)throw Error('Inspect this container first and supply its contents_revision. No transfer attempted.');
-  if(++actions>24)throw Error('This turn reached its 24-action budget; save progress with work_report');
+  if(++actions>24&&cfg.human_engagement?.enabled!==true)throw Error('This turn reached its 24-action budget; save progress with work_report');
   busy=true;activeAction=name;const epoch=generation;const actionId=crypto.randomUUID();history.actionStarted(actionId);record('action_started',{action_id:actionId,action:name,arguments:a});let unfinished;
   const check=()=>{if(epoch!==generation||Date.now()>turnUntil)throw Error('Action cancelled');};
   const go=async(p,r=2,exactHeight=false)=>{check();const goal=exactHeight?new spatial.FeetGoal(p.x,p.y,p.z,r):new goals.GoalNear(p.x,p.y,p.z,r);await spatial.gotoWithProgress(bot,goal);await delay(250);check();if(!goal.isEnd(bot.entity.position.floored()))throw Error('Movement ended without reaching the requested destination; inspect current position');};
@@ -405,7 +406,7 @@ function mcpServer(){
   const m=new McpServer({name:'minecraft-player',version:'0.1.0'});
   require('./screenshots.cjs').registerTools(m,screenshots);
   for(const [name,[description,inputSchema]]of Object.entries(definitions).filter(([name])=>cfg.agent_watches||!name.startsWith('attention_')))m.registerTool(name,{description,inputSchema},async a=>{
-    try{const result=await operate(name,a),changed=conversation.updates();return {content:[{type:'text',text:JSON.stringify(result)},...(changed?[{type:'text',text:JSON.stringify({conversation:changed})}]:[]),{type:'text',text:JSON.stringify({action_lease:lease.view(history.task()),actions_remaining:Math.max(0,24-actions),operation_timeout_seconds:60,guidance:'Lease expiry is a controller safety boundary, not a reasoning deadline. Renewals never extend assignment authority. Save progress and end when short of actions or the accepted task deadline approaches. Each operation remains bounded; inspect uncertain effects before any retry.'})}]};}
+    try{const result=await operate(name,a),changed=conversation.updates();return {content:[{type:'text',text:JSON.stringify(result)},...(changed?[{type:'text',text:JSON.stringify({conversation:changed})}]:[]),{type:'text',text:JSON.stringify({action_lease:lease.view(history.task()),actions_remaining:actionsRemaining(),operation_timeout_seconds:60,guidance:'Lease expiry is a controller safety boundary, not a reasoning deadline. Renewals never extend assignment authority. Save progress and end when short of actions or the accepted task deadline approaches. Each operation remains bounded; inspect uncertain effects before any retry.'})}]};}
     catch(e){const changed=conversation.updates();return {isError:true,content:[{type:'text',text:JSON.stringify({error:e.message,...(e.details||{}),...(changed?{conversation:changed}:{})})}]};}
   });return m;
 }
