@@ -31,7 +31,18 @@ class Participation {
   if(!fresh.length)return null;
   const chat=data.events.filter(isPublicChatEvent).slice(-24);
   const names=[...new Set([this.cfg.username,...chat.map(e=>e.username||this.cfg.username),...players])].slice(0,64);
-  const participants=names.map(name=>({id:name,name,is_agent:name===this.cfg.username||(this.cfg.bot_names||[]).includes(name),role:''}));
+  const agents=new Set([this.cfg.username,...(this.cfg.bot_names||[])].map(name=>name.toLowerCase()));
+  const participants=names.map(name=>{
+   if(agents.has(name.toLowerCase()))return {id:name,name,is_agent:true,role:''};
+   const messages=chat.filter(e=>e.username===name);
+   // Participant kind applies to every message under this actor ID. Never let
+   // a verified message upgrade unattributed history from the same display name.
+   const human=messages.length>0&&messages.every(e=>e.kind==='chat'&&e.source==='human'
+    &&e.transport?.kind==='server_player_uuid'&&e.transport.username===name
+    &&typeof e.transport.uuid==='string'
+    &&/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(e.transport.uuid));
+   return {id:name,name,...(human?{is_agent:false}:{}),role:''};
+  });
   const context={conversation_id:this.cfg.conversation_id||'minecraft:workshop',
    agent:participants.find(p=>p.id===this.cfg.username),participants,
    messages:chat.map(e=>({id:e.id,sender:e.username||this.cfg.username,text:(e.message||e.sent||'').slice(0,700)})),
