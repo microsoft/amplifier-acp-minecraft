@@ -48,10 +48,91 @@ components, participants or connections. The browser supplies only the saved
 connection ID, revision, action and request UUID. It supplies no executable,
 path, secret or command arguments. This command is not an agent MCP tool.
 
-The current delta advertises existing connections only. It intentionally has
-no Add link or form: creating a new connection still uses the setup guide.
-Only advertise Add once a usable owner setup provider has been implemented
-and enrolled; a link to documentation is not an interactive setup flow.
+The updater delta advertises existing connections only. To offer a working Add
+form, separately enroll the prepared-choice provider below. A documentation
+link is not an interactive setup flow.
+
+## Add from prepared server choices
+
+`installation_connection_add.py` implements the optional typed Add contract.
+It saves a new connection from an **unused, separately prepared installation**.
+It does not provision arbitrary destinations supplied by a browser. Prepare one
+slot per available connection using the setup guide: its own home, source,
+pinned SDK environment, identity/endpoint, private game route, registered own
+context/MCP route and installed but inactive, disabled systemd units. Preserve
+any existing server player data. Do not clone used sessions or tasks to make a
+slot. Its domain state must have no task, turn, active sequence or saved session;
+use `incoming_chat_only: true` with human task intake disabled.
+
+Install this Add helper with the complete connection/updater helper set outside
+agent-writable mounts. Create a private owner template (mode 0600):
+
+```json
+{
+  "schema": 1,
+  "state": "/owner/minecraft-add",
+  "agent_home": "/owner/agent-instance/example",
+  "helpers": "/owner/minecraft-helpers",
+  "python": "/owner/helper-venv/bin/python",
+  "slots": [{
+    "id": "visit",
+    "label": "Workshop",
+    "config": "/owner/prepared-visit.json",
+    "config_sha256": "<SHA256 of that connection's owner configuration>",
+    "route_receipt": "/owner/visit-route-ready.json",
+    "route_sha256": "<SHA256 of the route receipt>"
+  }]
+}
+```
+
+The connection configuration uses the same `home`, `state`, `app`, `venv` and
+`units` fields as the lifecycle driver. Its state directory must be separate
+from the Add state directory. The owner records route checks after verifying
+the approved game route and the context/MCP route from the actual engine's
+namespace. The receipt has this shape:
+
+```json
+{
+  "schema": 1,
+  "home": "/owner/game/example-visit",
+  "checked_at": "<original check time>",
+  "config_sha256": "<SHA256 of home/config.json>",
+  "endpoint_sha256": "<SHA256 of home/endpoint.json>",
+  "game": {"host": "127.0.0.1", "port": 25571, "verified": true},
+  "context": {
+    "provider_id": "minecraft:example:visit",
+    "url": "http://127.0.0.1:45846",
+    "secret_ref": "<registered secret reference, not the secret>",
+    "runtime_namespace_verified": true
+  },
+  "configuration_files": {"/owner/private-route-config": "<SHA256>"}
+}
+```
+
+Those ports are illustrative, not universal endpoints. In particular, a human
+gateway is not an offline agent route. Never invent namespace verification
+because a host port responds. Add checks this original owner evidence, the
+unchanged configuration files and the actual Instance provider registration.
+It does **not** claim a fresh runtime-namespace reachability test while the
+body is stopped. Missing, disabled or changed registration prevents saving.
+Connect later checks the live body and initializes the actual ACP endpoint.
+
+Run the installed helper with `--config /owner/add-template.json enrollment`.
+It prints one service descriptor with a revision bound to that template, a
+bounded name field, authorized server choices, and fixed Add/status commands.
+Enroll that descriptor in the host's `service_connections.services` catalog,
+preserving existing connections, components and participants. Do not change
+the template during a pending operation. Browser data cannot supply addresses,
+credentials, paths or executables.
+
+Add checks the slot is unused and stopped, journals the request, then saves
+its configuration and offline admission state. The shared host alone appends
+the returned connection descriptor. Lost replies resume that same file-only
+save through status; changed request values or a conflicting slot are refused.
+No service starts, Instance writes, session creation, task grant, work replay
+or updater enrollment occur. Choose Connect separately to join. A saved slot
+cannot be reused for another connection; prepare another independent slot if
+needed. Updater enrollment remains a distinct owner operation.
 
 ## Settlement and preservation
 
