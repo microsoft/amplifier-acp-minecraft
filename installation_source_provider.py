@@ -253,7 +253,7 @@ class Provider:
         return {'available':True,'version':revision,'previous':previous,'stage':str(stage),
                 'manifest_hash':digest(manifest),'config_hash':digest(self.c),
                 'before':before,'cleanup':cleanup,
-                'source_marker':read(self.home/'app-source.json')}
+                'source_marker':read(self.home/'app-source.json'),'source_marker_version':2}
 
     def frozen(self, envelope, *, candidate=True):
         if envelope.get('component') != enrollment_ids(self.c)[1]['minecraft'] or str(uuid.UUID(envelope['id'])) != envelope['id']:
@@ -304,6 +304,21 @@ class Provider:
         if any(v['ActiveState'] not in ('inactive','failed') or str(v['MainPID'])!='0' for v in services.values()):
             raise ContinuityError('Source exchange requires both owned units stopped')
 
+    def installed_marker(self, plan, stage):
+        marker={**plan['source_marker'],'revision':plan['version'],
+                'python':str(self.paths['venv']/'bin/python')}
+        # Old retained plans preserve their original verification/rollback
+        # contract. New plans replace the stale copied inventory with actual
+        # frozen installed application bytes, including built UI assets.
+        if plan.get('source_marker_version') == 2:
+            app=stage/'app'
+            marker['files']={str(p.relative_to(app)):hashlib.sha256(p.read_bytes()).hexdigest()
+                for p in sorted(app.rglob('*')) if p.is_file() and not p.is_symlink()
+                and not {'node_modules','__pycache__'}.intersection(p.relative_to(app).parts)
+                and p.suffix != '.pyc'}
+            marker['files_scope']='installed_app_excluding_node_modules_and_python_caches'
+        return marker
+
     def apply(self, envelope, transaction):
         plan,stage,path = self.frozen(envelope)
         self.require_prepared(transaction)
@@ -325,8 +340,7 @@ class Provider:
             sync_directories(target.parent,backup)
             target.symlink_to(stage/key, target_is_directory=True)
             sync_directories(target.parent)
-        durable_write(self.home/'app-source.json',{**plan['source_marker'],'revision':plan['version'],
-                                                 'python':str(self.paths['venv']/'bin/python')})
+        durable_write(self.home/'app-source.json',self.installed_marker(plan,stage))
         durable_write(path,{'state':'applied','transaction_id':transaction})
         return self.verify(envelope)
 
@@ -365,7 +379,7 @@ class Provider:
             for key,target in self.paths.items():
                 if not target.is_symlink() or os.readlink(target)!=str(stage/key):
                     raise ContinuityError('Installed source pointer mismatch')
-            expected={**plan['source_marker'],'revision':plan['version'],'python':str(self.paths['venv']/'bin/python')}
+            expected=self.installed_marker(plan,stage)
             if read(self.home/'app-source.json')!=expected:
                 raise ContinuityError('Installed source revision mismatch')
         elif any(fingerprint(p)!=plan['before'][k] for k,p in self.paths.items()) or read(self.home/'app-source.json')!=plan['source_marker']:

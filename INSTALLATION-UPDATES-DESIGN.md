@@ -249,3 +249,18 @@ runtime, engine and container components. A source update for another connection
 does not stop it. Retention follows the matching namespaced provider receipts;
 missing or uncertain references still prevent cleanup. Separate directories and
 IDs do not share tasks, authorize work, or grant access to another world.
+
+## Engagement and source evidence
+
+Before an update closes game admission, the participant defers for recent
+server-attributed human chat, pending fresh human input, or observed movement or
+interaction in the body's existing activity window. Idle presence and peer
+chatter do not defer it. Once an update has durably entered its lifecycle, it
+finishes verification/restoration without recapturing or dropping its hold.
+This is an idle check in the existing updater, not a second scheduler.
+
+New source plans regenerate `app-source.json.files` from the frozen installed
+application, including built UI assets and excluding dependencies/Python caches.
+Full source and dependency fingerprints remain separately verified. Retained
+older plans keep their original marker contract, and rollback restores the exact
+previous metadata without touching task or session files.

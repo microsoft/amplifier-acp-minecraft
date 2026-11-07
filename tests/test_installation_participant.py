@@ -92,6 +92,18 @@ class ParticipantTests(unittest.TestCase):
         self.assertEqual(self.backend.actions[-2:],[('body','start'),('session','load-only')])
         p.restore('applied');self.assertFalse(held(self.home))
         self.assertEqual(self.backend.actions[-1],('controller','start'))
+    def test_recent_engagement_defers_before_gate_and_later_uses_same_transaction(self):
+        self.backend.body['human_engagement']={'version':1,'active':True}
+        p=self.participant();before=(self.home/'workshop.json').read_bytes()
+        self.assertEqual(p.prepare(),{'ready':False,'reason':'recent_human_engagement'})
+        self.assertFalse(p.gate.exists());self.assertFalse(p.path.exists());self.assertEqual(self.backend.actions,[])
+        self.assertEqual((self.home/'workshop.json').read_bytes(),before)
+        self.backend.body['human_engagement']['active']=False
+        p=self.ready();self.assertTrue(p.prepare()['ready'])
+        # Once gated, fresh observations do not strand an already admitted update.
+        self.backend.body['human_engagement']['active']=True
+        p.verify('applied');p.restore('applied');self.assertFalse(p.gate.exists())
+
     def test_busy_prepare_closes_admission_without_interrupting_work(self):
         p=self.participant();p.prepare();self.ack();self.backend.body['busy']=True
         self.assertFalse(p.prepare()['ready']);self.assertEqual(self.backend.actions,[])

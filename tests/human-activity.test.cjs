@@ -30,3 +30,16 @@ test('attributed arm swing wakes activity for stationary humans, never mobs/peer
  tracker.interaction(entity,{p:{...p,username:'Peer'}});tracker.interaction(entity,{p:{...p,uuid:null}});
  assert.equal(facts.length,1);
 });
+test('update deferral uses actual activity and attributed pending messages, never idle presence or peers',()=>{
+ const {updateEngagement}=require('../human-activity.cjs');const now=1000000,activity={active_window_ms:120000,players:[{active:false}]};
+ const event={id:'fresh',kind:'chat',source:'human',username:'Visitor',time:new Date(now-100).toISOString(),transport:{kind:'server_player_uuid',username:'Visitor',uuid:'00000000-0000-0000-0000-000000000001'}};
+ const h={data:{events:[event],inbox:[]}};
+ assert.equal(updateEngagement(h,activity,now).active,true);
+ assert.equal(updateEngagement(h,activity,now+120001).active,false);
+ h.data.inbox=[{id:event.id,source:'human'}];assert.equal(updateEngagement(h,activity,now+120001).active,true);
+ assert.equal(updateEngagement(h,activity,now+600001).active,false);
+ for(const bad of [{...event,source:'agent'},{...event,transport:null},{...event,time:new Date(now+1000).toISOString()}]){
+  h.data.events=[bad];assert.equal(updateEngagement(h,activity,now).active,false);
+ }
+ h.data.events=[];assert.equal(updateEngagement(h,{...activity,players:[{active:true}]},now).active,true);
+});

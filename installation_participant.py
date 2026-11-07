@@ -185,6 +185,12 @@ class Participant:
                     raise ContinuityError('An earlier installation transaction needs recovery')
             if self.gate.exists():
                 raise ContinuityError('Preserve another admission hold')
+            # Defer before closing admission, so a gap between engaged turns
+            # does not itself disconnect a conversation. Existing transactions
+            # keep their durable phase and must settle rather than recapture.
+            observed = self.backend.capture()
+            if (observed.get('human_engagement') or {}).get('active') is True:
+                return {'ready':False, 'reason':'recent_human_engagement'}
             services = self.backend.services()
             # Validate captured restoration evidence before introducing any gate.
             restore_plan(services, services)
