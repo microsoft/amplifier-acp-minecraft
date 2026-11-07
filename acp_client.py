@@ -327,7 +327,7 @@ class Client:
                     self.update_queue.get_nowait()
                     self.update_queue.task_done()
 
-    async def prompt(self, text, timeout=None, on_chunk=None, attention_offer=None):
+    async def prompt(self, text, timeout=None, on_chunk=None, attention_offer=None, snapshot_retained=None, snapshot_key='default'):
         if self.maintenance_active:
             raise ProtocolError('Maintenance is still settling; no game prompt sent')
         self.lifecycle = PromptLifecycle(self.observe)
@@ -393,8 +393,12 @@ class Client:
             # Reasoning and raw tool content are not copied into the lab report.
 
         try:
+            from context_snapshot import blocks
+            # Stable per-installation key, bounded independently of user text.
+            key = hashlib.sha256(snapshot_key.encode('utf-8')).hexdigest()
             result = await asyncio.wait_for(self.request("session/prompt", {
-                "sessionId": self.session, "prompt": [{"type": "text", "text": permission_text}, {"type": "text", "text": text}],
+                "sessionId": self.session, "prompt": blocks(self.info, permission_text, text,
+                    snapshot_retained, key, permissions['policy_revision']),
                 **({"_meta":{"com.microsoft.amplifier.attention":attention_offer}} if attention_offer else {}),
             }, update), timeout)
             unsettled=[tid for tid,call in self.tool_calls.items() if call.get('status') not in ('completed','failed')]

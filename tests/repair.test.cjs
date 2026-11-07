@@ -60,3 +60,17 @@ test('non-level starts get an explicit remedy and shape-less blocks stay unknown
  assert.ok(r.observed.footprint.unknown.some(b=>b.reason==='collision_shapes_unavailable'));
  assert.equal(r.observed.footprint.support_contacts.length,0);
 });
+test('unconfirmed placement reports player occupation without inferring cause or retrying',()=>{
+ const {bot}=fixture(),h=new RepairHints(),args={x:0,y:64,z:0};bot.username='Builder';
+ bot.players={Visitor:{entity:{position:new Vec3(.8,64,.5),height:1.8,width:.6}},Far:{entity:{position:new Vec3(9,64,9)}}};
+ const error=Error('Server refused to place oak_planks: the block is still air');
+ const first=h.explain(bot,'place',args,error);assert.equal(first.code,'placement_unconfirmed');
+ assert.deepEqual(first.observed.target_player_overlaps.map(p=>p.name),['Builder','Visitor']);
+ assert.match(first.next_steps.join(' '),/not proof of the exact cause/);assert.equal(h.explain(bot,'place',args,error).same_observation_failures,2);
+ bot.players.Visitor.entity.position.x=2;assert.equal(h.explain(bot,'place',args,error).same_observation_failures,1);
+ bot.entity.position.y=65;assert.equal(h.explain(bot,'place',args,error).observed.target_player_overlaps.length,0,'standing on the target is distinct from occupying its volume');
+});
+test('upstream path-search timeout remains uncertain movement, not a no-effect claim',()=>{
+ const {bot}=fixture();const r=new RepairHints().explain(bot,'move',{x:3,y:64,z:0},Error('Took to long to decide path to goal!'));
+ assert.equal(r.code,'search_limit');assert.match(r.next_steps.join(' '),/may have included movement/);
+});

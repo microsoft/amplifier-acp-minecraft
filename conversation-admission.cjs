@@ -11,7 +11,7 @@ class ConversationAdmission {
   if(message.source==='agent')return this.peerRemaining()>0&&!!delegation.peer(this.history,this.cfg,message,this.now())&&!(data.conversation_admissions||[]).some(r=>r.ids.includes(message.id));
   if(message.source==='activity')return this.cfg.human_engagement?.activity_scope==='conversation_only'&&this.cfg.human_engagement?.enabled===true&&data.task?.status!=='stopped'&&message.attention_offer?.ticket&&message.effect_scope==='conversation_only'&&(data.activity_deliveries||[]).some(r=>r.id===message.id&&r.revision===message.activity?.revision&&this.now()-r.at<120000)&&!(data.conversation_admissions||[]).some(r=>r.ids.includes(message.id));
   return message.source==='human'&&e?.source==='human'&&e.kind==='chat'&&e.accepted===true&&
-   ['minecraft_public_chat','minecraft_whisper'].includes(e.provenance)&&Number.isFinite(at)&&at<=this.now()+5000&&at>this.now()-600000&&
+   (['minecraft_public_chat','minecraft_whisper'].includes(e.provenance)||(e.provenance==='operator_control'&&e.transport?.kind==='authenticated_operator_control'))&&Number.isFinite(at)&&at<=this.now()+5000&&at>this.now()-600000&&
    !(data.conversation_admissions||[]).some(r=>r.ids.includes(message.id));
  }
  status(inbox){return {version:1,unmetered:this.limit()===null,remaining:this.limit()===null?null:Math.max(0,this.limit()-this.recent().length),

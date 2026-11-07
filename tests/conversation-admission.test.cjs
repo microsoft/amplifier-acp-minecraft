@@ -44,3 +44,10 @@ test('human-priority policy removes only reply quota, retaining source deduplica
  assert.throws(()=>f.admit.start([f.add('agent')],h.data.inbox),/No fresh/);
  assert.equal(h.data.conversation_admissions.length,70);
 });
+
+test('only the tagged authenticated operator route enters the reply lane, with durable deduplication',t=>{
+ const f=fixture(t),h=f.history;
+ const id=f.add('human',{provenance:'operator_control',transport:{kind:'authenticated_operator_control'}});
+ f.admit.start([id],h.data.inbox);assert.equal(h.data.turn.conversation_only,true);assert.equal(h.data.turn.may_mutate,false);h.finish();
+ assert.throws(()=>f.admit.start([id],[{id,source:'human'}]),/No fresh/);
+});
