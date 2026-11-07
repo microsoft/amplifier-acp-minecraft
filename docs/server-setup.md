@@ -150,9 +150,26 @@ its authenticated supported interface. Existing connected upgrades retain their
 registration. A local status label is not route or registration evidence.
 
 The optional [context registration helper](../ops/register_context.py) is an
-operator tool, not a universal enrollment service. Inspect its current options
-and the actual installation before use. Plain ACP can receive MCP configuration
-at standard session setup without an Instance-specific context API.
+operator tool, not a universal enrollment service. Set an explicit, unique
+`context_provider_id` for each saved connection (including two worlds using the
+same player name), plus its own port and home. Stage without touching Instance:
+
+```sh
+python3 ops/register_context.py --home /private/your-player --stage-only
+```
+
+This writes private pending configuration only. After the body and actual routes
+are verified, run it with `--agent-home /private/agent-instance` instead. It checks
+authenticated body context before writing, preserves existing provider entries,
+and uses a separate secret per connection. A provider-ID/route or secret collision
+fails rather than overwriting another connection. Its same-host check does not
+prove reachability inside a separate engine container. Existing registrations
+retain their secret references; no session is created or model prompted.
+
+Plain ACP can receive MCP configuration at standard session setup without an
+Instance-specific context API. Disconnecting a body also requires deactivating
+its context registration; leaving a dead provider registered can break other
+connections. Keep the saved connection credentials/session for reconnection.
 
 ## 4. Choose behavior explicitly
 

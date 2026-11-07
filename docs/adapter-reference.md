@@ -373,8 +373,11 @@ For a same-machine [Agent Instance](https://github.com/microsoft/amplifier-const
 python3 ops/register_context.py --home /private/your-player --agent-home /private/agent-instance
 ```
 
-Restart the body and controller after changing the audience binding. Remote
-registration needs a trusted endpoint and separately scoped provisioning.
+Stage an explicit per-connection provider ID and credentials first with
+`--stage-only`; this performs no Instance writes or service starts. Verify body
+and engine/Instance namespace routes before registration. The helper does not
+restart services or prime sessions. See the [setup guide](server-setup.md#contextmcp-routes-and-no-start-staging).
+Remote registration needs a trusted endpoint and separately scoped provisioning.
 Source retrieval is read-only; inspecting game context from another interface
 does not grant game-control tools.
 
