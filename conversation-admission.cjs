@@ -8,7 +8,7 @@ class ConversationAdmission {
  peerRemaining(){const n=this.cfg.human_task_intake?.delegation?.reply_turns_per_hour??4;return Number.isInteger(n)&&n>0&&n<=12?Math.max(0,n-this.recent().filter(r=>r.kind==='peer_proposal').length):0;}
  eligible(message){
   const data=this.history.data,e=data.events.find(e=>e.id===message.id),at=Date.parse(e?.time);
-  if(message.source==='agent')return this.peerRemaining()>0&&!!delegation.peer(this.history,this.cfg,message,this.now())&&!(data.conversation_admissions||[]).some(r=>r.ids.includes(message.id));
+  if(message.source==='agent')return (!!delegation.conversation(this.history,this.cfg,message,this.now())||(this.peerRemaining()>0&&!!delegation.peer(this.history,this.cfg,message,this.now())))&&!(data.conversation_admissions||[]).some(r=>r.ids.includes(message.id));
   if(message.source==='activity')return this.cfg.human_engagement?.activity_scope==='conversation_only'&&this.cfg.human_engagement?.enabled===true&&data.task?.status!=='stopped'&&message.attention_offer?.ticket&&message.effect_scope==='conversation_only'&&(data.activity_deliveries||[]).some(r=>r.id===message.id&&r.revision===message.activity?.revision&&this.now()-r.at<120000)&&!(data.conversation_admissions||[]).some(r=>r.ids.includes(message.id));
   return message.source==='human'&&e?.source==='human'&&e.kind==='chat'&&e.accepted===true&&
    (['minecraft_public_chat','minecraft_whisper'].includes(e.provenance)||(e.provenance==='operator_control'&&e.transport?.kind==='authenticated_operator_control'))&&Number.isFinite(at)&&at<=this.now()+5000&&at>this.now()-600000&&

@@ -450,3 +450,16 @@ test('actual server animation listener captures stationary human interaction wit
   assert.equal(p.context.messages.length,0);assert.equal(f.inbox.length,0);assert.equal(JSON.stringify(f.history.data.task),before);
  }finally{f.close();}
 });
+test('public peer evidence survives a full inbox and old human activity for human-led play',async()=>{
+ const f=fixture('BuilderOne',true,{human_engagement:{enabled:true}});try{
+  for(let i=0;i<8;i++)f.inbox.push({id:'queued-'+i,source:'human'});
+  f.bot.emit('chat','BuilderTwo','@BuilderOne [FYI] Your materials are ready.');
+  const e=f.history.data.events.find(e=>e.kind==='chat');
+  assert.equal(e.accepted,false);assert.ok(f.history.data.participation_pending.includes(e.id));
+  const waiting=await f.request('/participation');assert.equal(waiting.delivery.reason_code,'inbox_full');
+  f.inbox.length=0;const ready=await f.request('/participation');
+  assert.equal(ready.signature,waiting.signature);assert.equal(ready.delivery.eligible,true);
+  await f.request('/participation',{signature:ready.signature,source_id:e.id,action:'engage',offer:{id:'host',ticket:'original'}});
+  assert.equal(f.inbox[0].id,e.id);assert.deepEqual(f.history.task(),f.task);
+ }finally{f.close();}
+});
