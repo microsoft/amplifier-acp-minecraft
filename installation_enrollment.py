@@ -23,7 +23,7 @@ def registration(config, helper_directory, python):
         raise ValueError('Enroll the existing separate pure task-helper executable')
     if helper.parent != Path(cfg['home'])/'task-helpers':
         raise ValueError('Task helper must use the dedicated game helper directory')
-    for filename in ('installation_participant.py','installation_source_provider.py'):
+    for filename in ('installation_participant.py','installation_source_provider.py','installation_session_probe.py'):
         if not (helper_directory/filename).is_file():raise ValueError('Install fixed owner helper files first')
     scope={'services':[],'instance':False,'slack_homes':[]}
     def command(script,action):return [str(python),str(helper_directory/script),'--config',str(config),action]
