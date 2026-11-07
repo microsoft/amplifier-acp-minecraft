@@ -1,6 +1,7 @@
 """Official-SDK peer; disposable, no provider, credentials or Minecraft access."""
 import asyncio
 import json
+import sys
 from acp import Agent, InitializeResponse, NewSessionResponse, PromptResponse, run_agent
 from acp.schema import AgentCapabilities, AgentMessageChunk, TextContentBlock, LoadSessionResponse
 from acp.exceptions import RequestError
@@ -13,7 +14,10 @@ class Peer(Agent):
 
     async def initialize(self, protocol_version, **kwargs):
         return InitializeResponse(protocol_version=protocol_version,
-                                  agent_capabilities=AgentCapabilities(load_session=True))
+                                  agent_capabilities=AgentCapabilities(load_session=True),
+                                  field_meta=({'com.microsoft.amplifier.context-snapshot': {
+                                      'version': 1, 'contentBlocks': True, 'originalHistoryPreserved': True}}
+                                      if 'snapshots' in sys.argv else None))
 
     async def new_session(self, cwd, **kwargs):
         return NewSessionResponse(session_id='sdk-session')
@@ -28,9 +32,11 @@ class Peer(Agent):
 
     async def prompt(self, session_id, prompt, **kwargs):
         mode = prompt[-1].text
-        if mode == 'fail':
+        if mode == 'snapshot-wire':
+            await self.chunk(session_id, json.dumps([p.model_dump(by_alias=True, exclude_none=True) for p in prompt]))
+        elif mode == 'fail':
             raise RequestError(-32001, 'private error must not appear in adapter diagnostics')
-        if mode == 'filesystem':
+        elif mode == 'filesystem':
             try:
                 await self.connection.read_text_file(session_id=session_id, path='/must-not-read')
                 raise AssertionError('Unadvertised filesystem callback allowed')

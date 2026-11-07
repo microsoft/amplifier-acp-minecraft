@@ -12,6 +12,7 @@ import time
 import urllib.request
 from conversation_awareness import Awareness
 from planner_prompt import planner_prompt
+from context_snapshot import retained_request
 from prompt_lifecycle import await_terminal
 from sequence_settlement import settle_sequence
 from acp_client import Client, turn_disposition, GAME_TOOLS, REPLY_TOOLS
@@ -346,7 +347,8 @@ async def run(home):
                 operator_awareness=Awareness(home,client,await request('/operator-inputs'),observe,audience='operator')
             except Exception as error:
                 observe('operator_awareness_unavailable',category=type(error).__name__,fallback='queued_input')
-            pending=asyncio.create_task(client.prompt(prompt,attention_offer=attention_offer))
+            pending=asyncio.create_task(client.prompt(prompt,attention_offer=attention_offer,
+                snapshot_retained=retained_request(messages,world),snapshot_key=identity))
             last_renewed=time.monotonic()
             try:
                 while not pending.done():
