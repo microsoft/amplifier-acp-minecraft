@@ -5,7 +5,7 @@ import json
 import sys
 import platform
 from pathlib import Path
-from installation_guard import read
+from installation_guard import read, enrollment_ids
 from installation_participant import verification_seconds
 from installation_source_provider import Provider
 
@@ -17,6 +17,7 @@ def registration(config, helper_directory, python):
     if not all(p.is_absolute() for p in (config,helper_directory,python)):
         raise ValueError('Use absolute owner-installed helper/config/interpreter paths')
     cfg=read(config);Provider(cfg);verification_seconds(cfg)
+    participant_id, ids = enrollment_ids(cfg)
     plans=Path(cfg.get('shared_plans',''))
     if (not plans.is_absolute() or plans.resolve()!=plans or not plans.is_dir()
             or plans.is_relative_to(Path(cfg['home'])) or plans.is_relative_to(Path(cfg['state']))):
@@ -33,11 +34,11 @@ def registration(config, helper_directory, python):
     scope={'services':[],'instance':False,'slack_homes':[]}
     def command(script,action):return [str(python),str(helper_directory/script),'--config',str(config),action]
     return {'components':[
-        {'id':'minecraft','provider':'command','protocol':2,'restart_scope':dict(scope),
+        {'id':ids['minecraft'],'provider':'command','protocol':2,'restart_scope':dict(scope),
          'commands':{action:command('installation_source_provider.py',action) for action in ('status','plan','apply','rollback','verify')}},
-        {'id':'task-helpers','kind':'runtime','binary':str(helper),'restart_scope':dict(scope)}],
-        'participants':[{'id':'minecraft','protocol':1,
-                         'components':['minecraft','task-helpers','instance','runtime','engine','container-image'],
+        {'id':ids['task-helpers'],'kind':'runtime','binary':str(helper),'restart_scope':dict(scope)}],
+        'participants':[{'id':participant_id,'protocol':1,
+                         'components':[ids['minecraft'],ids['task-helpers'],'instance','runtime','engine','container-image'],
                          'commands':{action:command('installation_participant.py',action) for action in ('prepare','verify','restore')}}]}
 
 

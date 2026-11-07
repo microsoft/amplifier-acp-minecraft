@@ -53,6 +53,17 @@ class RetentionTests(unittest.TestCase):
         durable_write(self.keep.root/'transactions'/(tx+'.json'),{'phase':'restored'})
         return envelope
 
+    def test_namespaced_retained_plan_protects_only_own_stage(self):
+        self.cfg['component_ids']={'minecraft':'minecraft-visit','task-helpers':'task-helpers-visit'}
+        plan=self.stage();self.age(plan)
+        identifier=str(uuid.uuid4());folder=self.plans/identifier;folder.mkdir()
+        durable_write(folder/'minecraft-visit.provider.json',{'id':identifier,'component':'minecraft-visit','plan':plan})
+        durable_write(folder/'plan.json',{'components':[{'id':'minecraft-visit','available':True}]})
+        self.provider.cleanup()
+        self.assertTrue(Path(plan['stage']).exists())
+        (folder/'minecraft-visit.provider.json').unlink()
+        with self.assertRaises(ContinuityError):self.keep.references()
+
     def test_repeated_busy_checks_reuse_immutable_verified_stage(self):
         first=self.stage();path=Path(first['stage']);manifest=(path/'manifest.json').read_bytes()
         for _ in range(5):self.assertEqual(self.stage()['stage'],first['stage'])

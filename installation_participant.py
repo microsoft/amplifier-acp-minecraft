@@ -13,7 +13,7 @@ from pathlib import Path
 
 from installation_guard import (ContinuityError, NotIdle, continuity, digest,
                                 durable_write, installation_lock, read,
-                                require_idle, restore_plan, snapshot, OBSERVATIONS)
+                                require_idle, restore_plan, snapshot, OBSERVATIONS, enrollment_ids)
 from update_admission import process_identity
 
 COMPONENTS = {'minecraft', 'task-helpers', 'instance', 'runtime', 'engine', 'container-image'}
@@ -26,9 +26,10 @@ def verification_seconds(cfg):
     return value
 
 
-def context(value):
+def context(value, cfg=None):
+    participant_id, _ = enrollment_ids(cfg or {})
     plan = value['plan']
-    if (value.get('participant') != 'minecraft' or plan.get('schema') != 1
+    if (value.get('participant') != participant_id or plan.get('schema') != 1
             or plan.get('operation') not in ('apply', 'rollback')
             or not isinstance(plan.get('components'), list)
             or any(not isinstance(v, str) for v in plan['components'])):
@@ -145,14 +146,17 @@ class Participant:
     def __init__(self, cfg, envelope, backend=None):
         self.c, self.envelope = cfg, envelope
         verification_seconds(cfg)
-        self.plan = context(envelope)
+        self.plan = context(envelope, cfg)
         self.tx = self.plan['transaction_id']
         self.root, self.home = Path(cfg['state']), Path(cfg['home'])
         self.root.mkdir(parents=True, exist_ok=True, mode=0o700)
         self.backend = backend or LocalInstallation(cfg)
         self.path = self.root/'transactions'/(self.tx+'.json')
         self.gate = self.home/'installation-updates/gate.json'
-        self.changed = COMPONENTS.intersection(self.plan['components'])
+        _, ids = enrollment_ids(cfg)
+        shared = COMPONENTS - {'minecraft','task-helpers'}
+        self.changed = shared.intersection(self.plan['components'])
+        self.changed.update(role for role, identifier in ids.items() if identifier in self.plan['components'])
         self.game = 'minecraft' in self.changed
         self.value = read(self.path) if self.path.exists() else None
         if self.value and (self.value['context_hash'] != digest(envelope) or self.value['config_hash'] != digest(cfg)):
