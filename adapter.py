@@ -153,6 +153,7 @@ async def human_reply_messages(request,connect,attention):
 
 
 async def run(home):
+    from update_admission import held as update_held
     cfg=json.loads((home/'config.json').read_text())
     endpoint=json.loads((home/'endpoint.json').read_text())
     endpoint['mcp_servers']=[{'type':'http','name':'minecraft','url':cfg.get('mcp_url',f"http://127.0.0.1:{cfg['control_port']}/mcp"),
@@ -244,12 +245,16 @@ async def run(home):
     while True:
         turn_started=False
         try:
+            if update_held(home,acknowledge=True):
+                await asyncio.sleep(2);continue
             await request('/recover',{});break
         except Exception:
             await asyncio.sleep(2)
     while True:
         turn_started=False
         try:
+            if update_held(home,acknowledge=True):
+                await asyncio.sleep(2);continue
             state=await request('/state')
             if not state.get('ready'):
                 await asyncio.sleep(2);continue

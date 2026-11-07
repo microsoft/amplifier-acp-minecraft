@@ -156,4 +156,4 @@ async function container(bot,p,a,check,{beforeTransfer=()=>{}}={}){
   if(b&&bot.currentWindow===b.window&&!b.window.selectedItem&&!unacknowledged){bot.closeWindow(b.window);opened.delete(bot);}
  }
 }
-module.exports={container,validate};
+module.exports={container,validate,inventorySnapshot:snapshot};

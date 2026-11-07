@@ -71,7 +71,7 @@ class InstallationGuardTests(unittest.TestCase):
     def test_pending_input_and_new_authority_fields_are_not_discarded(self):
         before = self.snap()
         for key, value in [('future_authority', {'revision': 3}),
-                           ('inbox', [{'id': 'new-human'}]), ('unknown_receipts', [])]:
+                           ('unknown_receipts', [])]:
             previous = copy.deepcopy(self.history)
             self.history[key] = value
             self.write()
@@ -79,6 +79,15 @@ class InstallationGuardTests(unittest.TestCase):
                 continuity(before, self.snap())
             self.history = previous
             self.write()
+
+    def test_new_incoming_observations_retained_but_old_input_cannot_be_removed(self):
+        self.history['inbox']=[{'id':'already-pending','source':'human'}];self.write()
+        before=self.snap()
+        self.history['inbox'].append({'id':'arrived','source':'human'})
+        self.history['activity_tracks']={'human':{'revision':'new-observation'}};self.write()
+        continuity(before,self.snap())
+        self.history['inbox'].pop(0);self.write()
+        with self.assertRaises(ContinuityError):continuity(before,self.snap())
 
     def test_rolling_events_can_arrive_without_authority_rollback(self):
         before = self.snap()

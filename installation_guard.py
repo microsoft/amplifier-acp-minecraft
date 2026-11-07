@@ -7,6 +7,7 @@ import hashlib
 import json
 import os
 import tempfile
+from collections import Counter
 from contextlib import contextmanager
 from pathlib import Path
 
@@ -17,6 +18,12 @@ class NotIdle(RuntimeError):
 
 class ContinuityError(RuntimeError):
     pass
+
+
+# Source observations can arrive while game admission is closed. These fields
+# confer no execution authority. Pending inbox/participation inputs may append,
+# but existing entries must not disappear or be edited during the cutover.
+OBSERVATIONS = {'events', 'inbox', 'participation_pending', 'activity_pending', 'activity_tracks'}
 
 
 def digest(value):
@@ -73,7 +80,7 @@ def protected_files(home):
     home = Path(home)
     files = {}
     # Source pointers and installation metadata have their own provider checks.
-    excluded = {'workshop.json', 'app-source.json', 'installation.json'}
+    excluded = {'workshop.json', 'app-source.json'}
     candidates = [p for p in home.glob('*.json') if p.name not in excluded]
     for folder in ('decisions', 'maintenance-receipts'):
         if (home/folder).is_symlink():
@@ -94,16 +101,18 @@ def snapshot(home, services, body=None, status=None):
     newly added fields, pending sources, unknown receipts and sequence IDs.
     """
     history = read(Path(home)/'workshop.json')
-    authority = {k: v for k, v in history.items() if k != 'events'}
+    authority = {k: v for k, v in history.items() if k not in OBSERVATIONS}
     if body is not None and body.get('task') != history.get('task'):
         raise NotIdle('Body and saved task disagree; inspect again after settlement')
     return {
         'home': str(Path(home).resolve()),
         'authority_hash': digest(authority),
+        'observations': {k:history.get(k) for k in OBSERVATIONS if k != 'events'},
         'task_hash': digest(history.get('task')),
         'turn': history.get('turn'),
         'sequence_states': [v.get('status') for v in history.get('action_sequences', [])],
         'protected_files': protected_files(home),
+        'source_metadata': digest(read(Path(home)/'app-source.json')) if (Path(home)/'app-source.json').exists() else None,
         'services': services,
         'body': None if body is None else {k: body.get(k) for k in (
             'ready', 'busy', 'turn_active', 'action_lease', 'inventory', 'position')},
@@ -159,11 +168,16 @@ def continuity(before, after, *, body_restart=False):
         'task': before['task_hash'] == after['task_hash'],
         'files': before['protected_files'] == after['protected_files'],
     }
+    for key in ('inbox', 'participation_pending'):
+        old=Counter(digest(item) for item in before.get('observations',{}).get(key) or [])
+        new=Counter(digest(item) for item in after.get('observations',{}).get(key) or [])
+        checks[key+'_retained'] = not (old-new)
     if before['body'] is not None:
         checks['world_observable'] = after['body'] is not None
         for key in ('inventory', 'position'):
             checks[key] = after['body'] is not None and before['body'][key] == after['body'][key]
     if not body_restart:
+        checks['source_metadata'] = before.get('source_metadata') == after.get('source_metadata')
         checks['body_process'] = all(
             before['services']['body'].get(k) == after['services']['body'].get(k)
             for k in ('MainPID', 'ExecMainStartTimestamp', 'ActiveState'))
