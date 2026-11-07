@@ -18,7 +18,7 @@ function fixture(name,semantic=false,extra={}){
   return realRequire(n);
  },module:{exports:{}},console:{log(){}},Buffer,
  process:{argv:['node','body.cjs',config],on(){},exit(){assert.fail('Unexpected process exit');}},setTimeout,clearTimeout});
- vm.runInContext(fs.readFileSync(path.join(root,'body.cjs'),'utf8')+'\nmodule.exports={history,inbox,operate,mcpServer,activityParticipation,readyFixture(){ready=true;},startFixtureTurn(){ready=true;turnUntil=Date.now()+240000;history.startTurn();}};',context,{filename:'body.cjs'});
+ vm.runInContext(fs.readFileSync(path.join(root,'body.cjs'),'utf8')+'\nmodule.exports={history,inbox,operate,mcpServer,activityParticipation,readyFixture(){ready=true;},busyFixture(){ready=true;busy=true;},startFixtureTurn(){ready=true;turnUntil=Date.now()+240000;history.startTurn();}};',context,{filename:'body.cjs'});
  return {bot,...context.module.exports,task,home,async request(url,payload,expectedStatus=200){
   const req=Readable.from(payload===undefined?[]:[JSON.stringify(payload)]);
   Object.assign(req,{url,method:payload===undefined?'GET':'POST',headers:{authorization:'Bearer fixture'}});
@@ -425,5 +425,28 @@ test('authenticated operator updates have their own bounded view, never public c
   assert.equal(room.messages.length,0);assert.equal(room.revision,'empty');
   assert.equal(f.inbox.length,1,'delivery facts never consume a request or grant authority');
   assert.equal(JSON.stringify(f.history.task()),before);
+ }finally{f.close();}
+});
+
+test('actual body can plan ahead during an operation without changing live movement or authority',async()=>{
+ const f=fixture('BuilderOne');try{
+  const {Vec3}=realRequire('vec3');f.bot.entity={position:new Vec3(.5,64,.5)};
+  f.bot.blockAt=p=>({name:p.y===63?'stone':'air',boundingBox:p.y===63?'block':'empty',shapes:p.y===63?[[0,0,0,1,1,1]]:[]});
+  f.bot.pathfinder={getPathTo(){assert.fail('Do not alter live pathfinder');}};
+  f.busyFixture();const before=JSON.stringify(f.history.data);
+  const result=await f.operate('plan_route',{x:5,y:64,z:0,mode:'walk_only',range:0,start:{x:3,y:64,z:0}});
+  assert.equal(result.reachable,true);assert.equal(result.hypothetical_start,true);assert.equal(result.steps[0].x,3);
+  assert.equal(f.bot.entity.position.x,.5);assert.equal(JSON.stringify(f.history.data),before);
+  await assert.rejects(f.operate('plan_route',{x:5,y:64,z:0,mode:'normal',range:0}),/live pathfinder/);
+  await assert.rejects(f.operate('plan_route',{x:5,y:64,z:0,mode:'normal',start:{x:3,y:64,z:0}}),/requires walk_only/);
+ }finally{f.close();}
+});
+test('actual server animation listener captures stationary human interaction without a task or fake chat',()=>{
+ const f=fixture('BuilderOne',true,{human_engagement:{enabled:true,activity_scope:'conversation_only'}});try{
+  const {Vec3}=realRequire('vec3');const entity={position:new Vec3(0,64,0)};
+  f.bot.players.Human={username:'Human',uuid:'12345678-1234-1234-1234-123456789abc',entity};
+  const before=JSON.stringify(f.history.data.task);f.bot.emit('entitySwingArm',entity);
+  const p=f.activityParticipation.proposal();assert.equal(p.context.activities[0].kind,'interaction');
+  assert.equal(p.context.messages.length,0);assert.equal(f.inbox.length,0);assert.equal(JSON.stringify(f.history.data.task),before);
  }finally{f.close();}
 });

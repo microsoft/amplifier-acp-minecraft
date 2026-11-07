@@ -10,15 +10,15 @@ function walkable(bot,p){
  // Full flat footing only. Slabs/stairs/climbing belong to normal navigation.
  return (floor.shapes||[]).some(s=>s[0]===0&&s[1]===0&&s[2]===0&&s[3]===1&&s[4]===1&&s[5]===1);
 }
-function plan(bot,target,range=0,{maxNodes=4096,radius=64}={}){
- const start=bot.entity.position.floored(),goal=new FeetGoal(target.x,target.y,target.z,range);
- const result=(status,path=[],examined=0)=>({mode:'walk_only',reachable:status==='success',status,current_feet:bot.entity.position.clone(),target,range,exact_feet_y:true,
+function plan(bot,target,range=0,{maxNodes=4096,radius=64,startPosition=null}={}){
+ const plannedFrom=(startPosition||bot.entity.position).clone(),start=plannedFrom.floored(),goal=new FeetGoal(target.x,target.y,target.z,range);
+ const result=(status,path=[],examined=0)=>({mode:'walk_only',reachable:status==='success',status,current_feet:bot.entity.position.clone(),planned_from:plannedFrom,hypothetical_start:startPosition!==null,target,range,exact_feet_y:true,
   steps:path.map(p=>({x:p.x,y:p.y,z:p.z})),examined,
   constraints:'Level cardinal walking on full footing; no jumping, climbing, swimming, digging or diagonal shortcuts.',
   coverage:'Loaded terrain, bounded search. Rechecked during movement; planning is not arrival.'});
  // A floored center cell can look clear while the player's edge rests on a
  // neighboring slab. Do not advertise a level route that fails its first guard.
- if(bot.entity.position.y>start.y+.125)return result('non_level_start');
+ if(plannedFrom.y>start.y+.125)return result('non_level_start');
  if(target.y!==start.y)return result('different_elevation');
  if(!walkable(bot,start))return result('unsafe_start');
  const queue=[start],parents=new Map([[key(start),null]]),seen=new Set([key(start)]);
