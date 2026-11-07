@@ -18,6 +18,15 @@ class ContextRegistrationTests(unittest.TestCase):
         old={'id':'minecraft:jarvis:visit','label':'old','url':'http://127.0.0.1:45851','secret_ref':'minecraft-jarvis-context','configured':True}
         self.assertEqual(registration(self.cfg(),[old])['secret_ref'],'minecraft-jarvis-context')
 
+    def test_new_host_disabled_fields_are_preserved_without_inventing_old_host_fields(self):
+        first=registration(self.cfg('minecraft:jarvis:home',45850),[])['provider']
+        second=registration(self.cfg(),[])['provider']
+        providers=[{**first,'enabled':False},{**second,'enabled':False}]
+        result=registration(self.cfg(),providers)
+        self.assertEqual([p['enabled'] for p in result['providers']],[False,False])
+        self.assertNotIn('enabled',registration(self.cfg(),[first])['provider'])
+        self.assertNotIn('enabled',registration(self.cfg(),[first])['providers'][0])
+
     def test_collision_or_changed_route_refused_before_any_api(self):
         other={'id':'other','url':'http://127.0.0.1:45850','secret_ref':'shared'}
         with self.assertRaisesRegex(ValueError,'Another connection'):

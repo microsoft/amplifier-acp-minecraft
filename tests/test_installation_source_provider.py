@@ -130,6 +130,22 @@ class SourceProviderTests(unittest.TestCase):
         self.assertEqual(delta['components'][1]['kind'],'runtime')
         for c in delta['components']:self.assertEqual(c['restart_scope'],{'services':[],'instance':False,'slack_homes':[]})
         self.assertEqual(delta['participants'][0]['protocol'],1)
+    def test_saved_connection_enrollment_is_explicit_fixed_argv_and_no_dead_add(self):
+        helper=Path(self.cfg['task_helper']);helper.parent.mkdir();helper.write_text('existing')
+        config=self.root/'config.json';durable_write(config,self.cfg)
+        helpers=Path(__file__).resolve().parent.parent
+        self.assertNotIn('service_connections',registration(config,helpers,Path(sys.executable)))
+        self.cfg['service_connection']={'id':'minecraft-visit','label':'Visit','revision':'c'*64,
+            'context_provider_ids':['minecraft:tester:visit']}
+        durable_write(config,self.cfg)
+        catalog=registration(config,helpers,Path(sys.executable))['service_connections']
+        self.assertEqual(catalog['services'],[{'id':'minecraft','label':'Minecraft'}])
+        entry=catalog['connections'][0]
+        for action in ('status','connect','disconnect'):
+            self.assertEqual(entry['commands'][action],[sys.executable,str(helpers/'installation_connection.py'),
+                '--config',str(config),action])
+        self.assertEqual(entry['revision'],'c'*64)
+
     def test_enrollment_namespaces_two_connections_and_keeps_shared_scope(self):
         self.cfg.update(participant_id='minecraft-visit',component_ids={'minecraft':'minecraft-visit','task-helpers':'task-helpers-visit'})
         helper=Path(self.cfg['task_helper']);helper.parent.mkdir();helper.write_text('existing')

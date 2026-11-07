@@ -36,6 +36,7 @@ const { addressed, conversationRouter, peerIntent } = require('./routing.cjs');
 const cfg = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
 const updateAdmission=require('./update-admission.cjs');
 const requireAdmission=()=>updateAdmission.requireOpen(path.dirname(process.argv[2]));
+if(!require('./connection-state.cjs').transportAllowed(path.dirname(process.argv[2]))){console.log('Saved Minecraft connection is disconnected.');process.exit(0);}
 const version=cfg.version||'1.21.1';
 const taskHelperCommand=cfg.task_helpers?.command||cfg.decision_attention?.command;
 const {TaskIntake,INTAKE_TOOLS}=require('./task-intake.cjs');

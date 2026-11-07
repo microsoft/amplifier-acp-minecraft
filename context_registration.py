@@ -31,6 +31,10 @@ def registration(cfg, providers):
         raise ValueError('Context registry label or provider limit exceeded')
     provider = {'id':identifier,'label':label,
                 'url':url,'secret_ref':secret}
-    clean = [{k:v for k,v in p.items() if k in ('id','label','url','secret_ref')}
+    # Preserve an explicitly disabled provider returned by newer hosts. Do not
+    # invent the optional field when talking to an older host.
+    if matches and 'enabled' in matches[0]:
+        provider['enabled'] = matches[0]['enabled']
+    clean = [{k:v for k,v in p.items() if k in ('id','label','url','secret_ref','enabled')}
              for p in providers if p.get('id') != identifier]
     return {'provider':provider, 'providers':clean+[provider], 'secret_ref':secret}

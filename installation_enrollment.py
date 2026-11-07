@@ -29,17 +29,29 @@ def registration(config, helper_directory, python):
         raise ValueError('Enroll the existing separate pure task-helper executable')
     if helper.parent != Path(cfg['home'])/'task-helpers':
         raise ValueError('Task helper must use the dedicated game helper directory')
-    for filename in ('installation_participant.py','installation_source_provider.py','installation_session_probe.py','installation_retention.py'):
+    for filename in ('installation_participant.py','installation_source_provider.py','installation_session_probe.py','installation_retention.py','connection_state.py'):
         if not (helper_directory/filename).is_file():raise ValueError('Install fixed owner helper files first')
     scope={'services':[],'instance':False,'slack_homes':[]}
     def command(script,action):return [str(python),str(helper_directory/script),'--config',str(config),action]
-    return {'components':[
+    result = {'components':[
         {'id':ids['minecraft'],'provider':'command','protocol':2,'restart_scope':dict(scope),
          'commands':{action:command('installation_source_provider.py',action) for action in ('status','plan','apply','rollback','verify')}},
         {'id':ids['task-helpers'],'kind':'runtime','binary':str(helper),'restart_scope':dict(scope)}],
         'participants':[{'id':participant_id,'protocol':1,
                          'components':[ids['minecraft'],ids['task-helpers'],'instance','runtime','engine','container-image'],
                          'commands':{action:command('installation_participant.py',action) for action in ('prepare','verify','restore')}}]}
+    if cfg.get('service_connection') is not None:
+        from installation_connection import descriptor
+        entry = descriptor(cfg)
+        for filename in ('installation_connection.py','connection_state.py','connection_session_job.py'):
+            if not (helper_directory/filename).is_file():
+                raise ValueError('Install fixed connection helpers before enrollment')
+        result['service_connections'] = {'schema':1,
+            'services':[{'id':'minecraft','label':'Minecraft'}],
+            'connections':[{**entry,'service':'minecraft','commands':{
+                action:command('installation_connection.py',action)
+                for action in ('status','connect','disconnect')}}]}
+    return result
 
 
 if __name__=='__main__':

@@ -145,7 +145,11 @@ Both `minecraft` and `task-helpers` explicitly request
 game units; the generic updater owns no game services.
 
 Include `installation_session_probe.py` with the fixed owner helpers. The
-participant invokes it using the stable enrolled game `venv/bin/python`, with
+participant also requires `connection_state.py`, which defers verification
+updates while an explicitly disconnected connection remains offline. Optional
+[saved connection controls](docs/saved-connections.md) share this lifecycle lock
+and preserve the updater registration.
+The participant invokes the session probe using the stable enrolled game `venv/bin/python`, with
 only initialize/session-load operations and permission callbacks disabled.
 It does not send prompts, maintenance, receipt acknowledgments or session/new.
 By default the probe receives a 12-second operation budget within the legacy
