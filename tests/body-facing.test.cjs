@@ -4,7 +4,7 @@ const fs=require('node:fs'),os=require('node:os'),path=require('node:path'),vm=r
 const {EventEmitter}=require('node:events'),{createRequire}=require('node:module');
 const {Vec3}=require('vec3');
 const root=path.resolve(__dirname,'..'),realRequire=createRequire(path.join(root,'body.cjs'));
-function fixture(item,properties={facing:'south'},actual=item){
+function fixture(item,properties={facing:'south'},actual=item,refusal=null){
  const home=fs.mkdtempSync(path.join(os.tmpdir(),'body-facing-'));
  const config=path.join(home,'config.json');fs.writeFileSync(config,JSON.stringify({username:'Builder',token:'fixture'}));
  const target=new Vec3(0,64,0),bot=new EventEmitter();let placed='air',sends=0,options=null,look=null,ordinary=0;
@@ -13,7 +13,7 @@ function fixture(item,properties={facing:'south'},actual=item){
  bot.pathfinder={setGoal(){}};bot.inventory={items:()=>[{name:item,count:1}]};
  bot.equip=async i=>{bot.heldItem=i;};bot.lookAt=async p=>{look=p.minus(bot.entity.position);};
  bot.blockAt=p=>({name:p.equals(target)?placed:'stone',position:p,boundingBox:p.equals(target)?'empty':'block',getProperties:()=>p.equals(target)?properties:{}});
- const send=()=>{sends++;placed=actual;bot.emit('blockUpdate',null,bot.blockAt(target));};
+ const send=()=>{sends++;if(refusal)throw Error(refusal);placed=actual;bot.emit('blockUpdate',null,bot.blockAt(target));};
  bot._placeBlockWithOptions=async(block,normal,o)=>{assert.ok(block.position.plus(normal).equals(target));options=o;send();};
  bot.placeBlock=async()=>{ordinary++;send();};
  const spatial=realRequire('./spatial.cjs');
@@ -31,7 +31,7 @@ function fixture(item,properties={facing:'south'},actual=item){
  const request=history.record({kind:'chat',source:'human',accepted:true,username:'Owner',message:'Build the accepted project',time:new Date().toISOString()});
  history.begin({request_id:request.id,goal:'Existing construction task'});history.startTurn();turnUntil=Date.now()+240000;
  module.exports={operate,history};`,context,{filename:'body.cjs'});
- return {...context.module.exports,run:facing=>context.module.exports.operate('place',{x:0,y:64,z:0,item,support_face:'up',...(facing?{facing}:{})}),
+ return {...context.module.exports,bot,run:facing=>context.module.exports.operate('place',{x:0,y:64,z:0,item,support_face:'up',...(facing?{facing}:{})}),
   observation:()=>({sends,options,look,ordinary}),close:()=>fs.rmSync(home,{recursive:true,force:true})};
 }
 const furnaceLook={north:[0,1],south:[0,-1],east:[-1,0],west:[1,0]};
@@ -76,4 +76,15 @@ test('unsupported explicit facing is rejected before inventory effects or moveme
    await assert.rejects(f.run('south'),/facing.*supported/i);assert.equal(f.observation().sends,0);assert.equal(f.observation().look,null);
   }finally{f.close();}
  }
+});
+test('partial build retains failed coordinates, occupancy hints and authority without replay',async()=>{
+ const f=fixture('oak_planks',{},'air','Server refused to place oak_planks: the block is still air');
+ try{
+  f.bot.entity.position=new Vec3(.5,64,.5);const before=JSON.stringify(f.history.task());
+  const r=await f.operate('build',{item:'oak_planks',support_face:'up',blocks:[{x:0,y:64,z:0},{x:1,y:64,z:0}]});
+  assert.equal(r.placed.length,0);assert.equal(r.failed_at.x,0);assert.equal(r.repair.code,'placement_unconfirmed');
+  assert.equal(r.repair.observed.target_player_overlaps[0].self,true);assert.match(r.repair.next_steps.join(' '),/outside the placement cell/);
+  assert.equal(f.observation().sends,1);assert.equal(JSON.stringify(f.history.task()),before);
+  assert.equal(f.history.data.events.at(-1).result.repair.code,'placement_unconfirmed');
+ }finally{f.close();}
 });
