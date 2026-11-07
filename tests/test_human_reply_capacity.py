@@ -63,21 +63,21 @@ class HumanReplyCapacity(unittest.IsolatedAsyncioTestCase):
   async def connect():self.fail('Existing independent input needs no re-evaluation')
   self.assertEqual([m['id'] for m in await adapter.human_reply_messages(request,connect,None)],['fresh-human'])
 
- async def exercise(self,status='running',provider_failure=False,chat_only=False,intake=False):
+ async def exercise(self,status='running',provider_failure=False,chat_only=False,intake=False,priority_work=False):
   task={'id':'original','status':status,'deadline':time.time()*1000+(-1000 if status=='budget_exhausted' else 600000),'turns':30,'max_turns':45}
   before=copy.deepcopy(task);paths=[];active=False
   message={'id':'human','source':'human','message':'What are you working on?'}
-  world={'ready':True,'busy':False,'generation':7,'task':task,'conversation':{'revision':'human','messages':[]},'conversation_only':True}
+  world={'ready':True,'busy':False,'generation':7,'task':task,'conversation':{'revision':'human','messages':[]},'conversation_only':not priority_work}
   def control(cfg,path,payload=None):
    nonlocal active
    paths.append((path,payload))
    if path in ('/state','/observation'):return {**world,'turn_active':active,'pending_messages':1}
    if path=='/continuation':return {'action':'hold'}
-   if path=='/conversation/admission':return {'version':1,'remaining':1,'eligible_ids':['human']}
-   if path=='/inbox/peek':return [message]
+   if path=='/conversation/admission':return {'version':1,'unmetered':priority_work,'remaining':None if priority_work else 1,'eligible_ids':[] if priority_work else ['human']}
+   if path=='/inbox/peek':return [] if priority_work else [message]
    if path=='/turn':
-    self.assertTrue(payload['conversation_only']);self.assertFalse(payload['renewable_lease']);active=True;return {'active':True}
-   if path=='/status':return {'turn_active':active,'busy':False,'conversation_only':True,'task_intake_enabled':intake}
+    self.assertEqual(payload['conversation_only'],not priority_work);self.assertEqual(payload['renewable_lease'],priority_work);active=True;return {'active':True}
+   if path=='/status':return {'turn_active':active,'busy':False,'conversation_only':not priority_work,'task_intake_enabled':intake}
    if path=='/conversation':return world['conversation']
    if path=='/finish':raise asyncio.CancelledError()
    if path in ('/recover','/reply'):return {}
@@ -89,7 +89,8 @@ class HumanReplyCapacity(unittest.IsolatedAsyncioTestCase):
    def transport_closed(self):return False
    async def close(self):pass
    async def prompt(self,text,**kwargs):
-    self_outer.assertIn('CONVERSATION-ONLY TURN',text)
+    if priority_work:self_outer.assertNotIn('CONVERSATION-ONLY TURN',text)
+    else:self_outer.assertIn('CONVERSATION-ONLY TURN',text)
     if intake:
      self_outer.assertIn('task_accept',self.permission_tools())
      self_outer.assertNotIn('place',self.permission_tools())
@@ -97,14 +98,17 @@ class HumanReplyCapacity(unittest.IsolatedAsyncioTestCase):
     return {'text':'Working on the harbor.','final_text':'Working on the harbor.','stop_reason':'end_turn','unsettled_tools':[]}
   self_outer=self
   with tempfile.TemporaryDirectory() as tmp:
-   home=Path(tmp);cfg={'control_port':1,'token':'fixture','incoming_chat_only':chat_only,'human_task_intake':{'enabled':intake}};ep={'command':['unused'],'cwd':tmp};calls=[] if chat_only else [time.time()]*30
+   home=Path(tmp);cfg={'control_port':1,'token':'fixture','incoming_chat_only':chat_only,'human_task_intake':{'enabled':intake},'human_engagement':{'enabled':priority_work}};ep={'command':['unused'],'cwd':tmp};calls=[] if chat_only else [time.time()]*30
    bound={**ep,'mcp_servers':[{'type':'http','name':'minecraft','url':'http://127.0.0.1:1/mcp','headers':[{'name':'Authorization','value':'Bearer fixture'}]}]}
    for name,value in [('config',cfg),('endpoint',ep),('calls',calls),('session',{'binding':hashlib.sha256(json.dumps(bound,sort_keys=True).encode()).hexdigest(),'session':'saved'})]:
     (home/(name+'.json')).write_text(json.dumps(value))
    with patch.object(adapter,'control',control),patch.object(adapter,'Client',lambda *a:Client()),contextlib.redirect_stdout(io.StringIO()):
     with self.assertRaises(asyncio.CancelledError):await asyncio.wait_for(adapter.run(home),2)
-   self.assertEqual(json.loads((home/'calls.json').read_text()),calls)
-   self.assertEqual(len(json.loads((home/'reply-calls.json').read_text())),1)
+   if priority_work:
+    saved=json.loads((home/'calls.json').read_text());self.assertEqual(saved[:30],calls);self.assertEqual(len(saved),31);self.assertFalse((home/'reply-calls.json').exists())
+   else:
+    self.assertEqual(json.loads((home/'calls.json').read_text()),calls)
+    self.assertEqual(len(json.loads((home/'reply-calls.json').read_text())),1)
   self.assertEqual(task,before);self.assertNotIn('/turn/renew',[p for p,_ in paths])
   if chat_only:self.assertNotIn('/continuation',[p for p,_ in paths])
   self.assertEqual(any(p=='/reply' for p,_ in paths),not provider_failure)
@@ -147,3 +151,7 @@ class HumanReplyCapacity(unittest.IsolatedAsyncioTestCase):
   async def connect():self.fail('Already queued human source needs no connection')
   result=await adapter.human_reply_messages(request,connect,None)
   self.assertEqual([m['id'] for m in result],['human'])
+
+ async def test_human_priority_removes_connector_work_pacing_with_full_hourly_counter(self):
+  await self.exercise(priority_work=True)
+  await self.exercise(priority_work=True,provider_failure=True)

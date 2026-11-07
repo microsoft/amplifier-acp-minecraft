@@ -105,7 +105,7 @@ function hear(username,message,whisper=false,transport=null){
   if(route&&/\b(stop|pause)\b/i.test(message)){stop();inbox.length=0;history.data.participation_pending=[];history.stop();taskIntake.revokeSources();history.save();record('stopped_by_player',{username});bot.chat('Stopped.');return;}
   if(semantic){participation.queue(e);return;}
   if(!route)return;
-  if(inbox.length<8){inbox.push({id:e.id,username,message,whisper,source:'human'});history.save();}
+  if(priority||inbox.length<8){inbox.push({id:e.id,username,message,whisper,source:'human'});history.save();}
 }
 bot.on('message',(m,position,sender,verified)=>chatProvenance.observe(m,position,sender,verified,bot.players));
 bot.on('chat',(u,m,_translation,json)=>hear(u,m,false,chatProvenance.get(u,json)));bot.on('whisper',(u,m,_translation,json)=>hear(u,m,true,chatProvenance.get(u,json)));
@@ -427,7 +427,7 @@ const server=http.createServer(async(req,res)=>{
       }else result={action:'hold'};
     }
     else if(req.method==='GET'&&req.url==='/status')result={ready,busy,turn_active:Date.now()<turnUntil,incoming_chat_only:cfg.incoming_chat_only===true,conversation_only:history.data.turn?.conversation_only===true,task_intake_enabled:taskIntake.capabilities().task_intake_enabled,task_capabilities:taskIntake.capabilities(),task:history.task(),action_lease:lease.view(history.task())};
-    else if(req.method==='GET'&&req.url==='/inbox/peek')result=inbox.slice(0,8);
+    else if(req.method==='GET'&&req.url==='/inbox/peek')result=(cfg.human_engagement?.enabled===true&&inbox.some(m=>m.source==='human'&&!m.attention_offer)?inbox.filter(m=>m.source==='human'&&!m.attention_offer):inbox).slice(0,8);
     else if(req.method==='GET'&&req.url==='/conversation/admission')result=replyAdmission.status(inbox);
     else if(req.method==='GET'&&['/participation','/participation?human_only=1'].includes(req.url))result=participation.enabled?participationProposal(req.url.endsWith('human_only=1')):null;
     else if(req.method==='POST'&&req.url==='/participation'){

@@ -339,3 +339,11 @@ test('verified addressed human bypasses optional attention budget; other-agent s
   assert.equal(f.history.data.task.status,'budget_exhausted');
  }finally{f.close();}
 });
+test('human priority retains a burst beyond one turn batch without dropping or promoting peers',async()=>{
+ const f=fixture('BuilderOne',true,{human_engagement:{enabled:true}});try{
+  const uuid='00000000-0000-0000-0000-000000000123';f.bot.players.Visitor={uuid};
+  for(let i=0;i<12;i++){const raw={};f.bot.emit('message',raw,'chat',uuid,false);f.bot.emit('chat','Visitor','BuilderOne, message '+i,null,raw);}
+  assert.equal(f.inbox.length,12);assert.equal((await f.request('/inbox/peek')).length,8);
+  assert.equal(new Set(f.inbox.map(m=>m.id)).size,12);
+ }finally{f.close();}
+});
