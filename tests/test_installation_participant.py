@@ -162,5 +162,17 @@ class ParticipantTests(unittest.TestCase):
             with self.assertRaises(ContinuityError):p.verify('applied')
         self.assertTrue(held(self.home));self.assertNotEqual(p.value['phase'],'verified')
 
+    def test_explicit_long_verification_budget_does_not_change_task_authority(self):
+        from unittest.mock import patch
+        self.cfg['session_verification_seconds']=180
+        p=self.ready();before=read(self.home/'workshop.json')
+        with patch.object(self.backend,'session',wraps=self.backend.session) as session:
+            p.verify('applied')
+        self.assertGreater(session.call_args.kwargs['timeout'],180)
+        self.assertLessEqual(session.call_args.kwargs['timeout'],186)
+        self.assertEqual(read(self.home/'workshop.json'),before)
+        self.assertTrue(held(self.home))
+        p.restore('applied')
+        self.assertFalse(held(self.home))
 
 if __name__=='__main__': unittest.main()
