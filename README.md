@@ -12,6 +12,11 @@ The agent can use Constellation, Codex, or another ACP implementation that suppo
 HTTP MCP. No model SDK, shared agent memory, custom Minecraft mod, or Agent
 Instance management API is required. Optional integrations are described below.
 
+For optional installation-owned source/dependency updates, a separate pure task
+helper, and safe participation in shared component updates, see
+[installation updates](INSTALLATION-UPDATES-DESIGN.md). Source installation alone
+does not enable automatic updates or authorize new game work.
+
 ## Set up a player
 
 Requirements: Node 22+, Python 3.12+, a Minecraft Java Edition server compatible
