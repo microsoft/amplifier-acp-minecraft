@@ -1,7 +1,8 @@
 // Local world-execution authority. Social attention and ACP remain independent.
 const {createHash,randomUUID}=require('node:crypto');
 const {ConversationAdmission}=require('./conversation-admission.cjs');
-const INTAKE_TOOLS=new Set(['task_accept','task_amend']);
+const delegation=require('./delegation.cjs');
+const INTAKE_TOOLS=new Set(['task_accept','task_amend','task_accept_help']);
 const canonical=v=>Array.isArray(v)?v.map(canonical):v&&typeof v==='object'?Object.fromEntries(Object.keys(v).sort().map(k=>[k,canonical(v[k])])):v;
 const digest=value=>createHash('sha256').update(JSON.stringify(canonical(value))).digest('hex');
 class TaskIntake {
@@ -31,7 +32,8 @@ class TaskIntake {
   return {version:1,mode:enabled?'human_requests':configured_chat_only?'chat_only':'legacy_work',
    configured_chat_only,conversation_only,task_intake_enabled:enabled&&!policy_error,
    can_accept,can_amend:!!can_amend,work_blocked_reason,
-   can_delegate_execution:false,delegation_reason:'Peer messages and responsibility records do not grant this body execution authority.',
+   can_delegate_execution:false,can_accept_help:enabled&&delegation.enabled(this.cfg)&&can_accept,delegation_reason:'A helper may independently accept a fresh locally verified human authorization and peer proposal when enabled. Aggregate budgets and further delegation are unavailable.',
+   delegation_sources:delegation.humans(this.history,this.cfg,this.now()).map(e=>({id:e.id,username:e.username,message:e.message,time:e.time})),
    autonomous_work_allowed:enabled?(!policy_error&&this.runnable()):!configured_chat_only,
    defaults:limits?{turns:limits.default_turns,seconds:limits.default_seconds}:null,
    ceilings:limits?{cumulative_turns:limits.max_turns,seconds_from_amendment:limits.max_seconds}:null,
@@ -79,17 +81,31 @@ class TaskIntake {
   const result={task_id:task.id,status:task.status,authority_revision:task.authority_revision,turns:task.turns,max_turns:task.max_turns,deadline:task.deadline,accepted:true,execution_started:false};
   this.persist({...changes,task,task_authorizations:[...(this.history.data.task_authorizations||[]),{id:randomUUID(),at:this.now(),operation,source,arguments_hash:digest(args),previous,result}]});return result;
  }
- accept(args){
-  const duplicate=this.receipt('accept',args);if(duplicate)return duplicate;
-  const source=this.source(args.request_id),limits=this.limits(),old=this.history.task();
+ acceptHelp(args){
+  const duplicate=this.receipt('accept_help',args);if(duplicate)return duplicate;
+  const turn=this.history.data.turn,root=delegation.humans(this.history,this.cfg,this.now()).find(e=>e.id===args.request_id);
+  const peer=delegation.peer(this.history,this.cfg,{id:args.peer_request_id,source:'agent'},this.now());
+  if(!turn?.conversation_only||turn.ambient_activity||!turn.request_ids.includes(args.peer_request_id)||!root||!peer)throw Error('Fresh original public human evidence and a bound authenticated peer request are required');
+  if(Date.parse(peer.time)<Date.parse(root.time))throw Error('Peer proposal precedes its human authorization');
+  if((this.history.data.accepted_delegation_sources||[]).includes(peer.id))throw Error('Peer proposal already consumed');
+  if(args.budget_scope!=='independent_per_agent'||typeof args.authorization_quote!=='string'||args.authorization_quote.length<8||args.authorization_quote.length>600||!root.message.includes(args.authorization_quote))throw Error('Quote the original explicit helper authorization and use independently authorized per-agent limits; aggregate allocation is unsupported');
+  const original={id:root.id,actor:{kind:'human',name:root.username,server_player_uuid:root.transport.uuid},audience:{kind:'public',experience:'minecraft'},message:root.message,time:root.time};
+  const source={...original,username:root.username,revision:digest(original),source_hash:digest(root),transport:root.transport,evidence_origin:'server_player_uuid'};
+  return this.accept(args,{source,peer:{id:peer.id,name:peer.username,transport:peer.transport,time:peer.time,message:peer.message,source_hash:digest(peer)},authorization_quote:args.authorization_quote,budget_scope:args.budget_scope,may_delegate_further:false});
+ }
+ accept(args,help=null){
+  const operation=help?'accept_help':'accept',duplicate=this.receipt(operation,args);if(duplicate)return duplicate;
+  const source=help?.source||this.source(args.request_id),limits=this.limits(),old=this.history.task();
   if(this.requiresReview(old))throw Error('Unresolved interrupted work requires effects review before another assignment');
   if(old&&['running','waiting','blocked','needs_review'].includes(old.status))throw Error('Current assignment must be settled before accepting another');
   if(typeof args.goal!=='string'||!args.goal.trim()||args.goal.length>2000)throw Error('A bounded task goal is required');
   if(this.used(source.id))throw Error('Source already used');
   const max_turns=args.max_turns??limits.default_turns,seconds=args.seconds??limits.default_seconds;
   if(!Number.isInteger(max_turns)||max_turns<1||max_turns>limits.max_turns||!Number.isInteger(seconds)||seconds<120||seconds>limits.max_seconds)throw Error('Requested task limits exceed installation ceilings or are invalid');
-  const task={id:randomUUID(),goal:args.goal,request_id:source.id,requested_by:source.username,request:source.message,status:'running',turns:0,max_turns,deadline:this.now()+seconds*1000,progress:[],started_at:new Date(this.now()).toISOString(),reviewers:[],rework_requests:[],authority_revision:1,authority:{kind:'human_game_request',source}};
-  return this.commit('accept',args,source,task,null,{...(old?{task_history:[...(this.history.data.task_history||[]),old].slice(-10)}:{}),accepted_requests:[...(this.history.data.accepted_requests||[]),source.id]});
+  const deadline=(help?Date.parse(source.time):this.now())+seconds*1000;
+  if(help&&deadline-this.now()<120000)throw Error('Original helper allowance has insufficient time; no renewed deadline');
+  const task={id:randomUUID(),goal:args.goal,request_id:source.id,requested_by:source.username,request:source.message,status:'running',turns:0,max_turns,deadline,progress:[],started_at:new Date(this.now()).toISOString(),reviewers:[],rework_requests:[],authority_revision:1,authority:{kind:'human_game_request',source,...(help?{delegation:help}:{})}};
+  return this.commit(operation,args,source,task,null,{...(help?{accepted_delegation_sources:[...(this.history.data.accepted_delegation_sources||[]),help.peer.id]}:{}),...(old?{task_history:[...(this.history.data.task_history||[]),old].slice(-10)}:{}),accepted_requests:[...(this.history.data.accepted_requests||[]),source.id]});
  }
  amend(args){
   const duplicate=this.receipt('amend',args);if(duplicate)return duplicate;

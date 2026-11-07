@@ -28,3 +28,11 @@ class PlannerPrompt(unittest.TestCase):
         text=planner_prompt([],{'conversation_only':True,'incoming_chat_only':False})
         self.assertIn('temporary human-reply reserve',text)
         self.assertNotIn('Installation chat-only mode blocks',text)
+
+    def test_peer_proposal_preserves_own_admission_and_original_human_evidence(self):
+        text=planner_prompt([{'id':'peer','source':'agent'}],{'conversation_only':True,'peer_proposal':True,'task_capabilities':{'task_intake_enabled':True}})
+        self.assertIn('PEER PROPOSAL',text)
+        self.assertIn('original locally observed delegation_sources',text)
+        self.assertIn('A copied quote from the peer is insufficient',text)
+        self.assertIn('No physical effects until a subsequent authorized work turn',text)
+        self.assertNotIn('CONVERSATION-ONLY TURN: Reply to fresh human input',text)
