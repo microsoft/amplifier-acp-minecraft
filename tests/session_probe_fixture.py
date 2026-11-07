@@ -15,6 +15,11 @@ class Peer(Agent):
 
     async def initialize(self, protocol_version, **kwargs):
         self.record('initialize')
+        mode = os.environ.get('PROBE_MODE')
+        if mode == 'initialize-error':
+            raise RequestError(-32603, 'Initialization unavailable')
+        if mode == 'initialize-slow':
+            await asyncio.sleep(60)
         return InitializeResponse(protocol_version=protocol_version,
             agent_capabilities=AgentCapabilities(load_session=os.environ.get('PROBE_MODE')!='unsupported'))
 
