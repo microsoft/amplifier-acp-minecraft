@@ -199,3 +199,13 @@ test('selected cursor whose identity changed cannot be returned as the original 
  await assert.rejects(f.run('recover'),/Cannot safely return/);
  assert.equal(f.writes,1);assert.equal(f.closes,1);
 });
+test('obstruction failure returns exact current blocker geometry without opening or moving',async()=>{
+ const f=fixture();let opens=0;f.bot.activateBlock=()=>{opens++;};
+ f.bot.world.raycast=()=>({name:'oak_fence',position:new Vec3(0,1,0)});
+ await assert.rejects(f.run('inspect'),error=>{
+  assert.equal(error.details.code,'container_obstructed');assert.equal(error.details.blocker.name,'oak_fence');
+  assert.deepEqual(error.details.blocker.position,new Vec3(0,1,0));assert.deepEqual(error.details.target.position,f.p);
+  assert.deepEqual(error.details.eye,new Vec3(0,1.62,0));return true;
+ });
+ assert.equal(opens,0);assert.equal(f.writes,0);assert.deepEqual(f.bot.entity.position,new Vec3(0,0,0));
+});

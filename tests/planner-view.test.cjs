@@ -79,3 +79,11 @@ test('work report and note return recent progress while durable observations rem
   assert.equal(saved.task.turns,39);assert.equal(saved.task.unknown_receipt,'still-unknown');
  }finally{f.close();}
 });
+test('duplicate public text is represented once while source evidence and truncated text stay exact',()=>{
+ const event={kind:'chat',id:'human',username:'Visitor',source:'human',time:'now',message:'A long complete request',accepted:false,transport:{kind:'server_player_uuid',uuid:'original'}};
+ const message={id:event.id,author:event.username,time:event.time,text:event.message,source_fact:{id:event.id,revision:'original',occurredAt:42}};
+ const state={events:[event],conversation:{messages:[message]}};const original=clone(state),view=worldView(state);
+ assert.equal(view.events[0].message,undefined);assert.equal(view.events[0].conversation_message_id,event.id);
+ assert.deepEqual(view.events[0].transport,event.transport);assert.deepEqual(view.conversation,state.conversation);assert.deepEqual(state,original);
+ message.text='A long';assert.equal(worldView(state).events[0].message,event.message);
+});

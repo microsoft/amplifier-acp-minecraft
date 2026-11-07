@@ -27,7 +27,18 @@ function eventView(event){
 }
 function worldView(state){
  const {task,events=[],receipts=[],public_chat,...current}=state;
- return {...current,task:taskView(task),events:events.map(eventView),
+ const messages=new Map((current.conversation?.messages||[]).map(m=>[m.id,m]));
+ const compactEvents=events.map(event=>{
+  const message=messages.get(event.id);
+  // Drop only exactly duplicated text, not attribution/receipt facts or a
+  // longer source whose conversational projection was truncated.
+  if(event.kind==='chat'&&message?.text===event.message&&message?.author===event.username&&message?.time===event.time&&message?.source_fact?.id===event.id){
+   const {message:text,...evidence}=event;
+   return {...evidence,conversation_message_id:event.id};
+  }
+  return eventView(event);
+ });
+ return {...current,task:taskView(task),events:compactEvents,
   // Keep exact outcomes for recent actions; don't summarize uncertain effects as success.
   receipts:receipts.slice(-recentReceipts),
   history_view:{retained_receipts:receipts.length,shown_receipts:Math.min(receipts.length,recentReceipts),

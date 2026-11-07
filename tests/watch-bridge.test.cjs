@@ -39,3 +39,10 @@ test('environment facts use containing blocks including negative coordinates and
  assert.deepEqual(c.events[0].content.position,{x:-1,y:65,z:67});assert.equal(c.events[0].content.inventory_counts.oak_log,20);
  assert.equal(c.events[1].content[0].position.x,-4);
 });
+test('coordinate crop keys survive reordering and disappearance without substituting another crop',()=>{
+ const crop=(x,age)=>({name:'wheat',position:{x,y:63,z:1},properties:{age}});
+ const project=blocks=>context({username:'One'},{task:()=>null,data:{events:[]}},{ready:true,crops:{blocks,truncated:true}}).events.find(e=>e.id==='environment:crops').content;
+ const a=project([crop(-2,0),crop(-3,7)]),b=project([crop(-4,7),crop(-2,1)]),c=project([crop(-4,7)]);
+ assert.equal(a.by_position['-2,63,1'].properties.age,0);assert.equal(b.by_position['-2,63,1'].properties.age,1);
+ assert.equal(c.by_position['-2,63,1'],undefined);assert.equal(c.truncated,true);assert.equal(a.blocks.length,2);
+});

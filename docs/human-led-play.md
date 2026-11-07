@@ -171,3 +171,13 @@ attributed, admitted peer report can receive an effect-free reply even after the
 original human intake source expires. Accepting helper work still requires the
 original human authorization; conversation never grants or renews it. Legacy
 installations retain their configured peer limits.
+
+`observe` includes server roster join/leave facts and the current online roster.
+The initial roster on connection is not reported as a burst of new joins. These
+facts do not synthesize chat, automatically greet players or authorize work.
+Crop watches can use `environment:crops` with a path such as
+`/by_position/-2,63,1/properties/age`; absence means unobserved, not harvested or
+ripe. The legacy `blocks` array remains available. Container obstruction errors
+include the actual raycast blocker and eye/target geometry, without moving or
+choosing a route for the agent. Exactly duplicated public text is shown once in
+the recent planner view; full owner evidence remains available.
