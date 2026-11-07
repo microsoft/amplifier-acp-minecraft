@@ -4,6 +4,7 @@ The provider/auth/normalization implementation stays in agent-runtime. This
 module supplies game observations; a decision never executes a game action or
 creates a task. Only an explicitly waiting, previously authorized task can wake.
 """
+from task_bounds import allowance_remaining
 import asyncio
 import hashlib
 import math
@@ -75,8 +76,7 @@ class Attention:
     async def consider(self, state):
         task = state.get('task') or {}
         if (not self.config or task.get('status') != 'waiting' or not task.get('wait_for')
-            or task.get('deadline', 0) <= time.time()*1000
-            or task.get('turns', 0) >= task.get('max_turns', 0)):
+            or not allowance_remaining(task)):
             return False
         now = time.time()
         if now-self.last_poll < self.config.get('interval_seconds', 5):

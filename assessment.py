@@ -3,6 +3,7 @@
 No building strategy, action menu, shared team memory or authority is defined here.
 The same assessment works with arbitrary ACP agents; application is advisory.
 """
+from task_bounds import allowance_remaining
 import hashlib
 import json
 import time
@@ -51,8 +52,7 @@ class Assessment(Attention):
         task = state.get('task') or {}
         if (not self.config or task.get('status') != phase or not task.get('id')
             or not task.get('goal') or (phase == 'waiting' and not task.get('wait_for'))
-            or task.get('deadline',0) <= time.time()*1000
-            or task.get('turns',0) >= task.get('max_turns',0)):
+            or not allowance_remaining(task)):
             return None
         now = time.time()
         if phase == 'waiting' and now-self.last_poll < self.config.get('interval_seconds',5):
