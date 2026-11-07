@@ -7,6 +7,27 @@ intake: connecting neither renews expired work nor replays earlier requests.
 The matching shared host/API implementation must be present before enrollment;
 an installed Minecraft source revision alone does not add UI controls.
 
+## Find the controls
+
+Open the agent's Instance dashboard, choose **Connections**, then find
+**Minecraft** under **Saved connections**. Each enrolled server has its own
+Connect and Disconnect controls. Add appears only when a prepared-choice
+provider is enrolled. These controls belong to the Instance, so they remain
+reachable when the Minecraft body is disconnected; confirmed status also depends
+on the installation-owned helper being available.
+
+The adapter does not serve a browser administration page. Its screenshot viewer
+is a renderer, and its bearer-authenticated body API is not a browser control
+surface. If your server already has a web portal or player list, link each agent
+to its actual installed Instance dashboard URL with `#connections` appended.
+Use the owner-configured, browser-reachable address; do not infer it from the
+game port or expose a bearer token in a link. Keep this link outside the body
+service so disconnecting does not remove the way back in.
+
+A connection may advertise a Settings link only if a real domain settings page
+exists and the host supports that optional field. This adapter does not invent
+one or require one for saved controls.
+
 ## Enroll an existing connection
 
 Each connection needs its own home, context provider, control port, game route,
