@@ -16,6 +16,10 @@ def registration(config, helper_directory, python):
     if not all(p.is_absolute() for p in (config,helper_directory,python)):
         raise ValueError('Use absolute owner-installed helper/config/interpreter paths')
     cfg=read(config);Provider(cfg)
+    plans=Path(cfg.get('shared_plans',''))
+    if (not plans.is_absolute() or plans.resolve()!=plans or not plans.is_dir()
+            or plans.is_relative_to(Path(cfg['home'])) or plans.is_relative_to(Path(cfg['state']))):
+        raise ValueError('Enroll the actual independent shared plans directory for source retention')
     if any(p.resolve().is_relative_to(Path(cfg['home']).resolve()) for p in (config,helper_directory)):
         raise ValueError('Updater code/config must be outside mutable game source and agent mounts')
     helper=Path(cfg['task_helper'])
@@ -23,7 +27,7 @@ def registration(config, helper_directory, python):
         raise ValueError('Enroll the existing separate pure task-helper executable')
     if helper.parent != Path(cfg['home'])/'task-helpers':
         raise ValueError('Task helper must use the dedicated game helper directory')
-    for filename in ('installation_participant.py','installation_source_provider.py','installation_session_probe.py'):
+    for filename in ('installation_participant.py','installation_source_provider.py','installation_session_probe.py','installation_retention.py'):
         if not (helper_directory/filename).is_file():raise ValueError('Install fixed owner helper files first')
     scope={'services':[],'instance':False,'slack_homes':[]}
     def command(script,action):return [str(python),str(helper_directory/script),'--config',str(config),action]

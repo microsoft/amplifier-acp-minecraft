@@ -18,6 +18,7 @@ import urllib.request
 from pathlib import Path
 
 from installation_guard import ContinuityError, digest, durable_write, installation_lock, read
+from installation_retention import Retention
 
 REPOSITORY = 'microsoft/amplifier-acp-minecraft'
 SDK_URL = 'https://github.com/agentclientprotocol/python-sdk.git'
@@ -90,6 +91,7 @@ class Provider:
             raise ValueError('Provider state must be outside agent/game installation')
         if cfg.get('channel') not in ('stable','latest-passing-development') or not cfg.get('required_checks'):
             raise ValueError('Explicit channel and exact required check names are mandatory')
+        self.retention = Retention(cfg)
 
     def gh(self, endpoint):
         route='repos/'+REPOSITORY+'/'+endpoint
@@ -184,20 +186,72 @@ class Provider:
         run([self.c['node'],'--test','tests/body-lease.test.cjs'],cwd=app,env=environment,stderr=subprocess.STDOUT)
         return sdk
 
+    def build_inputs(self):
+        return {'config_hash':digest(self.c), **{
+            key+'_sha256':hashlib.sha256(Path(self.c[key]).read_bytes()).hexdigest()
+            for key in ('python','node','npm_cli')}}
+
+    def reusable(self, revision, inputs):
+        for identifier in self.retention.stage_ids():
+            record = self.retention.owned('stage', identifier)
+            if record.get('state') != 'ready' or record.get('revision') != revision:
+                continue
+            stage = self.retention.safe_path('stage', identifier)
+            try:
+                manifest = read(stage/'manifest.json')
+                if (set(p.name for p in stage.iterdir()) != {'app','venv','manifest.json'}
+                        or manifest.get('build_inputs') != inputs
+                        or digest(manifest) != record.get('manifest_hash')
+                        or any(fingerprint(stage/k) != manifest['fingerprints'][k] for k in self.paths)):
+                    continue
+                verify_sdk(stage/'venv', stage/'app')
+            except (OSError, ValueError, KeyError, ContinuityError):
+                continue
+            # Do not rewrite an immutable manifest referenced by a saved plan.
+            # A lost plan-output acknowledgment can safely offer the same bytes.
+            self.retention.mark('stage', identifier, last_offered=time.time())
+            return stage, manifest
+        return None
+
+    def cleanup(self, *, failed=None):
+        result = self.retention.prune(fingerprint, failed=failed)
+        durable_write(self.root/'cleanup-last.json', result)
+        return result
+
     def plan(self):
+        if not self.c.get('shared_plans'):
+            raise ContinuityError('Enroll shared_plans before automatic source checks')
         previous = self.status()['version']
         revision, checks = self.candidate()
         if revision == previous:
-            return {'available':False,'version':previous}
-        stage = self.root/'stages'/str(uuid.uuid4())
-        sdk = self.build(revision,previous,stage)
-        manifest = {'revision':revision,'checks':checks,'sdk':sdk,
-                    'fingerprints':{k:fingerprint(stage/k) for k in self.paths},
-                    'python_sha256':hashlib.sha256(Path(self.c['python']).read_bytes()).hexdigest()}
-        durable_write(stage/'manifest.json',manifest)
+            return {'available':False,'version':previous,'cleanup':self.cleanup()}
+        before = {k:fingerprint(p) for k,p in self.paths.items()}
+        inputs = self.build_inputs()
+        cached = self.reusable(revision, inputs)
+        cleanup = self.cleanup()
+        if cleanup.get('held') and not cached:
+            raise ContinuityError('Retention references are uncertain; refusing another source build')
+        if cached:
+            stage, manifest = cached
+        else:
+            stage = self.root/'stages'/str(uuid.uuid4())
+            self.retention.safe_path('stage', stage.name)
+            self.retention.mark('stage', stage.name, state='building', created_at=time.time(), revision=revision)
+            try:
+                sdk = self.build(revision,previous,stage)
+                manifest = {'revision':revision,'checks':checks,'sdk':sdk,'build_inputs':inputs,
+                            'fingerprints':{k:fingerprint(stage/k) for k in self.paths},
+                            'python_sha256':inputs['python_sha256']}
+                durable_write(stage/'manifest.json',manifest)
+                self.retention.mark('stage', stage.name, state='ready', last_offered=time.time(),
+                                    manifest_hash=digest(manifest))
+            except Exception as error:
+                self.retention.mark('stage', stage.name, state='failed', error_type=type(error).__name__)
+                self.cleanup(failed=stage.name)
+                raise
         return {'available':True,'version':revision,'previous':previous,'stage':str(stage),
                 'manifest_hash':digest(manifest),'config_hash':digest(self.c),
-                'before':{k:fingerprint(p) for k,p in self.paths.items()},
+                'before':before,'cleanup':cleanup,
                 'source_marker':read(self.home/'app-source.json')}
 
     def frozen(self, envelope, *, candidate=True):
@@ -257,7 +311,11 @@ class Provider:
             raise ContinuityError('Uncertain source cutover requires code rollback, never replay')
         if read(self.home/'app-source.json') != plan['source_marker'] or any(fingerprint(p)!=plan['before'][k] for k,p in self.paths.items()):
             raise ContinuityError('Installed source changed after planning')
-        backup = self.root/'backups'/envelope['id'];backup.mkdir(parents=True)
+        backup = self.root/'backups'/envelope['id']
+        self.retention.safe_path('backup', envelope['id'])
+        self.retention.mark('backup', envelope['id'], state='retained', created_at=time.time(),
+                            transaction_id=transaction)
+        backup.mkdir(parents=True)
         if any(p.parent.stat().st_dev != backup.stat().st_dev for p in self.paths.values()):
             raise ContinuityError('Atomic source exchange requires same filesystem')
         durable_write(path,{'state':'applying','transaction_id':transaction})
