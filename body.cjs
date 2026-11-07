@@ -143,6 +143,12 @@ async function watchOperation(action){
 }
 function coord(a){const p=new Vec3(a.x,a.y,a.z);if(![p.x,p.y,p.z].every(Number.isInteger)||p.y< -64||p.y>319||p.distanceTo(bot.entity.position)>64)throw Error('Coordinates must be whole blocks within 64 blocks of this player');return p;}
 function actionsRemaining(){return cfg.human_engagement?.enabled===true?null:Math.max(0,24-actions);}
+let speechTurn=null, speechReceipts=new Map();
+function speechIdentity(text){
+ if(speechTurn!==history.data.turn){speechTurn=history.data.turn;speechReceipts=new Map();}
+ const recipient=history.data.turn?.conversation_only?history.data.turn.reply_recipient:null;
+ return JSON.stringify([conversation.snapshot().revision,recipient||null,text]);
+}
 function speak(text){
  const s=text.replace(/[\r\n\x00-\x1f]/g,' ').trim();if(!s||s.startsWith('/'))throw Error('Use ordinary chat, not slash commands');
  const recipient=history.data.turn?.conversation_only?history.data.turn.reply_recipient:null;
@@ -150,7 +156,9 @@ function speak(text){
  if(recipient)bot.whisper(recipient,result.sent);else bot.chat(result.sent);
  // Record only text handed to its bound audience, never an attempted/failed tool input.
  // This transport receipt is not proof of delivery to every player.
- record('chat_sent',result);return result;
+ record('chat_sent',result);
+ if(history.data.turn){const key=speechIdentity(result.sent);speechReceipts.set(key,result);}
+ return result;
 }
 function speech(name,a){
  if(name==='chat')return speak(a.text);
@@ -511,7 +519,15 @@ const server=http.createServer(async(req,res)=>{
       const a=z.object({text:z.string().min(1).max(240),conversation_revision:revision}).parse(await json(req));
       if(Date.now()>turnUntil)throw Error('Reply window is closed');
       if(a.conversation_revision!==undefined&&a.conversation_revision!==conversation.snapshot().revision)result={sent:false,reason:'conversation_changed'};
-      else {if(++replies>8)throw Error('Reply window is closed');result=speak(a.text);}
+      else {
+       // A model may repeat its successful chat tool output as its final answer.
+       // Reuse only this turn's exact bound-audience transport receipt. A new
+       // conversation revision, turn, recipient or failed send is not a match.
+       const text=a.text.replace(/[\r\n\x00-\x1f]/g,' ').trim().slice(0,240);
+       const key=speechIdentity(text),prior=history.data.turn&&speechReceipts.get(key);
+       if(prior){result={...prior,already_sent:true};record('reply_duplicate_suppressed');}
+       else {if(++replies>8)throw Error('Reply window is closed');result=speak(a.text);}
+      }
     }
     else if(req.method==='POST'&&req.url==='/finish'){const a=await json(req);if(ready)history.checkpoint({position:bot.entity.position.clone(),health:bot.health,recent_actions:receipts.slice(-8)});history.finish(!!a.error||busy,!!a.budget_limited&&!busy);stop();result={stopped:true};}
     else if(req.method==='POST'&&req.url==='/wake'){if(!workAllowed())throw Error('Current mode/task cannot wake construction');const a=await json(req);if(a.generation!==generation||Date.now()<turnUntil)throw Error('Observation superseded or turn already active');result=history.wake(a.task_id);record('attention_wake',{task_id:a.task_id});}
