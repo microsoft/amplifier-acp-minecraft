@@ -26,7 +26,13 @@ function target(bot,p,expected){
  if(p.offset(.5,.5,.5).distanceTo(bot.entity.position)>4)throw Error('Move within four blocks of the container first; no movement performed');
  const eye=bot.entity.position.offset(0,1.62,0),direction=p.offset(.5,.5,.5).minus(eye),distance=direction.norm();
  const hit=distance?bot.world.raycast(eye,direction.scaled(1/distance),distance):null;
- if(hit&&!hit.position.equals(p))throw Error('Container is obstructed; move to a clear reachable position');
+ if(hit&&!hit.position.equals(p)){
+  const error=Error('Container is obstructed; inspect the observed blocker and choose a clear reachable position');
+  error.details={code:'container_obstructed',target:{name:block.name,position:p},eye,
+   blocker:{name:hit.name||null,position:hit.position},reach_distance:distance,
+   scope:'One current eye-to-container ray; not a route or proof that other approaches are clear.'};
+  throw error;
+ }
  return block;
 }
 async function open(bot,p,expected,check){

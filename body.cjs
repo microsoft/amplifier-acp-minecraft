@@ -85,6 +85,7 @@ function scheduleLease(){
  leaseTimer=setTimeout(()=>{if(lease.id===id&&Date.now()>=turnUntil){stop();record('action_lease_expired');}},Math.max(1,turnUntil-Date.now()));
  leaseTimer.unref?.();
 }
+new (require('./player-roster.cjs').PlayerRoster)(bot,[cfg.username,...(cfg.bot_names||[])],()=>ready,record);
 bot.on('spawn',()=>{ready=true;spatial.alignPlayerCollision(bot);const m=new spatial.SpatialMovements(bot);m.canDig=false;m.allow1by1towers=false;m.allowParkour=false;m.allowFreeMotion=false;m.scafoldingBlocks=[];m.maxDropDown=2; /* upstream measures to landing FLOOR: 2 permits a one-block feet descent */m.liquidCost=20;bot.pathfinder.setMovements(m);record('spawn',{position:bot.entity.position});});
 bot.on('end',reason=>{ready=false;stop();record('disconnected',{reason});setTimeout(()=>process.exit(shuttingDown?0:1),1000);});
 bot.on('error',e=>record('connection_error',{message:e.message}));
