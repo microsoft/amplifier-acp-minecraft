@@ -100,8 +100,8 @@ The adapter requires the advertised Instance attention parent and `activity` v1
 subcapability before sending `context.activities`. Older/disabled hosts keep
 observations in ordinary tool context; activity is never turned into fabricated
 chat or a second local social-model call. Host engagement and actual prompt
-admission remain separate outcomes. The initial implementation observes movement;
-interaction event capture is not yet implemented.
+admission remain separate outcomes. Movement and server-attributed arm-swing interactions are observed; an interaction
+attempt does not establish its target or success.
 
 ## Independently accepted helper work
 

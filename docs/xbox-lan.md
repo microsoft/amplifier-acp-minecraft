@@ -1,5 +1,14 @@
 # Xbox / Bedrock LAN access
 
+> **Temporary compatibility workaround — checked November 7, 2026.**
+> The repair below addresses the recent Xbox/Minecraft Bedrock **26.60** NetherNet
+> transition and missing/incompatible LAN handling in **Geyser 2.12.1-b1288**
+> (`50360e3`). It is not a permanent adapter requirement or an official Geyser
+> release. Do not apply it blindly to other versions. Once an upstream release
+> supplies working discovery and authenticated Xbox joins, validate that release,
+> remove this local patch and its custom JVM options, and retire this notice/recipe.
+> Keep any LAN firewall ports the upstream implementation still needs.
+
 This adapter controls Java players. Xbox clients use Bedrock and need a separate
 human gateway, normally Geyser with Floodgate for account linking. The gateway is
 server infrastructure: installing/updating the Python adapter does not install
@@ -42,7 +51,7 @@ sufficient.
 See [Geyser's NetherNet guidance](https://geysermc.org/blog/preparing-for-nethernet/)
 and [current setup documentation](https://geysermc.org/wiki/geyser/setup/).
 
-## Known 26.60 discovery and Xbox compatibility gap
+## Temporary repair for the 26.60 discovery and Xbox compatibility gap
 
 As checked on November 7, 2026, official Geyser **2.12.1-b1288**, source
 `50360e396b08c10dac4dfb78213dcb0126b75f90`, supports address-based NetherNet but does
@@ -70,6 +79,11 @@ The patch:
   client-data signature checks pass and the signed nonce matches. Non-LAN,
   unsigned, wrong/missing nonce, and conflicting binding cases still fail. Keep
   `advanced.bedrock.validate-bedrock-login: true`.
+
+The public, server-lifetime nonce is a compatibility check, not equivalent to a
+cryptographic transport-identity binding. It does not prevent live relaying or
+replay within that lifetime by itself. Keep LAN-only exposure and the original
+signed-account checks; broader deployment needs an upstream security review.
 
 ### Build and package the pinned patch
 
