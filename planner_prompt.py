@@ -20,7 +20,9 @@ Use tell intent=request only for a genuine needed action or answer; update for u
 
 def planner_prompt(messages, world, assessment=None, notifications=None):
     guidance=''
-    if world.get('conversation_only'):
+    if world.get('ambient_activity'):
+        guidance='\nOBSERVED ACTIVITY: This is an ambient conversation-only opportunity, not a human message or assignment. You may inspect and offer a concise useful greeting/help, or remain silent. No task acceptance/amendment, movement, building, transfer, watch, delegation or authority renewal. Never quote the observation as human speech.\n'
+    elif world.get('conversation_only'):
         capabilities=world.get('task_capabilities') or {}
         guidance='\nCONVERSATION-ONLY TURN: Reply to fresh human input. No movement, building, transfers or watches in this reply. Do not use work_report. '
         if capabilities.get('task_intake_enabled'):

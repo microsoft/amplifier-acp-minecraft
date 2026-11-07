@@ -3,7 +3,7 @@ import hashlib
 import json
 import math
 import time
-from harness_capabilities import attention_context
+from harness_capabilities import attention_context, attention as attention_capability, activity as activity_capability
 from urllib.error import HTTPError
 
 META='com.microsoft.amplifier.attention'
@@ -54,14 +54,14 @@ class ConversationAttention:
         self.failures=0
         self.deferred=None
 
-    async def consider(self,request,client,*,human_only=False):
+    async def consider(self,request,client,*,human_only=False,activity=False):
         # Fetch fresh source facts while backing off a known proposal, so a new
         # human message is not delayed by a previous rejection. Failed source
         # fetches themselves back off until local transport can recover.
         if self.retry_key is None and time.time()<self.retry_after:return False
         stage='source_fetch';key=None;evaluation_requested=False
         try:
-            proposal=await request('/participation?human_only=1' if human_only else '/participation')
+            proposal=await request('/activity/participation' if activity else '/participation?human_only=1' if human_only else '/participation')
             if not proposal:
                 self.retry_key=None;self.failures=0;self.retry_after=0;self.deferred=None
                 return False
@@ -79,8 +79,16 @@ class ConversationAttention:
                 return False
             self.deferred=None
             if time.time()<self.retry_after:return False
-            capability=(client.info.get('_meta') or {}).get(META,{})
-            supported=capability.get('version')==1 and capability.get('enabled') is True and capability.get('method')==METHOD
+            supported=bool(attention_capability(client.info))
+            if activity and not activity_capability(client.info):
+                return False  # Keep observed facts; never fake chat or ordinary fallback.
+            if activity:
+                context=proposal['context'];rows=context.get('activities',[])
+                if not rows or len(rows)>client.info['_meta'][META]['activity']['maxItems'] or len(rows)+len(context.get('messages',[]))>40 or len(json.dumps(context,ensure_ascii=False).encode())>32768:
+                    raise ValueError('Activity evidence exceeds negotiated bounds')
+                trigger=next((r for r in rows if r.get('id')==context.get('trigger_id')),None)
+                if not trigger or trigger.get('occurred_at')!=proposal['occurred_at']:
+                    raise ValueError('Activity trigger time mismatch')
             if supported:
                 stage='host_evaluation';evaluation_requested=True
                 context=attention_context(proposal['context'],proposal.get('sources'),client.info)
@@ -104,7 +112,7 @@ class ConversationAttention:
             if human_only:payload['human_only']=True
             if supported and offer['action']=='engage':payload['offer']={'id':offer['id'],'ticket':offer['ticket']}
             stage='local_delivery'
-            result=await request('/participation',payload)
+            result=await request('/activity/participation' if activity else '/participation',payload)
             if not isinstance(result,dict) or result.get('queued') is not (offer['action']=='engage'):
                 # A malformed/lost reply is not proof of acceptance or rejection.
                 raise ValueError('Invalid delivery receipt')

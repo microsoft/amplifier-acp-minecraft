@@ -6,6 +6,7 @@ class ConversationAdmission {
  recent(){return (this.history.data.conversation_admissions||[]).filter(r=>r.at>this.now()-3600000);}
  eligible(message){
   const data=this.history.data,e=data.events.find(e=>e.id===message.id),at=Date.parse(e?.time);
+  if(message.source==='activity')return this.cfg.human_engagement?.activity_scope==='conversation_only'&&this.cfg.human_engagement?.enabled===true&&data.task?.status!=='stopped'&&message.attention_offer?.ticket&&message.effect_scope==='conversation_only'&&(data.activity_deliveries||[]).some(r=>r.id===message.id&&r.revision===message.activity?.revision&&this.now()-r.at<120000)&&!(data.conversation_admissions||[]).some(r=>r.ids.includes(message.id));
   return message.source==='human'&&e?.source==='human'&&e.kind==='chat'&&e.accepted===true&&
    ['minecraft_public_chat','minecraft_whisper'].includes(e.provenance)&&Number.isFinite(at)&&at<=this.now()+5000&&at>this.now()-600000&&
    !(data.conversation_admissions||[]).some(r=>r.ids.includes(message.id));
@@ -27,7 +28,7 @@ class ConversationAdmission {
   // A lost response or restart must not submit these inputs again automatically.
   this.history.data.conversation_admissions=[...this.recent(),{at:this.now(),ids:[...ids]}];
   this.history.data.turn={started_at:new Date(this.now()).toISOString(),conversation_only:true,task_id:null,
-   request_ids:[...ids],messages:selected,reply_recipient:selected[0].whisper?selected[0].username:null,actions:[],may_mutate:false};
+   ambient_activity:selected.every(m=>m.source==='activity'),request_ids:[...ids],messages:selected,reply_recipient:selected[0].whisper?selected[0].username:null,actions:[],may_mutate:false};
   for(let i=inbox.length-1;i>=0;i--)if(ids.includes(inbox[i].id))inbox.splice(i,1);
   this.history.save();return this.history.data.turn;
  }

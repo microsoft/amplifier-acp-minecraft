@@ -64,3 +64,18 @@ source evidence survives observation-journal rollover within the existing
 outcome, and accepted sources cannot be replayed after a lost delivery reply.
 Stop clears pending sources and their snapshots. This does not renew task limits
 or make unknown participants human.
+
+`human_engagement.activity_scope: "conversation_only"` explicitly permits an
+ambient greeting/help opportunity based on observed movement. It does not grant
+movement, construction, task intake/amendment, delegation or renewal. Stop disables
+activity opportunities. Without this installation setting, collection stays passive.
+
+Activity is coalesced at ten-second intervals per observed human, expires after
+two minutes, and retains its original source ID/revision/time across delivery and
+restart. Stationary presence and configured agents do not produce opportunities.
+The adapter requires the advertised Instance attention parent and `activity` v1
+subcapability before sending `context.activities`. Older/disabled hosts keep
+observations in ordinary tool context; activity is never turned into fabricated
+chat or a second local social-model call. Host engagement and actual prompt
+admission remain separate outcomes. The initial implementation observes movement;
+interaction event capture is not yet implemented.

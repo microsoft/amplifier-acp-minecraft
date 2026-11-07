@@ -38,7 +38,8 @@ const history=new WorkshopState(path.join(path.dirname(process.argv[2]),'worksho
 const taskIntake=new TaskIntake(history,cfg);
 const {ActionSequence,SEQUENCE_TOOLS}=require('./action-sequence.cjs');
 const actionSequence=new ActionSequence(history);
-const humanActivity=new (require('./human-activity.cjs').HumanActivity)([cfg.username,...(cfg.bot_names||[])]);
+const activityParticipation=new (require('./activity-participation.cjs').ActivityParticipation)(history,cfg);
+const humanActivity=new (require('./human-activity.cjs').HumanActivity)([cfg.username,...(cfg.bot_names||[])],{onMovement:fact=>activityParticipation.observe(fact)});
 const workAllowed=()=>taskIntake.capabilities().autonomous_work_allowed;
 const bot = mineflayer.createBot({host:cfg.host || '127.0.0.1',port:cfg.port || 25565,
   username:cfg.username,version,auth:cfg.auth || 'offline',hideErrors:true,
@@ -102,7 +103,7 @@ function hear(username,message,whisper=false,transport=null){
   const e=record('chat',{username,message,whisper,provenance:whisper?'minecraft_whisper':'minecraft_public_chat',source:'human',transport,accepted:!!route&&!semantic});
   lastHumanAt=Date.now();
   record('chat_routing',{username,route:priority?'human_priority_'+route:semantic?'participation_pending':route||'context_only'});
-  if(route&&/\b(stop|pause)\b/i.test(message)){stop();inbox.length=0;history.data.participation_pending=[];history.data.participation_proposals={};history.stop();taskIntake.revokeSources();history.save();record('stopped_by_player',{username});bot.chat('Stopped.');return;}
+  if(route&&/\b(stop|pause)\b/i.test(message)){stop();inbox.length=0;history.data.participation_pending=[];history.data.participation_proposals={};activityParticipation.clear();history.stop();taskIntake.revokeSources();history.save();record('stopped_by_player',{username});bot.chat('Stopped.');return;}
   if(semantic){participation.queue(e);return;}
   if(!route)return;
   if(priority||inbox.length<8){inbox.push({id:e.id,username,message,whisper,source:'human'});history.save();}
@@ -115,7 +116,7 @@ function snapshot(){
   humanActivity.sample(bot.players);
   const p=bot.entity.position;
   const blocks=bot.findBlocks({matching:b=>b.name!=='air'&&b.name!=='water'&&b.name!=='grass_block'&&b.name!=='dirt'&&b.name!=='stone',maxDistance:16,count:50});
-  return {username:bot.username,ready,busy,generation,turn_active:Date.now()<turnUntil,pending_messages:inbox.length,incoming_chat_only:cfg.incoming_chat_only===true,conversation_only:history.data.turn?.conversation_only===true,task_capabilities:taskIntake.capabilities(),position:p,health:bot.health,food:bot.food,time:bot.time.timeOfDay,
+  return {username:bot.username,ready,busy,generation,turn_active:Date.now()<turnUntil,pending_messages:inbox.length,incoming_chat_only:cfg.incoming_chat_only===true,conversation_only:history.data.turn?.conversation_only===true,ambient_activity:history.data.turn?.ambient_activity===true,task_capabilities:taskIntake.capabilities(),position:p,health:bot.health,food:bot.food,time:bot.time.timeOfDay,
     inventory:bot.inventory.items().map(i=>({name:i.name,count:i.count})),
     terrain:spatial.localMap(bot,3),
     players:Object.values(bot.players).map(p=>({name:p.username,position:p.entity?.position})),
@@ -148,7 +149,7 @@ async function operate(name,a={},sequenceId=null){
   if(!ready)throw Error('Player is not connected');
   if(name==='task_capabilities')return taskIntake.capabilities();
   if(INTAKE_TOOLS.has(name)){
-    if(!taskIntake.capabilities().task_intake_enabled||!history.data.turn?.conversation_only||Date.now()>=turnUntil||busy)throw Error('Task intake requires a current idle human reply turn and enabled installation policy');
+    if(history.data.turn?.ambient_activity||!taskIntake.capabilities().task_intake_enabled||!history.data.turn?.conversation_only||Date.now()>=turnUntil||busy)throw Error('Task intake requires a current idle human reply turn and enabled installation policy');
     const result=name==='task_accept'?taskIntake.accept(a):taskIntake.amend(a);
     record('task_authorization',{operation:name,...result});return result;
   }
@@ -426,7 +427,7 @@ const server=http.createServer(async(req,res)=>{
         }
       }else result={action:'hold'};
     }
-    else if(req.method==='GET'&&req.url==='/status')result={ready,busy,turn_active:Date.now()<turnUntil,incoming_chat_only:cfg.incoming_chat_only===true,conversation_only:history.data.turn?.conversation_only===true,task_intake_enabled:taskIntake.capabilities().task_intake_enabled,task_capabilities:taskIntake.capabilities(),task:history.task(),action_lease:lease.view(history.task())};
+    else if(req.method==='GET'&&req.url==='/status')result={ready,busy,turn_active:Date.now()<turnUntil,incoming_chat_only:cfg.incoming_chat_only===true,conversation_only:history.data.turn?.conversation_only===true,ambient_activity:history.data.turn?.ambient_activity===true,task_intake_enabled:taskIntake.capabilities().task_intake_enabled,task_capabilities:taskIntake.capabilities(),task:history.task(),action_lease:lease.view(history.task())};
     else if(req.method==='GET'&&req.url==='/inbox/peek')result=(cfg.human_engagement?.enabled===true&&inbox.some(m=>m.source==='human'&&!m.attention_offer)?inbox.filter(m=>m.source==='human'&&!m.attention_offer):inbox).slice(0,8);
     else if(req.method==='GET'&&req.url==='/conversation/admission')result=replyAdmission.status(inbox);
     else if(req.method==='GET'&&['/participation','/participation?human_only=1'].includes(req.url))result=participation.enabled?participationProposal(req.url.endsWith('human_only=1')):null;
@@ -441,6 +442,8 @@ const server=http.createServer(async(req,res)=>{
       if(result.queued)for(let i=0;i<peerCount;i++)agentWakeTimes.push(Date.now());
       record('participation_delivery',result);
     }
+    else if(req.method==='GET'&&req.url==='/activity/participation'){result=activityParticipation.proposal();if(result)result.delivery={eligible:inbox.length<8,reason_code:inbox.length<8?null:'inbox_full'};}
+    else if(req.method==='POST'&&req.url==='/activity/participation'){result=activityParticipation.apply(await json(req),inbox);record('activity_participation_delivery',result);}
     else if(req.method==='GET'&&req.url==='/inbox'){result=inbox.splice(0,8);history.save();}
     else if(req.method==='POST'&&req.url==='/recover'){history.recover();stop();result={task:history.task()};}
     else if(req.method==='POST'&&req.url==='/turn'){
@@ -475,7 +478,7 @@ const server=http.createServer(async(req,res)=>{
     else if(req.method==='POST'&&req.url==='/finish'){const a=await json(req);if(ready)history.checkpoint({position:bot.entity.position.clone(),health:bot.health,recent_actions:receipts.slice(-8)});history.finish(!!a.error||busy,!!a.budget_limited&&!busy);stop();result={stopped:true};}
     else if(req.method==='POST'&&req.url==='/wake'){if(!workAllowed())throw Error('Current mode/task cannot wake construction');const a=await json(req);if(a.generation!==generation||Date.now()<turnUntil)throw Error('Observation superseded or turn already active');result=history.wake(a.task_id);record('attention_wake',{task_id:a.task_id});}
     else if(req.method==='POST'&&req.url==='/resume-reviewed'){const a=await json(req);if(!ready||busy||Date.now()<turnUntil||a.generation!==generation)throw Error('Recovery review superseded or player not idle');result=history.resumeReviewed(a);record('operator_recovery',{task_id:result.id,reason:a.reason});}
-    else if(req.method==='POST'&&req.url==='/stop'){stop();inbox.length=0;history.data.participation_pending=[];history.data.participation_proposals={};history.stop();taskIntake.revokeSources();history.save();result={stopped:true};}
+    else if(req.method==='POST'&&req.url==='/stop'){stop();inbox.length=0;history.data.participation_pending=[];history.data.participation_proposals={};activityParticipation.clear();history.stop();taskIntake.revokeSources();history.save();result={stopped:true};}
     else if(req.method==='POST'&&req.url==='/task-source/review'){
       if(!ready||busy||Date.now()<turnUntil)throw Error('Source review requires a verified idle body');
       result=taskIntake.reviewSource(await json(req));record('task_source_reviewed',{source_id:result.source.id,valid_until:result.valid_until});

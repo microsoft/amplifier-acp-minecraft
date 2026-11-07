@@ -56,3 +56,21 @@ def attention_context(context, source_facts, info):
             item.update(revision=source['revision'], occurred_at=source['occurredAt'])
         result['messages'].append(item)
     return result
+
+
+ATTENTION_META = 'com.microsoft.amplifier.attention'
+ATTENTION_METHOD = '_amplifier/attention'
+def attention(info):
+    cap=mapping(mapping(info).get('_meta')).get(ATTENTION_META)
+    cap=mapping(cap)
+    return cap if type(cap.get('version')) is int and cap['version']==1 and cap.get('enabled') is True and cap.get('method')==ATTENTION_METHOD else {}
+
+def activity(info):
+    cap=mapping(attention(info).get('activity'))
+    return (type(cap.get('version')) is int and cap['version']==1
+            and cap.get('contextField')=='activities' and type(cap.get('maxItems')) is int
+            and 1 <= cap['maxItems'] <= 16)
+
+def human_messages(info):
+    cap=mapping(attention(info).get('humanMessages'))
+    return type(cap.get('version')) is int and cap['version']==1 and cap.get('budgetPolicy')=='independent_of_ambient'

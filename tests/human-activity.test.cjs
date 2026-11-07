@@ -14,3 +14,8 @@ test('small position changes accumulate; first observed presence and reconnect a
  human.entity.position.x=.3;tracker.sample({human});assert.equal(tracker.snapshot().players[0].active,true);
  tracker.sample({});tracker.sample({human});assert.equal(tracker.snapshot().players[0].active,false);
 });
+test('source callback reports actual movement times, never idle or first presence',()=>{
+ let now=1000;const facts=[],tracker=new HumanActivity([],{now:()=>now,onMovement:f=>facts.push(f)}),human={username:'Human',uuid:'h',entity:{position:{x:0,y:64,z:0}}};
+ tracker.sample({human});now=2000;tracker.sample({human});assert.equal(facts.length,0);
+ human.entity.position.x=1;tracker.sample({human});assert.equal(facts.length,1);assert.equal(facts[0].at,2000);assert.equal(facts[0].from.x,0);assert.equal(facts[0].to.x,1);
+});
