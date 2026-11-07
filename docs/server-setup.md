@@ -263,6 +263,14 @@ files to erase consumed counts or make continuity pass. Unknown accepted input i
 not replayable. Before listener restoration, code rollback may be appropriate;
 after verified restoration has begun, follow the updater's restore-only recovery.
 
+An online player can still be waiting on a task dependency, interrupted work,
+or a delivery backlog. Inspect those separately before restarting it. The controller
+retires elapsed peer/activity deliveries from the small inbox into the bounded
+`delivery_retirements` history with an **undelivered** disposition. This does not
+mark their sources handled, renew tickets or tasks, or remove human requests.
+Distinct attention offers are delivered separately; expired deliveries must not
+occupy every slot forever or trigger repeated failed model calls.
+
 Keep a private final receipt: source/dependency hashes, services/routes, policies
 actually enabled, original-session/task/world continuity, actual human tests and
 unverified aspects. Give the user a short result and only the remaining actions
