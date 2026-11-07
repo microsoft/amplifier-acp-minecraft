@@ -37,7 +37,7 @@ class SourceProviderTests(unittest.TestCase):
         durable_write(self.home/'workshop.json',{'task':{'turns':8,'max_turns':7},'unknown':['keep']})
         self.cfg={'home':str(self.home),'state':str(self.root/'owner'),
                   'app':str(self.home/'app'),'venv':str(self.home/'venv'),'python':str(Path(sys.executable).resolve()),
-                  'node':'/usr/bin/node','npm_cli':'/usr/bin/npm','required_checks':['test'],
+                  'node':sys.executable,'npm_cli':sys.executable,'required_checks':['test'],
                   'channel':'latest-passing-development','task_helper':str(self.home/'task-helpers/agent-runtime')}
         self.cfg['shared_plans']=str(shared/'plans')
         self.provider=FakeProvider(self.cfg);self.plan=self.provider.plan()
