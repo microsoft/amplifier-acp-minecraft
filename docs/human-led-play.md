@@ -39,6 +39,13 @@ physical steps run. Speech retains its audience, conversation revision and
 settled action receipts without taking ownership of the physical action.
 There is still only one controlling ACP prompt per saved session.
 
+While an operation is running, `plan_route(mode="walk_only")` performs a bounded
+read-only search without touching the live pathfinder. Optional `start` specifies
+whole-block coordinates for a hypothetical future stance. Results include the
+actual current feet, planned origin and `hypothetical_start`; they never imply
+arrival. Normal pathfinder planning still waits for movement to settle. Queued
+movement always plans again from its actual position before executing.
+
 `sequence_status` returns actual retained results and can wait up to 30 seconds
 for settlement. Acceptance is not completion. Inspect those results before
 reporting success or starting another plan. If the planner ends early, the
@@ -62,9 +69,11 @@ an explicit missing-report checkpoint, not a completion claim. A repeated
 missing report, no action evidence, an uncertain effect or an error does not
 start an endless continuation loop. Stops and exhausted assignments stay closed.
 
-`human_activity` reports loaded server-attributed movement, excluding configured
-agent names. First observed presence and stationary/AFK presence are not movement.
-Activity expires after two minutes without further movement. These are observed
+`human_activity` reports loaded server-attributed movement and human arm-swing
+animations, excluding configured agent names. An arm swing is only evidence of an
+interaction attempt; its target and result are unknown. First observed presence
+and stationary/AFK presence are not activity. Activity expires after two minutes
+without another observed action. These are observed
 facts for planners; this revision does not synthesize human commands or enable
 idle model polling from movement. Movement-driven social engagement, completion-bound assignments and independently
 accepted delegation require the explicit installation policies described below. None are implied by a cosmetic change or transport
@@ -129,3 +138,9 @@ remain denied in the acceptance reply and require a later valid work turn.
 
 See [completion-bound tasks](completion-bound-tasks.md) for opt-in defaults,
 local helper capability discovery and legacy compatibility.
+
+Activity coalescing preserves one exact pending observation per actor for its
+original two-minute lifetime. Continued walking cannot replace the source while
+host judgment is in flight. Expired observations still reject late results; the
+next actual action supplies a fresh source. This neither manufactures chat nor
+bypasses the host's social judgment, ambient quotas, explicit Stop or task scope.

@@ -8,8 +8,9 @@ test('activity is coalesced, original, durable and separately scoped from human 
  assert.equal(p.context.messages.length,0);assert.equal(p.context.activities.length,1);assert.equal(p.occurred_at,f.now);
  for(let i=0;i<100;i++){f.advance(50);f.move();}assert.equal(f.a.proposal().signature,p.signature);assert.equal(f.saves,1);
  const reloaded=new ActivityParticipation(f.history,f.cfg,{now:()=>f.now});assert.equal(reloaded.proposal().signature,p.signature);
- f.advance(10000);f.move();assert.notEqual(f.a.proposal().signature,p.signature);assert.deepEqual(f.history.data.participation_pending,['human']);
- assert.throws(()=>f.a.apply({source_id:p.context.trigger_id,signature:p.signature,action:'engage',offer:{id:'one',ticket:'one'}},[]),/changed/);
+ f.advance(10000);f.move();assert.equal(f.a.proposal().signature,p.signature);assert.deepEqual(f.history.data.participation_pending,['human']);
+ assert.equal(f.a.apply({source_id:p.context.trigger_id,signature:p.signature,action:'engage',offer:{id:'one',ticket:'one'}},[]).queued,true);
+ f.move();const next=f.a.proposal();assert.notEqual(next.signature,p.signature);assert.equal(next.occurred_at,f.now);
 });
 test('ambient delivery is exactly once and only enables effect-free conversation, never old authority',()=>{
  const f=fixture();f.move();const p=f.a.proposal(),before=JSON.stringify(f.history.data.task),inbox=f.history.data.inbox;
@@ -30,4 +31,18 @@ test('stop, disabled scope, AFK expiry, malformed sources and missing host offer
   else assert.equal(f.a.proposal(),null);
   assert.equal(f.history.data.inbox.length,0);
  }
+});
+
+test('continuous walking cannot starve slow host judgment; expiry still invalidates old tickets',()=>{
+ const f=fixture();f.move();const old=f.a.proposal();
+ for(let i=0;i<10;i++){f.advance(10000);f.move();assert.deepEqual(f.a.proposal(),old);}
+ assert.equal(f.saves,1);
+ f.advance(20001);f.move();const fresh=f.a.proposal();assert.notEqual(fresh.signature,old.signature);
+ assert.throws(()=>f.a.apply({source_id:old.context.trigger_id,signature:old.signature,action:'hold'},[]),/changed/);
+});
+test('interaction facts stay observations, not invented messages or actions with known outcomes',()=>{
+ const f=fixture();f.move({kind:'interaction'});const p=f.a.proposal();
+ assert.equal(p.context.activities[0].kind,'interaction');assert.equal(p.context.messages.length,0);
+ assert.match(p.context.activities[0].summary,/target and result are unknown/);
+ assert.equal(p.effect_scope,'conversation_only');assert.equal(f.history.data.task.turns,12);
 });

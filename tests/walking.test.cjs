@@ -67,3 +67,11 @@ test('level start tolerance remains aligned with the live height guard',()=>{
  assert.equal(walking.plan(bot,new Vec3(3,1,0)).status,'success');
  bot.entity.position.y=1.126;assert.equal(walking.plan(bot,new Vec3(3,1,0)).status,'non_level_start');
 });
+
+test('future stance planning checks its own footing but never changes actual stance',()=>{
+ const bot=world(['.....']),original=bot.entity.position.clone();
+ const r=walking.plan(bot,new Vec3(4,1,0),0,{startPosition:new Vec3(2.5,1,.5)});
+ assert.equal(r.reachable,true);assert.equal(r.hypothetical_start,true);assert.equal(r.steps[0].x,2);
+ assert.deepEqual(r.current_feet,original);assert.deepEqual(bot.entity.position,original);
+ assert.equal(walking.plan(bot,new Vec3(4,1,0),0,{startPosition:new Vec3(2.5,1.5,.5)}).status,'non_level_start');
+});
