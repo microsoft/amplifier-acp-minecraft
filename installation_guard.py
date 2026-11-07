@@ -8,6 +8,7 @@ import json
 import os
 import re
 import tempfile
+import time
 from collections import Counter
 from contextlib import contextmanager
 from pathlib import Path
@@ -108,6 +109,59 @@ def protected_files(home):
     return files
 
 
+def expiry_projection(authority):
+    """Evidence for the sole status-only closure performed by WorkshopState.task.
+
+    Hash the entire hypothetical closed record, never normalize the real record
+    or write it back. Unknown/contradictory limits cannot justify a transition.
+    This evidence is used only by saved-connection continuity, not by updates.
+    """
+    task = authority.get('task')
+    if not isinstance(task, dict) or task.get('status') not in (
+            'running', 'waiting', 'review', 'blocked', 'needs_review'):
+        return None
+    def integer(value):
+        return type(value) is int and 0 <= value <= 9007199254740991
+    if not integer(task.get('turns')):
+        return None
+    if 'bounds' in task:
+        bounds = task['bounds']
+        if (not isinstance(bounds, dict) or type(bounds.get('version')) is not int
+                or bounds['version'] != 1 or set(bounds) != {'version','deadline_ms','max_turns'}):
+            return None
+        for key, field in (('deadline_ms','deadline'), ('max_turns','max_turns')):
+            bound = bounds[key]
+            if not isinstance(bound, dict):
+                return None
+            if bound == {'kind':'no_configured_bound'}:
+                if field in task:return None
+            elif (set(bound) != {'kind','value'} or bound['kind'] != 'finite'
+                  or not integer(bound['value']) or not integer(task.get(field))
+                  or task[field] != bound['value']):
+                return None
+    elif not integer(task.get('max_turns')):
+        return None
+    if not integer(task.get('deadline')):
+        return None
+    closed = {**task, 'status':'budget_exhausted'}
+    return {'deadline_ms':task['deadline'], 'task_hash':digest(closed),
+            'authority_hash':digest({**authority, 'task':closed})}
+
+
+def authority_checks(before, after, *, allow_expiry=False):
+    checks = {key:before[key] == after[key] for key in ('authority_hash','task_hash')}
+    evidence = before.get('expiry_projection')
+    observed = after.get('observed_at_ms')
+    if (allow_expiry and not all(checks.values()) and isinstance(evidence, dict)
+            and type(observed) is int and type(evidence.get('deadline_ms')) is int
+            and observed >= evidence['deadline_ms']
+            and all(after[key] == evidence.get(key) for key in checks)):
+        # Both full hashes must match; identity, bounds, source, counters,
+        # progress, waits, recovery and unknown effects are still unchanged.
+        return {**{key:True for key in checks}, 'finite_deadline_expiry':True}
+    return checks
+
+
 def snapshot(home, services, body=None, status=None):
     """Read twice around the body observation in the caller to detect races.
 
@@ -121,6 +175,8 @@ def snapshot(home, services, body=None, status=None):
     return {
         'home': str(Path(home).resolve()),
         'authority_hash': digest(authority),
+        'expiry_projection': expiry_projection(authority),
+        'observed_at_ms': time.time_ns() // 1_000_000,
         'observations': {k:history.get(k) for k in OBSERVATIONS if k != 'events'},
         'task_hash': digest(history.get('task')),
         'turn': history.get('turn'),
@@ -173,15 +229,18 @@ def require_idle(value):
         raise NotIdle('Sequence still active')
 
 
-def continuity(before, after, *, body_restart=False):
+def continuity(before, after, *, body_restart=False, allow_expiry=False):
     require_idle(before)
     require_idle(after)
+    authority = authority_checks(before, after, allow_expiry=allow_expiry)
     checks = {
         'same_home': before['home'] == after['home'],
-        'authority': before['authority_hash'] == after['authority_hash'],
-        'task': before['task_hash'] == after['task_hash'],
+        'authority': authority['authority_hash'],
+        'task': authority['task_hash'],
         'files': before['protected_files'] == after['protected_files'],
     }
+    if authority.get('finite_deadline_expiry'):
+        checks['finite_deadline_expiry'] = True
     for key in ('inbox', 'participation_pending'):
         old=Counter(digest(item) for item in before.get('observations',{}).get(key) or [])
         new=Counter(digest(item) for item in after.get('observations',{}).get(key) or [])

@@ -18,7 +18,7 @@ import urllib.request
 from pathlib import Path
 
 from connection_state import state as connection_state
-from installation_guard import (ContinuityError, NotIdle, continuity, digest,
+from installation_guard import (ContinuityError, NotIdle, continuity, digest, authority_checks,
     durable_write, installation_lock, read, require_idle, restore_plan)
 from installation_participant import LocalInstallation
 from update_admission import process_identity
@@ -42,7 +42,8 @@ def stored_continuity(before, after):
     require_idle(before)
     require_idle(after)
     checks = {key:before[key]==after[key] for key in
-              ('home','authority_hash','task_hash','protected_files','source_metadata')}
+              ('home','protected_files','source_metadata')}
+    checks.update(authority_checks(before, after, allow_expiry=True))
     for key in ('inbox','participation_pending'):
         old = Counter(digest(x) for x in before.get('observations',{}).get(key) or [])
         new = Counter(digest(x) for x in after.get('observations',{}).get(key) or [])
@@ -267,7 +268,7 @@ class Connection:
             if self.service('body')['ActiveState']!='active':return self.result()
             now = self.backend.capture()
             stored_continuity(self.value['baseline'], now)
-            checks = continuity(self.value['baseline'],now,body_restart=True)
+            checks = continuity(self.value['baseline'],now,body_restart=True,allow_expiry=True)
             self.save(phase='context_ready',checks=checks)
             # The host must acknowledge this report before invoking STATUS again.
             return self.result(context_ready=True,message='Game context is ready; checking the original session next.')
@@ -300,7 +301,7 @@ class Connection:
                 return self.result(message='Verification failed; disconnecting without changing saved work.')
             now = self.backend.capture()
             stored_continuity(self.value['baseline'], now)
-            checks = continuity(self.value['baseline'],now,body_restart=True)
+            checks = continuity(self.value['baseline'],now,body_restart=True,allow_expiry=True)
             self.save(phase='release',session=result,checks=checks)
         if self.value['phase']=='release':
             # Restore-only after this boundary. Never repeat session/load or

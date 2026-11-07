@@ -165,6 +165,13 @@ needed. Updater enrollment remains a distinct owner operation.
   Changed inventory, position, authority, binding or uncertain effects are not
   overwritten to make verification pass. Independent service masks remain in
   force.
+- A finite task may expire while offline. Reconnect accepts the body's existing
+  status-only change to `budget_exhausted` once the original deadline has elapsed.
+  The private receipt records that exception against the captured full-state
+  hashes. Identity, source, deadline, consumed counts, progress, waits, recovery
+  and unknown receipts must remain identical. No renewal is needed to reconnect
+  for chat, and the expired work is not reopened. Missing/contradictory bounds,
+  early closure, arbitrary completion and other state changes still fail closed.
 - Each action/revision/request is durably journaled before effects. After a lost
   reply, the host uses status only. Status may advance the same accepted
   operation; it never invents a replacement operation or repeats an uncertain
