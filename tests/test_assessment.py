@@ -11,7 +11,7 @@ from assessment import Assessment, POLICY, context, signature
 def state(status='running'):
     return {'username':'test', 'inventory':[], 'events':[], 'public_chat':[],
             'task':{'id':'one','status':status,'goal':'Create an enjoyable place',
-                    'deadline':time.time()*1000+60000,'turns':1,'max_turns':10,
+                    'deadline':int(time.time()*1000)+60000,'turns':1,'max_turns':10,
                     'wait_for':'A teammate delivers the material' if status=='waiting' else None}}
 
 

@@ -88,12 +88,14 @@ source within its bounded review window. Stop invalidates older retained sources
 
 ## Delegation and speech limits
 
-Execution delegation is explicitly unavailable in this revision. Peer requests
-and Instance work export/import cannot mint human world authority. A future
-lead/helper path must preserve the original human delegation authorization and
-independent recipient acceptance; it must not copy a ledger record into an
-execution grant. The agent must state the current limitation rather than promise
-that recruiting others has already started work.
+Independent helper acceptance is available only through its explicit installation
+policy and original human provenance, as described in
+[human-led play](human-led-play.md#independently-accepted-helper-work). Instance
+work export/import remains responsibility evidence, not a world execution grant.
+
+Newly accepted work may use explicit completion-bound defaults after local helper
+capability discovery. See [completion-bound tasks](completion-bound-tasks.md).
+Existing finite tasks and their consumed counts are never converted by a mode change.
 
 Final, settled public replies prefer complete sentences and are packetized at
 sentence boundaries where they fit, falling back to word boundaries and then

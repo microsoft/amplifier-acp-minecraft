@@ -1,5 +1,6 @@
 // Public game observations for another ACP experience. No game control authority.
 const crypto = require('node:crypto');
+const bounds=require('./task-bounds.cjs');
 const {McpServer} = require('@modelcontextprotocol/sdk/server/mcp.js');
 const {StreamableHTTPServerTransport} = require('@modelcontextprotocol/sdk/server/streamableHttp.js');
 const {z} = require('zod');
@@ -11,6 +12,7 @@ function status(snapshot, label) {
   const t=snapshot.task;
   result.task=t?Object.fromEntries(['id','goal','status','turns','max_turns','deadline','wait_for']
     .filter(k=>t[k]!==undefined).map(k=>[k,t[k]])):null;
+  if(t?.bounds!==undefined)result.task.bounds=bounds.valid(t)?bounds.get(t):{status:'unknown'};
   // Reassessment entries contain observations and raw action receipts. Expose
   // only the agent's short report, even when a nested observation is present.
   if(t)result.task.progress=(t.progress||[]).slice(-8).map(entry=>({

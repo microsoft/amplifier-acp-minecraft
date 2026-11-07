@@ -1,4 +1,5 @@
 """One independent ACP endpoint + one Minecraft body. No fleet or model SDK."""
+from task_bounds import allowance_remaining
 import argparse
 import asyncio
 import hashlib
@@ -236,8 +237,7 @@ async def run(home):
         fresh=await request('/state')
         task=fresh.get('task') or {}
         if (not fresh.get('busy') and not fresh.get('turn_active')
-            and task.get('status')=='waiting' and task.get('deadline',0)>time.time()*1000
-            and task.get('turns',0)<task.get('max_turns',0)):
+            and task.get('status')=='waiting' and allowance_remaining(task)):
             await observe_attention(fresh)
 
     # A controller restart must not replay an uncertain in-flight task.

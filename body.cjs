@@ -12,6 +12,8 @@ const {refreshInventory}=require('./inventory.cjs');
 const survival=require('./survival.cjs');
 const handoff=require('./handoff.cjs');
 const watchBridge=require('./watch-bridge.cjs');
+const taskBounds=require('./task-bounds.cjs');
+const helperCapabilities=require('./helper-capabilities.cjs');
 const crafting=require('./crafting.cjs');
 const containers=require('./containers.cjs');
 const farming=require('./farming.cjs');
@@ -35,7 +37,9 @@ const version=cfg.version||'1.21.1';
 const {TaskIntake,INTAKE_TOOLS}=require('./task-intake.cjs');
 const chatProvenance=new (require('./chat-provenance.cjs').ChatProvenance)();
 const history=new WorkshopState(path.join(path.dirname(process.argv[2]),'workshop.json'),{maxTurns:cfg.task_max_turns||12,maxSeconds:cfg.task_max_seconds||2400});
-const taskIntake=new TaskIntake(history,cfg);
+const taskIntake=new TaskIntake(history,cfg,{completionSupported:()=>helperCapabilities.ready(cfg.decision_attention?.command)});
+// Static discovery makes no home/session/model request. Missing support keeps new completion-bound intake closed.
+helperCapabilities.discover(cfg.decision_attention?.command);
 const {ActionSequence,SEQUENCE_TOOLS}=require('./action-sequence.cjs');
 const actionSequence=new ActionSequence(history);
 const activityParticipation=new (require('./activity-participation.cjs').ActivityParticipation)(history,cfg);
@@ -155,8 +159,9 @@ function speech(name,a){
 async function operate(name,a={},sequenceId=null){
   if(!ready)throw Error('Player is not connected');
   if(name==='sequence_status')return actionSequence.wait(a.plan_id,a.wait_ms||0);
-  if(name==='task_capabilities')return taskIntake.capabilities();
+  if(name==='task_capabilities'){await helperCapabilities.discover(cfg.decision_attention?.command);return taskIntake.capabilities();}
   if(INTAKE_TOOLS.has(name)){
+    await helperCapabilities.discover(cfg.decision_attention?.command);
     if(history.data.turn?.ambient_activity||!taskIntake.capabilities().task_intake_enabled||!history.data.turn?.conversation_only||Date.now()>=turnUntil||busy)throw Error('Task intake requires a current idle human reply turn and enabled installation policy');
     const result=name==='task_accept'?taskIntake.accept(a):name==='task_accept_help'?taskIntake.acceptHelp(a):taskIntake.amend(a);
     record('task_authorization',{operation:name,...result});return result;
@@ -213,7 +218,7 @@ async function operate(name,a={},sequenceId=null){
   }
   if(['work_begin','work_report','work_reopen'].includes(name)){
     if(name==='work_begin'&&taskIntake.enabled())throw Error('Use source-bound task_accept during a human reply turn');
-    const result=name==='work_begin'?history.begin(a):name==='work_reopen'?history.reopen(a):history.report(a);if(name!=='work_report'){turnUntil=Math.min(turnUntil,result.deadline);if(lease.id){lease.bind(result);scheduleLease();}}
+    const result=name==='work_begin'?history.begin(a):name==='work_reopen'?history.reopen(a):history.report(a);if(name!=='work_report'){turnUntil=taskBounds.clamp(result,turnUntil);if(lease.id){lease.bind(result);scheduleLease();}}
     record('work_status',{task_id:result.id,status:result.status,goal:result.goal,progress:result.progress.at(-1)});return taskView(result);
   }
   if(!['chat','tell'].includes(name)&&!history.data.turn?.may_mutate)throw Error('A peer message does not authorize game actions after a responsibility stops. You may inspect and reply; a new human request is needed for more work.');

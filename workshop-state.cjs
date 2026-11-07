@@ -1,6 +1,7 @@
 // Experience-owned history and bounded work; independent of any agent runtime.
 const fs=require('node:fs');
 const crypto=require('node:crypto');
+const bounds=require('./task-bounds.cjs');
 const {isPublicChatEvent}=require('./public-chat.cjs');
 const sharedActions=new Set(['chat','tell','move','follow','dig','place','build','gather','craft','give','shear','furnace','container','write_sign','set_open']);
 const text=(value,limit)=>typeof value==='string'?value.slice(0,limit):undefined;
@@ -47,7 +48,7 @@ class WorkshopState {
   this.data.events=[...this.data.events.filter(e=>!ids.has(e.id)&&pinned.has(e.id)&&now-Date.parse(e.time)<600000),...recent];
   this.save();return saved;
  }
- task(){const task=this.data.task;if(['running','waiting','review','blocked','needs_review'].includes(task?.status)&&Date.now()>task.deadline){task.status='budget_exhausted';this.save();}return task;}
+ task(){const task=this.data.task;if(['running','waiting','review','blocked','needs_review'].includes(task?.status)&&bounds.valid(task)&&bounds.timeLow(task)){task.status='budget_exhausted';this.save();}return task;}
  begin({request_id,goal}){
   if(['running','waiting'].includes(this.task()?.status))throw Error('An accepted task is already running');
   if((this.data.accepted_requests||[]).includes(request_id))throw Error('This request has already authorized a task; ask the human for a new request');
@@ -63,10 +64,11 @@ class WorkshopState {
  }
  startTurn({peerOnly=false,requestIds=[]}={}){
   const task=this.task();
+  if(task&&!bounds.valid(task))throw Error('Unknown assignment bounds require inspection');
   if(['running','waiting'].includes(task?.status)){
-   if(task.deadline-Date.now()<120000){this.budgetCheckpoint();throw Error('Insufficient time for another useful turn; progress saved');}
+   if(bounds.timeLow(task,120000)){this.budgetCheckpoint();throw Error('Insufficient time for another useful turn; progress saved');}
    task.status='running';
-   if(task.turns>=task.max_turns){task.status='budget_exhausted';this.save();throw Error('Task turn budget exhausted');}
+   if(bounds.turnsLow(task)){task.status='budget_exhausted';this.save();throw Error('Task turn budget exhausted');}
    task.turns++;
   }
   this.data.turn={started_at:new Date().toISOString(),task_id:task?.id||null,progress_revision:task?.progress_revision||0,actions:[],request_ids:requestIds,may_mutate:!peerOnly||['running','waiting'].includes(task?.status)};this.save();
@@ -75,19 +77,19 @@ class WorkshopState {
  actionSettled(id,success){const a=this.data.turn?.actions?.find(a=>a.id===id);if(a){a.status=success?'succeeded':'uncertain';this.save();}}
  recoveryFacts(){
   const task=this.task(),turn=this.data.last_turn;
-  return {status:task?.status||'none',remaining_ms:Math.max(0,(task?.deadline||0)-Date.now()),remaining_turns:Math.max(0,(task?.max_turns||0)-(task?.turns||0)),minimum_turn_ms:120000,
+  return {status:task?.status||'none',...(task?.bounds?bounds.remaining(task):{remaining_ms:Math.max(0,(task?.deadline||0)-Date.now()),remaining_turns:Math.max(0,(task?.max_turns||0)-(task?.turns||0))}),minimum_turn_ms:120000,
    receipts_complete:!!(turn?.interrupted&&turn.task_id===task?.id&&Array.isArray(turn.actions)&&turn.actions.every(a=>a.status!=='pending')),
    actions_succeeded:!!turn?.actions?.every(a=>a.status==='succeeded'),recovery_attempts:task?.recovery_attempts||0};
  }
  budgetCheckpoint(){
-  const task=this.task();if(task&&['running','waiting','needs_review'].includes(task.status)&&task.deadline-Date.now()<120000){
+  const task=this.task();if(task&&bounds.valid(task)&&['running','waiting','needs_review'].includes(task.status)&&bounds.timeLow(task,120000)){
    this.appendProgress(task,{at:new Date().toISOString(),kind:'budget_checkpoint',summary:'Progress saved: less than two minutes remain, so no new work turn will start. A fresh authorization is required to continue.'});
    task.status='budget_exhausted';task.wait_for=null;this.save();return true;
   }return false;
  }
  reconcile(observation){
   const f=this.recoveryFacts();const task=this.task();
-  if(this.data.turn||f.status!=='needs_review'||f.remaining_ms<120000||!f.remaining_turns||!f.receipts_complete||!f.actions_succeeded||f.recovery_attempts>=2)throw Error('Interrupted work requires operator review');
+  if(this.data.turn||f.status!=='needs_review'||!bounds.within(task,{minimumMs:120000})||!f.receipts_complete||!f.actions_succeeded||f.recovery_attempts>=2)throw Error('Interrupted work requires operator review');
   task.recovery_attempts=f.recovery_attempts+1;
   this.appendProgress(task,{at:new Date().toISOString(),kind:'receipt_reconciliation',summary:'Controller inspected settled successful action receipts and current world state. Continue by observing; do not replay prior actions.',observation});
   task.status='running';task.wait_for=null;task.wait_started_at=null;this.save();return task;
@@ -109,7 +111,7 @@ class WorkshopState {
  reopen({task_id,request_id,reason}){
   const task=this.task(),turn=this.data.turn;
   if(!task||task.id!==task_id||task.status!=='review'||!turn||turn.task_id!==task.id)throw Error('Only a reviewed task in its current conversation turn can return to work');
-  if(task.deadline-Date.now()<120000||task.turns>=task.max_turns)throw Error('The original task budget cannot be extended');
+  if(bounds.timeLow(task,120000)||bounds.turnsLow(task))throw Error('The original task budget cannot be extended');
   const source=this.data.events.find(e=>e.id===request_id);
   if(!turn.request_ids?.includes(request_id)||!source||source.kind!=='chat'||source.source!=='agent'||!source.accepted||source.whisper||source.intent!=='request'||!task.reviewers?.includes(source.username)||!task.reviewed_at||Date.parse(source.time)<Date.parse(task.reviewed_at)||Date.now()-Date.parse(source.time)>600000)throw Error('A fresh public request from an operator-authorized reviewer is required');
   if((task.rework_requests||[]).includes(request_id)||(task.rework_requests||[]).length>=3)throw Error('Review request already used or rework limit reached');
@@ -136,7 +138,7 @@ class WorkshopState {
    if(error&&turn)task.status='needs_review';
    else if(budgetLimited){
     this.appendProgress(task,{at:new Date().toISOString(),kind:'controller_checkpoint',summary:'The model reached a turn limit after its reported tool calls settled. Inspect current observations and receipts before continuing the existing responsibility.'});
-    if(task.turns>=task.max_turns)task.status='budget_exhausted';
+    if(bounds.turnsLow(task))task.status='budget_exhausted';
    }
    else if(turn?.task_id===task.id&&turn.progress_revision===(task.progress_revision||0)){
     const succeeded=Array.isArray(turn.actions)&&turn.actions.length>0&&turn.actions.every(a=>a.status==='succeeded');
@@ -149,22 +151,22 @@ class WorkshopState {
      this.appendProgress(task,{at:new Date().toISOString(),kind:'missing_report_checkpoint',summary:'The planner ended without a progress report after all recorded actions settled successfully. Inspect current state and receipts, report the actual remaining work or blocker, and do not replay these actions.'});
      turn.missing_report=true;
     }else task.status='blocked';
-    if(task.turns>=task.max_turns)task.status='budget_exhausted';
+    if(bounds.turnsLow(task))task.status='budget_exhausted';
    }
-   else if(task.turns>=task.max_turns)task.status='budget_exhausted';
+   else if(bounds.turnsLow(task))task.status='budget_exhausted';
   }
   if(turn)this.data.last_turn={...turn,interrupted:!!error};
   this.data.turn=null;this.save();
  }
  wake(task_id){
   const task=this.task();
-  if(!task||task.id!==task_id||task.status!=='waiting'||task.turns>=task.max_turns)throw Error('No authorized waiting task with remaining budget');
+  if(!task||task.id!==task_id||task.status!=='waiting'||bounds.turnsLow(task))throw Error('No authorized waiting task with remaining budget');
   task.status='running';this.save();return task;
  }
  resumeReviewed({task_id,reason,resume_stopped=false}){
   const task=this.task();
   if(this.data.turn||!task||task.id!==task_id||(!['blocked','needs_review'].includes(task.status)&&!(task.status==='stopped'&&resume_stopped===true)))throw Error('Only an idle blocked or interrupted task can be resumed after review; stopped work requires explicit operator authorization');
-  if(Date.now()>=task.deadline||task.turns>=task.max_turns)throw Error('Existing task budget exhausted; review cannot extend it');
+  if(bounds.timeLow(task)||bounds.turnsLow(task))throw Error('Existing task budget exhausted; review cannot extend it');
   if(typeof reason!=='string'||!reason.trim()||reason.length>2000)throw Error('A concrete recovery review is required');
   this.appendProgress(task,{at:new Date().toISOString(),kind:'operator_recovery',summary:reason,previous_status:task.status});
   task.status='running';task.wait_for=null;task.wait_started_at=null;this.save();return task;
@@ -179,6 +181,7 @@ class WorkshopState {
   const original=this.task();
   const task=original?{...(owner?original:Object.fromEntries(
    ['id','goal','status','turns','max_turns','deadline','wait_for'].filter(k=>original[k]!==undefined).map(k=>[k,original[k]]))),
+   ...(!owner&&original.bounds!==undefined?{bounds:bounds.valid(original)?bounds.get(original):{status:'unknown'}}:{}),
    progress:original.progress.slice(-8).map(p=>owner?p:sharedProgress(p))}:null;
   const coverage=owner?'Recent game chat and actual action receipts; task completion is agent-reported':
    'Recent public chat, task summaries and action receipt metadata; raw inputs/results are owner-local and task completion is agent-reported';

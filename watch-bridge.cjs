@@ -4,6 +4,8 @@ const path=require('node:path');
 const {execFile}=require('node:child_process');
 const {promisify}=require('node:util');
 const exec=promisify(execFile);
+const bounds=require('./task-bounds.cjs');
+const helpers=require('./helper-capabilities.cjs');
 const {isPublicChatEvent}=require('./public-chat.cjs');
 
 function bounded(value,limit=1400){const text=JSON.stringify(value);return text.length<=limit?value:{truncated:true,excerpt:text.slice(0,limit)};}
@@ -31,14 +33,18 @@ function context(cfg,history,live){
   if(live.crops)events.push({id:'environment:crops',kind:'environment',source:'Loaded nearby crop and farmland block states',content:live.crops});
  }
  return {scope:`${cfg.conversation_id||'minecraft:workshop'}:${cfg.username}`,
-  task:task?{id:task.id,goal:task.goal,status:task.status,deadline_ms:task.deadline,remaining_turns:Math.max(0,task.max_turns-task.turns)}:null,events};
+  task:task?{id:task.id,goal:task.goal,status:task.status,deadline_ms:task.bounds?bounds.get(task).deadline_ms:task.deadline,remaining_turns:task.bounds?bounds.remaining(task).remaining_turns:Math.max(0,task.max_turns-task.turns)}:null,events};
 }
 
 async function invoke(command,home,input,operation='watch'){
+ const tagged=operation==='watch'?input.task?.deadline_ms&&typeof input.task.deadline_ms==='object':input.remaining_ms&&typeof input.remaining_ms==='object';
+ const capabilities=await helpers.discover(command);
+ if(tagged&&!helpers.supports(capabilities,operation))throw Error(`Local ${operation}-v2 support is unavailable; no bound conversion or authority renewal`);
+ const subcommand=tagged?`${operation}-v2`:operation;
  const temp=fs.mkdtempSync(path.join(home,'watch-request-'));
  try{
   const file=path.join(temp,'input.json');fs.writeFileSync(file,JSON.stringify(input),{mode:0o600});
-  const {stdout}=await exec(command,operation==='watch'?['watch','--store',path.join(home,'watches.json'),file]:['continuation',file],{timeout:5000,maxBuffer:512*1024});
+  const {stdout}=await exec(command,operation==='watch'?[subcommand,'--store',path.join(home,'watches.json'),file]:[subcommand,file],{timeout:5000,maxBuffer:512*1024});
   return JSON.parse(stdout);
  }catch(e){throw Error(e.stderr?.trim().slice(0,400)||'Attention watch operation failed');}
  finally{fs.rmSync(temp,{recursive:true,force:true});}

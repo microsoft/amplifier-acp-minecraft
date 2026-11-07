@@ -168,3 +168,28 @@ test('human-led mode removes local action pacing, while legacy cap and Stop rema
   }finally{f.close();}
  }
 });
+
+test('actual body accepts completion-bound work only after local helper discovery; lease and human reduction stay separate',async()=>{
+ const dir=fs.mkdtempSync(path.join(os.tmpdir(),'body-helper-capabilities-')),command=path.join(dir,'runtime');
+ const capabilities={schema_version:1,helpers:{watch:{version:2,command:'watch-v2',bound_kinds:['finite','no_configured_bound'],watch_ttl_seconds:{minimum:30,maximum:1800}},continuation:{version:2,command:'continuation-v2',bound_kinds:['finite','no_configured_bound']}}};
+ fs.writeFileSync(command,`#!/usr/bin/env node\nif(process.argv.slice(2).join(' ')!=='helper-capabilities')process.exit(1);process.stdout.write(${JSON.stringify(JSON.stringify(capabilities))});`,{mode:0o700});
+ const f=fixture({incoming_chat_only:true,decision_attention:{command},human_engagement:{enabled:true},human_task_intake:{enabled:true,default_bound_mode:'completion_bound'}});
+ try{
+  await realRequire('./helper-capabilities.cjs').discover(command);f.history.data.task.status='budget_exhausted';const old=structuredClone(f.history.data.task);
+  function human(message){const e=f.history.record({kind:'chat',time:new Date().toISOString(),source:'human',username:'Visitor',message,accepted:true,provenance:'minecraft_public_chat',transport:{kind:'server_player_uuid',username:'Visitor',uuid:'human-uuid'}});f.history.data.inbox.push({id:e.id,source:'human',username:'Visitor',message});f.history.save();return e;}
+  const e=human('Finish this commission.');await f.request('/turn',{conversation_only:true,message_ids:[e.id]});
+  const accepted=await f.request('/action',{name:'task_accept',arguments:{request_id:e.id,goal:'Finish the whole commission'}});
+  assert.equal(accepted.execution_started,false);assert.equal(accepted.bounds.deadline_ms.kind,'no_configured_bound');assert.deepEqual(f.history.data.task_history.at(-1),old);
+  await f.request('/action',{name:'dig',arguments:{x:1,y:64,z:0}},400);
+  await f.request('/finish',{});const start=await f.request('/turn',{continuation:true,renewable_lease:true}),taskId=accepted.task_id;
+  const before=JSON.stringify(f.history.task());
+  for(let i=0;i<90;i++){f.advance(30000);await f.request('/turn/renew',{lease_id:start.action_lease.lease_id,task_id:taskId});}
+  assert.equal(JSON.stringify(f.history.task()),before);assert.equal(f.history.task().turns,1);
+  await f.operate('work_report',{status:'running',summary:'Progress checkpoint; work remains.'});await f.request('/finish',{});
+  const reduce=human('Stop after zero work turns.');await f.request('/turn',{conversation_only:true,message_ids:[reduce.id]});
+  await f.request('/action',{name:'task_amend',arguments:{request_id:reduce.id,task_id:taskId,expected_revision:1,max_turns:0}});
+  assert.equal(f.history.task().turns,1);assert.equal(f.history.task().status,'budget_exhausted');await f.request('/finish',{});
+  await f.request('/turn',{continuation:true,renewable_lease:true},400);
+  assert.equal((await f.request('/status')).action_lease.lease_id,null);
+ }finally{f.close();fs.rmSync(dir,{recursive:true,force:true});}
+});

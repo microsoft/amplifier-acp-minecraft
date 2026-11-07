@@ -66,9 +66,8 @@ start an endless continuation loop. Stops and exhausted assignments stay closed.
 agent names. First observed presence and stationary/AFK presence are not movement.
 Activity expires after two minutes without further movement. These are observed
 facts for planners; this revision does not synthesize human commands or enable
-idle model polling from movement. Movement-driven social engagement, default
-completion-bound assignments and independently accepted delegation require their
-own policy integration. None are implied by a cosmetic change or transport
+idle model polling from movement. Movement-driven social engagement, completion-bound assignments and independently
+accepted delegation require the explicit installation policies described below. None are implied by a cosmetic change or transport
 health check.
 
 Public participation inputs have independent durable outcomes. Each evaluation
@@ -111,9 +110,9 @@ not allocation of a shared aggregate budget or further delegation. Ambiguous
 scope needs clarification. Mechanical source validation does not prove the
 model interpreted the human's meaning correctly.
 
-Acceptance retains both original receipts, creates one independent bounded task,
+Acceptance retains both original receipts, creates one independent task within the recipient’s configured bound policy,
 and commits consumed source IDs with it. Retries/restarts return that outcome;
-they cannot create another allowance. The helper deadline is anchored to the
+they cannot create another allowance. Any finite helper deadline is anchored to the
 original human source time, never refreshed by a later peer handoff. Existing
 work, unresolved effects, Stop, installation ceilings and source expiry remain
 enforced. Original public sources must still be within the ten-minute intake
@@ -125,3 +124,8 @@ reply bound (four per hour by default, configurable from one to twelve through
 unmetered human-message lane. Ordinary ACP engines can use the same MCP tools;
 no native receipt or invented host delegation API is assumed. World effects
 remain denied in the acceptance reply and require a later valid work turn.
+
+## Completion-bound assignments
+
+See [completion-bound tasks](completion-bound-tasks.md) for opt-in defaults,
+local helper capability discovery and legacy compatibility.
