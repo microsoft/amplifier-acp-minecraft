@@ -61,6 +61,40 @@ Use [Xbox LAN setup](xbox-lan.md) for NetherNet, discovery/firewall/ICE, authent
 the temporary version-specific compatibility option and real console validation. A separate human
 gateway permits that repair without restarting the world or agents.
 
+### Preserve the same player across Java and Xbox
+
+A successful Bedrock login does **not** establish a Java account link. Without one,
+Floodgate assigns a separate Bedrock UUID; the player may appear at spawn with an
+empty inventory even though their original Java save is intact. Verify account
+identity separately from discovery and transport.
+
+Follow [Floodgate account linking](https://geysermc.org/wiki/floodgate/linking/).
+Global linking uses the official linking service; local linking is scoped to this
+server/proxy. A local database entry takes precedence over global linking. For
+local SQLite linking, install the compatible `floodgate-sqlite-database.jar` in
+**the proxy's Floodgate plugin directory**, enable `player-link.enabled` and
+`enable-own-linking`, and select `type: sqlite`. Those configuration flags alone
+do not install the extension or create a verified account link.
+
+Use the normal two-account linking flow, or an explicitly authorized migration of
+an already authenticated mapping. Never infer ownership from similar names or
+remove the username prefix as a substitute for linking. Before a migration, record
+the authenticated Xbox identity/XUID and Java UUID, back up existing link records
+and both players' saved data at a settled boundary, and preserve unrelated links.
+Do not copy one player's inventory over the other. Restart only the affected
+gateway if needed, then have the human reconnect: check the resulting Java UUID,
+location and inventory. Keep newly created Bedrock data available for deliberate
+recovery; linking does not merge it into the Java inventory.
+
+**Version compatibility:** the tested Floodgate SQLite extension 2.2.5 build 138
+uses `javax.inject`; the tested Velocity 4.3.1/Guice 7 path required `jakarta.inject`
+for database injection. Our installed extension used a narrowly reviewed annotation
+compatibility rebuild. Do not assume the official database download works merely
+because Floodgate itself starts. Prefer an upstream-compatible build when available;
+otherwise review/test that exact compatibility change and record its source and
+artifact hashes before installation. Check initialization errors and a real linked
+login. This is separate from the temporary Xbox LAN workaround.
+
 ## 3. Stage one self-contained player
 
 Requirements: **Node 22+**, **Python 3.12+**, a compatible Java server, and a separately
