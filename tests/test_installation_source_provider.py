@@ -47,7 +47,7 @@ class SourceProviderTests(unittest.TestCase):
         durable_write(self.home/'installation-updates/gate.json',{'version':1,'transaction_id':self.tx,'closed':True})
         class Idle:
             def services(self):return {k:{'ActiveState':'inactive','MainPID':'0'} for k in ('body','controller')}
-        self.patcher=patch('installation_participant.LocalInstallation',lambda cfg:Idle());self.patcher.start();self.addCleanup(self.patcher.stop)
+        self.patcher=patch('installation_participant.LocalInstallation',type('IdleInstallation',(Idle,),{'__init__':lambda self,cfg:None}));self.patcher.start();self.addCleanup(self.patcher.stop)
     def test_plan_only_stages_and_records_official_sdk_commit(self):
         self.assertFalse((self.home/'app').is_symlink());self.assertEqual(self.provider.status()['version'],'a'*40)
         self.assertEqual(read(Path(self.plan['stage'])/'manifest.json')['sdk']['commit'],SDK)
@@ -181,5 +181,27 @@ class SourceProviderTests(unittest.TestCase):
         with patch('installation_enrollment.platform.system',return_value='Darwin'):
             with self.assertRaises(ValueError):registration('/unused','/unused','/unused')
 
+
+
+class SourceMarkerTests(unittest.TestCase):
+    setUp=SourceProviderTests.setUp
+    def test_new_plan_refreshes_exact_file_inventory_and_rollback_preserves_original(self):
+        marker=read(self.home/'app-source.json');marker['files']={'removed.py':'old-hash'}
+        durable_write(self.home/'app-source.json',marker)
+        plan=self.provider.plan();envelope={**self.envelope,'id':str(uuid.uuid4()),'plan':plan}
+        self.assertEqual(plan['source_marker_version'],2)
+        self.provider.apply(envelope,self.tx)
+        installed=read(self.home/'app-source.json')
+        self.assertNotIn('removed.py',installed['files'])
+        self.assertEqual(installed['files']['body.cjs'],__import__('hashlib').sha256(b'candidate').hexdigest())
+        self.assertEqual(installed['private_label'],'preserve')
+        self.provider.rollback(envelope,self.tx)
+        self.assertEqual(read(self.home/'app-source.json'),marker)
+    def test_retained_legacy_plan_keeps_its_marker_contract(self):
+        self.envelope['plan'].pop('source_marker_version')
+        self.provider.apply(self.envelope,self.tx)
+        self.assertNotIn('files',read(self.home/'app-source.json'))
+        self.assertTrue(self.provider.verify(self.envelope)['verified'])
+        self.provider.rollback(self.envelope,self.tx)
 
 if __name__=='__main__':unittest.main()

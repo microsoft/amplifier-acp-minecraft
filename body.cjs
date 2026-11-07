@@ -473,6 +473,7 @@ const server=http.createServer(async(req,res)=>{
     if(req.method==='GET'&&req.url==='/state')result=snapshot();
     else if(req.method==='GET'&&req.url==='/installation-state')result={version:1,ready,busy,turn_active:Date.now()<turnUntil,
       task:history.task(),action_lease:lease.view(history.task()),action_sequence:actionSequence.status(),
+      human_engagement:require('./human-activity.cjs').updateEngagement(history,humanActivity.snapshot()),
       inventory:ready?containers.inventorySnapshot(bot.inventory):null,position:ready?bot.entity.position:null,
       window_open:!!bot.currentWindow,admission_gate:updateAdmission.state(path.dirname(process.argv[2]))};
     else if(req.method==='GET'&&req.url==='/observation')result=worldView(snapshot());

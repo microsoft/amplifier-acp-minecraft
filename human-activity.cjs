@@ -27,4 +27,17 @@ class HumanActivity {
   players:[...this.players.values()].map(p=>({...p,active:p.last_activity_at!==null&&now-p.last_activity_at<this.activeMs})),
   scope:'Loaded server-attributed human movement. Idle presence is not activity; these observations do not create or renew tasks.'};}
 }
-module.exports={HumanActivity};
+function updateEngagement(history,activity,now=Date.now()){
+ const window=activity.active_window_ms;
+ const inputs=history.data.events.filter(e=>{
+  const at=Date.parse(e.time),t=e.transport;
+  return e.kind==='chat'&&e.source==='human'&&Number.isFinite(at)&&at<=now&&now-at<600000&&
+   ((t?.kind==='authenticated_operator_control'&&e.provenance==='operator_control')||
+    (t?.kind==='server_player_uuid'&&t.username===e.username&&/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(t.uuid||'')));
+ });
+ const last=inputs.reduce((at,e)=>Math.max(at,Date.parse(e.time)),0),ids=new Set(inputs.map(e=>e.id));
+ const pending=(history.data.inbox||[]).filter(m=>m.source==='human'&&ids.has(m.id)).length;
+ return {version:1,active:pending>0||(last>0&&now-last<window)||activity.players.some(p=>p.active),
+  pending_human_inputs:pending,last_message_at:last||null,active_window_ms:window};
+}
+module.exports={HumanActivity,updateEngagement};

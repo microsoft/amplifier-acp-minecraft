@@ -187,6 +187,7 @@ def snapshot(home, services, body=None, status=None):
         'body': None if body is None else {k: body.get(k) for k in (
             'ready', 'busy', 'turn_active', 'action_lease', 'inventory', 'position')},
         'sequence': None if status is None else status.get('action_sequence'),
+        'human_engagement': (body or {}).get('human_engagement'),
         'status_observed': isinstance(status, dict) and 'action_sequence' in status,
         'status_idle': isinstance(status, dict) and status.get('ready') is True
             and status.get('busy') is False and status.get('turn_active') is False

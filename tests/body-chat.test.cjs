@@ -463,3 +463,12 @@ test('public peer evidence survives a full inbox and old human activity for huma
   assert.equal(f.inbox[0].id,e.id);assert.deepEqual(f.history.task(),f.task);
  }finally{f.close();}
 });
+test('installation observation reports fresh human engagement without a turn or authority change',async()=>{
+ const f=fixture('BuilderOne');try{
+  const before=JSON.stringify(f.history.task());
+  assert.equal((await f.request('/installation-state')).human_engagement.active,false);
+  f.history.record({kind:'chat',source:'human',username:'Visitor',message:'Hello',time:new Date().toISOString(),provenance:'minecraft_public_chat',transport:{kind:'server_player_uuid',username:'Visitor',uuid:'00000000-0000-0000-0000-000000000001'}});
+  assert.equal((await f.request('/installation-state')).human_engagement.active,true);
+  assert.equal(f.history.data.turn,null);assert.equal(JSON.stringify(f.history.task()),before);
+ }finally{f.close();}
+});
