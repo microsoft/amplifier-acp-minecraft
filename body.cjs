@@ -502,6 +502,10 @@ const server=http.createServer(async(req,res)=>{
     }
     else if(req.method==='GET'&&req.url==='/status')result={ready,busy,turn_active:Date.now()<turnUntil,incoming_chat_only:cfg.incoming_chat_only===true,conversation_only:history.data.turn?.conversation_only===true,reply_work_allowed:replyWorkAllowed(),ambient_activity:history.data.turn?.ambient_activity===true,peer_proposal:history.data.turn?.peer_proposal===true,task_intake_enabled:taskIntake.capabilities().task_intake_enabled,task_capabilities:taskIntake.capabilities(),task:history.task(),action_lease:lease.view(history.task()),action_sequence:actionSequence.status()};
     else if(req.method==='GET'&&req.url==='/inbox/peek')result=(cfg.human_engagement?.enabled===true&&inbox.some(m=>m.source==='human'&&!m.attention_offer)?inbox.filter(m=>m.source==='human'&&!m.attention_offer):inbox).slice(0,8);
+    else if(req.method==='POST'&&req.url==='/inbox/retire-expired'){
+      if(busy||Date.now()<turnUntil||history.data.turn)result={retired:0,reason:'turn_active'};
+      else result=require('./delivery-queue.cjs').retireExpired(history,inbox);
+    }
     else if(req.method==='GET'&&req.url==='/conversation/admission')result=replyAdmission.status(inbox);
     else if(req.method==='GET'&&['/participation','/participation?human_only=1'].includes(req.url))result=participation.enabled?participationProposal(req.url.endsWith('human_only=1')):null;
     else if(req.method==='POST'&&req.url==='/participation'){

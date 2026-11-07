@@ -73,6 +73,7 @@ class HumanReplyCapacity(unittest.IsolatedAsyncioTestCase):
    paths.append((path,payload))
    if path in ('/state','/observation'):return {**world,'turn_active':active,'pending_messages':1}
    if path=='/continuation':return {'action':'hold'}
+   if path=='/inbox/retire-expired':return {'retired':0}
    if path=='/conversation/admission':return {'version':1,'unmetered':priority_work,'remaining':None if priority_work else 1,'eligible_ids':[] if priority_work else ['human']}
    if path=='/inbox/peek':return [] if priority_work else [message]
    if path=='/turn':

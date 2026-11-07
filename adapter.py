@@ -259,6 +259,10 @@ async def run(home):
             state=await request('/state')
             if not state.get('ready'):
                 await asyncio.sleep(2);continue
+            # Retire only elapsed peer/activity deliveries, retaining their
+            # original source as undelivered evidence. Human input is untouched.
+            if state.get('pending_messages',0)>0:
+                await request('/inbox/retire-expired',{})
             # Leave queued messages in the body. Stop clears them immediately;
             # state is reread after each wait so deadlines still expire normally.
             work_allowed=state.get('task_capabilities',{}).get('autonomous_work_allowed',not incoming_chat_only)
@@ -310,6 +314,8 @@ async def run(home):
                 await asyncio.sleep(0 if (cfg.get('human_engagement') or {}).get('enabled') is True else 3)
                 newer=await request('/inbox/peek')
                 if newer:messages=newer
+            from delivery_queue import select_turn_messages
+            messages=select_turn_messages(messages)
             await connect()
             offers=[m['attention_offer'] for m in messages if m.get('attention_offer')]
             attention_offer=offers[0] if offers else None
