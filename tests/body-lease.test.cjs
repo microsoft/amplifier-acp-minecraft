@@ -13,7 +13,7 @@ function fixture(configOverride={}){
  const ctx=vm.createContext({require:n=>n==='mineflayer'?{createBot:()=>bot}:n==='node:http'?{createServer:h=>{handle=h;return {listen(){},close(){}};}}:realRequire(n),
  module:{exports:{}},console:{log(){}},Date:Clock,Buffer,process:{argv:['node','body.cjs',config],on(){},exit(){}},
  setTimeout:(fn,ms)=>{const t={fn,at:current+ms,unref(){}};timers.add(t);return t;},clearTimeout:t=>timers.delete(t)});
- vm.runInContext(fs.readFileSync(path.join(root,'body.cjs'),'utf8')+'\nready=true;module.exports={history,operate};',ctx);
+ vm.runInContext(fs.readFileSync(path.join(root,'body.cjs'),'utf8')+'\nready=true;module.exports={history,operate,actionsRemaining};',ctx);
  return {...ctx.module.exports,task,bot,async request(url,payload,code=200,token='fixture'){
   const req=Readable.from(payload===undefined?[]:[JSON.stringify(payload)]);Object.assign(req,{url,method:payload===undefined?'GET':'POST',headers:{authorization:'Bearer '+token}});
   let status,text;await handle(req,{writeHead:x=>status=x,end:x=>text=x});assert.equal(status,code,text);return text?JSON.parse(text):null;
@@ -150,4 +150,21 @@ test('actual body helper acceptance is metadata-only, source-bound and opens wor
   assert.equal(f.history.data.turn.task_id,result.task_id);assert.equal(f.history.data.turn.may_mutate,true);assert.equal(f.history.task().turns,1);
   await f.request('/stop',{});
  }finally{f.close();}
+});
+
+test('human-led mode removes local action pacing, while legacy cap and Stop remain enforced',async()=>{
+ for(const enabled of [false,true]){
+  const f=fixture({human_engagement:{enabled}});try{
+   f.bot.chat=()=>{};await f.request('/turn',{renewable_lease:true,continuation:true});
+   const before=JSON.stringify(f.history.task());
+   for(let i=0;i<25;i++){
+    const conversation=await f.request('/action',{name:'conversation'});
+    await f.request('/action',{name:'chat',arguments:{text:'Disposable receipt '+i,conversation_revision:conversation.revision}},!enabled&&i===24?400:200);
+   }
+   assert.equal(f.actionsRemaining(),enabled?null:0);
+   assert.equal((await f.request('/status')).task_capabilities.capacity.actions_per_turn,enabled?null:24);
+   assert.equal(JSON.stringify(f.history.task()),before);
+   await f.request('/stop',{});await f.request('/action',{name:'chat',arguments:{text:'After Stop'}},400);
+  }finally{f.close();}
+ }
 });
