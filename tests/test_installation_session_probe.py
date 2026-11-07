@@ -111,3 +111,30 @@ class SessionProbeTests(unittest.IsolatedAsyncioTestCase):
         self.endpoint['env']['PROBE_MODE']='slow';self.write()
         with self.assertRaises((asyncio.TimeoutError,RuntimeError)):await probe(self.home,1)
         self.assertEqual(self.events(),[{'action':'initialize'},{'action':'load','session':self.saved['session']}])
+
+    async def test_healthy_replay_can_exceed_inactivity_interval(self):
+        self.endpoint['env']['PROBE_MODE']='progressing';self.write()
+        result=await probe(self.home,4,idle_timeout=.8)
+        self.assertTrue(result['saved_session_loaded'])
+        self.assertEqual(self.events(),[{'action':'initialize'},{'action':'load','session':self.saved['session']}])
+
+    async def test_replay_inactivity_still_fails_without_prompt_or_replacement(self):
+        self.endpoint['env']['PROBE_MODE']='slow';self.write()
+        with self.assertRaises(Exception):await probe(self.home,4,idle_timeout=.8)
+        self.assertEqual(self.events(),[{'action':'initialize'},{'action':'load','session':self.saved['session']}])
+        self.assertEqual(json.loads((self.home/'session.json').read_text()),self.saved)
+
+    async def test_progress_does_not_extend_absolute_verification_budget(self):
+        self.endpoint['env']['PROBE_MODE']='progressing';self.write()
+        with self.assertRaises(Exception):await probe(self.home,.8,idle_timeout=.7)
+        self.assertEqual(self.events(),[{'action':'initialize'},{'action':'load','session':self.saved['session']}])
+
+    async def test_readonly_budget_is_explicit_and_bounded(self):
+        from installation_participant import verification_seconds
+        self.assertEqual(verification_seconds({}),12)
+        self.assertEqual(verification_seconds({'session_verification_seconds':180}),180)
+        for value in (True,0,13,181,None,'180'):
+            with self.assertRaises(ValueError):verification_seconds({'session_verification_seconds':value})
+        for total,idle in ((181,30),(180,31),(0,0)):
+            with self.assertRaises(ValueError):await probe(self.home,total,idle_timeout=idle)
+        self.assertEqual(self.events(),[])

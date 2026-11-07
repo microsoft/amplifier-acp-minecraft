@@ -6,6 +6,7 @@ import sys
 import platform
 from pathlib import Path
 from installation_guard import read
+from installation_participant import verification_seconds
 from installation_source_provider import Provider
 
 
@@ -15,7 +16,7 @@ def registration(config, helper_directory, python):
     config, helper_directory, python = map(Path,(config,helper_directory,python))
     if not all(p.is_absolute() for p in (config,helper_directory,python)):
         raise ValueError('Use absolute owner-installed helper/config/interpreter paths')
-    cfg=read(config);Provider(cfg)
+    cfg=read(config);Provider(cfg);verification_seconds(cfg)
     plans=Path(cfg.get('shared_plans',''))
     if (not plans.is_absolute() or plans.resolve()!=plans or not plans.is_dir()
             or plans.is_relative_to(Path(cfg['home'])) or plans.is_relative_to(Path(cfg['state']))):

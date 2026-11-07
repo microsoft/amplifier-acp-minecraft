@@ -36,7 +36,10 @@ def saved_endpoint(home):
     return endpoint, session, binding
 
 
-async def probe(home, timeout, client_factory=None):
+async def probe(home, timeout, client_factory=None, *, idle_timeout=None):
+    idle_timeout = min(30, timeout) if idle_timeout is None else idle_timeout
+    if not 0 < timeout <= 180 or not 0 < idle_timeout <= min(30, timeout):
+        raise ValueError("Bounded verification and independent inactivity budgets required")
     original = saved_endpoint(home)
     if client_factory is None:
         if not (home/'app/acp_client.py').is_file():
@@ -46,7 +49,7 @@ async def probe(home, timeout, client_factory=None):
         client_factory = Client
     endpoint, session, binding = original
     client = client_factory(endpoint, lambda *args, **kwargs: None,
-                            load_timeout=timeout, idle_timeout=timeout)
+                            load_timeout=timeout, idle_timeout=idle_timeout)
     client.permission_active = lambda: False
     client.permission_tools = lambda: set()
     async def load():
@@ -81,7 +84,8 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('--home', type=Path, required=True)
     parser.add_argument('--timeout', type=float, default=12)
+    parser.add_argument('--idle-timeout', type=float)
     args = parser.parse_args()
-    if not args.home.is_absolute() or not 0 < args.timeout <= 20:
+    if not args.home.is_absolute() or not 0 < args.timeout <= 180:
         parser.error('Absolute home and bounded verification timeout required')
-    print(json.dumps(asyncio.run(probe(args.home, args.timeout))))
+    print(json.dumps(asyncio.run(probe(args.home, args.timeout, idle_timeout=args.idle_timeout))))

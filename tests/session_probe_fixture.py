@@ -4,11 +4,14 @@ import json
 import os
 from pathlib import Path
 from acp import Agent, InitializeResponse, run_agent
-from acp.schema import AgentCapabilities, LoadSessionResponse
+from acp.schema import AgentCapabilities, LoadSessionResponse, AgentMessageChunk, TextContentBlock
 from acp.exceptions import RequestError
 
 
 class Peer(Agent):
+    def on_connect(self, connection):
+        self.connection = connection
+
     def record(self, action, **data):
         with Path(os.environ['PROBE_LOG']).open('a') as f:
             f.write(json.dumps({'action':action, **data})+'\n')
@@ -28,6 +31,10 @@ class Peer(Agent):
         mode = os.environ.get('PROBE_MODE')
         if mode == 'missing':
             raise RequestError(-32002, 'Original session unavailable')
+        if mode == 'progressing':
+            for _ in range(12):
+                await self.connection.session_update(session_id=session_id, update=AgentMessageChunk(content=TextContentBlock(text='historical message')))
+                await asyncio.sleep(.1)
         if mode == 'slow':
             await asyncio.sleep(60)
         return LoadSessionResponse()

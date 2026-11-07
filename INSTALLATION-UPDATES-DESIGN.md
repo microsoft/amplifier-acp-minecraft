@@ -148,8 +148,8 @@ Include `installation_session_probe.py` with the fixed owner helpers. The
 participant invokes it using the stable enrolled game `venv/bin/python`, with
 only initialize/session-load operations and permission callbacks disabled.
 It does not send prompts, maintenance, receipt acknowledgments or session/new.
-The probe receives a bounded operation budget within the 30-second participant
-command limit; this does not change task lifetime, provider settings or action
+By default the probe receives a 12-second operation budget within the legacy
+30-second participant command limit; this does not change task lifetime, provider settings or action
 leases. Lost restore acknowledgment still skips all re-verification and resumes
 restoration only; no session load runs after listeners may have resumed.
 
@@ -204,3 +204,16 @@ receipts remain after large regenerable directories are pruned. This bounds
 repeated busy checks and failed dependency builds, not the size of deliberately
 retained shared plans, baseline data or uncertain recovery evidence. Source
 checks require this enrollment before hourly installation is enabled.
+
+### Long saved-session verification
+
+Only after verifying an installed shared updater with a 300-second **verify**
+hook, an owner may explicitly enroll `session_verification_seconds: 180`. The
+default remains 12 for older hosts. Prepare and restore still use their original
+30-second command clocks. This opt-in gives initialize plus original-session
+load a total 180-second bound and an independent 30-second transport inactivity
+bound; healthy history replay can progress without removing either bound.
+Cleanup and subsequent continuity checks remain inside the shared verify limit.
+No prompt, new session, tool effect, maintenance, task extension or receipt replay
+is allowed. Failure stays pre-restore and rollback eligible. Do not enable hourly
+installation for long-history sessions until both sides are installed and checked.

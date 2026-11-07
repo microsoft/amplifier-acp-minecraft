@@ -19,6 +19,13 @@ from update_admission import process_identity
 COMPONENTS = {'minecraft', 'task-helpers', 'instance', 'runtime', 'engine', 'container-image'}
 
 
+def verification_seconds(cfg):
+    value = cfg.get('session_verification_seconds', 12)
+    if type(value) is not int or value not in (12, 180):
+        raise ValueError('Session verification must explicitly select 12 or 180 seconds')
+    return value
+
+
 def context(value):
     plan = value['plan']
     if (value.get('participant') != 'minecraft' or plan.get('schema') != 1
@@ -35,6 +42,7 @@ def context(value):
 class LocalInstallation:
     def __init__(self, cfg):
         self.c = cfg
+        verification_seconds(cfg)
         self.home = Path(cfg['home'])
         for key in ('home', 'state'):
             if not Path(cfg[key]).is_absolute():
@@ -120,7 +128,9 @@ class LocalInstallation:
         if timeout <= 7:
             raise ContinuityError('Insufficient operation budget for saved-session verification')
         value = json.loads(subprocess.check_output(
-            [str(python), str(script), '--home', str(self.home), '--timeout', str(min(12, timeout-6))],
+            [str(python), str(script), '--home', str(self.home),
+             '--timeout', str(min(verification_seconds(self.c), timeout-6)),
+             '--idle-timeout', str(min(30, verification_seconds(self.c), timeout-6))],
             text=True, timeout=timeout))
         if (value.get('verified') is not True or value.get('initialized') is not True
                 or value.get('saved_session_present') is not present
@@ -134,6 +144,7 @@ class LocalInstallation:
 class Participant:
     def __init__(self, cfg, envelope, backend=None):
         self.c, self.envelope = cfg, envelope
+        verification_seconds(cfg)
         self.plan = context(envelope)
         self.tx = self.plan['transaction_id']
         self.root, self.home = Path(cfg['state']), Path(cfg['home'])
@@ -279,7 +290,11 @@ class Participant:
         helper = self.backend.helper() if 'task-helpers' in self.changed else None
         session = None
         if outcome != 'unchanged' and self.changed.intersection({'instance','runtime','engine','container-image','minecraft'}):
-            session = self.backend.session(timeout=min(18, 26-(time.monotonic()-started)))
+            budget = verification_seconds(self.c)
+            # The 180-second opt-in requires the owner's verified 300-second
+            # shared verify hook; prepare/restore clocks remain unchanged.
+            ceiling = 285 if budget == 180 else 26
+            session = self.backend.session(timeout=min(budget+6, ceiling-(time.monotonic()-started)))
             # Loading must not change game authority, binding, inventory or effects.
             checks = continuity(self.value['baseline'], self.backend.capture(), body_restart=self.game)
         self.save(phase='verified', outcome=outcome, checks=checks, helper=helper, session=session)
