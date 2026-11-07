@@ -130,6 +130,25 @@ class SourceProviderTests(unittest.TestCase):
         self.assertEqual(delta['components'][1]['kind'],'runtime')
         for c in delta['components']:self.assertEqual(c['restart_scope'],{'services':[],'instance':False,'slack_homes':[]})
         self.assertEqual(delta['participants'][0]['protocol'],1)
+    def test_enrollment_namespaces_two_connections_and_keeps_shared_scope(self):
+        self.cfg.update(participant_id='minecraft-visit',component_ids={'minecraft':'minecraft-visit','task-helpers':'task-helpers-visit'})
+        helper=Path(self.cfg['task_helper']);helper.parent.mkdir();helper.write_text('existing')
+        config=self.root/'config.json';durable_write(config,self.cfg)
+        delta=registration(config,Path(__file__).resolve().parent.parent,Path(sys.executable))
+        self.assertEqual([c['id'] for c in delta['components']],['minecraft-visit','task-helpers-visit'])
+        participant=delta['participants'][0]
+        self.assertEqual(participant['id'],'minecraft-visit')
+        self.assertEqual(participant['components'],['minecraft-visit','task-helpers-visit','instance','runtime','engine','container-image'])
+
+    def test_source_plan_accepts_only_its_own_connection_envelope(self):
+        self.cfg.update(component_ids={'minecraft':'minecraft-visit','task-helpers':'task-helpers-visit'})
+        self.cfg['state']=str(self.root/'owner-visit')
+        provider=FakeProvider(self.cfg);plan=provider.plan()
+        envelope={'id':str(uuid.uuid4()),'component':'minecraft-visit','plan':plan}
+        provider.frozen(envelope)
+        envelope['component']='minecraft'
+        with self.assertRaises(ValueError):provider.frozen(envelope)
+
     def test_candidate_requires_success_for_exact_commit(self):
         for status,conclusion,sha in [('in_progress',None,'b'*40),('completed','failure','b'*40),('completed','success','c'*40)]:
             def gh(endpoint):

@@ -217,3 +217,31 @@ Cleanup and subsequent continuity checks remain inside the shared verify limit.
 No prompt, new session, tool effect, maintenance, task extension or receipt replay
 is allowed. Failure stays pre-restore and rollback eligible. Do not enable hourly
 installation for long-history sessions until both sides are installed and checked.
+
+
+## Multiple Minecraft connections on one Instance
+
+Each connection keeps its own home, game session, context provider/secret,
+services, task authority and updater state directory. Do not repoint an existing
+home at another world or copy its accepted task into a new connection.
+
+Existing enrollment IDs remain unchanged. A second connection may explicitly set
+these owner configuration fields before enrollment:
+
+```json
+{
+  "participant_id": "minecraft-visit",
+  "component_ids": {
+    "minecraft": "minecraft-visit",
+    "task-helpers": "task-helpers-visit"
+  }
+}
+```
+
+IDs must match the updater's lowercase identifier format and be unique in the
+Instance registration. Preserve other connections when merging the emitted delta.
+The participant reacts to its own source/helper IDs and the common Instance,
+runtime, engine and container components. A source update for another connection
+does not stop it. Retention follows the matching namespaced provider receipts;
+missing or uncertain references still prevent cleanup. Separate directories and
+IDs do not share tasks, authorize work, or grant access to another world.

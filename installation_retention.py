@@ -9,7 +9,7 @@ import shutil
 import time
 import uuid
 from pathlib import Path
-from installation_guard import ContinuityError, digest, durable_write, read
+from installation_guard import ContinuityError, digest, durable_write, read, enrollment_ids
 
 GRACE_SECONDS = 86400
 
@@ -93,11 +93,12 @@ class Retention:
                 raise ContinuityError('Indirect or malformed retained plan')
             plan_ids.add(folder.name)
             signature[str(folder)] = sorted(p.name for p in folder.iterdir())
-            envelope = folder/'minecraft.provider.json'
+            component = enrollment_ids(self.cfg)[1]['minecraft']
+            envelope = folder/(component+'.provider.json')
             plan = document(folder/'plan.json') if (folder/'plan.json').exists() else {}
             if envelope.exists():
                 value = document(envelope)
-                if value.get('id') != folder.name or value.get('component') != 'minecraft':
+                if value.get('id') != folder.name or value.get('component') != component:
                     raise ContinuityError('Retained provider plan identity changed')
                 source = value['plan']
                 if source.get('available'):
@@ -105,7 +106,7 @@ class Retention:
                     if stage.parent != self.root/'stages' or not canonical_id(stage.name):
                         raise ContinuityError('Retained stage reference is unknown')
                     stages.add(stage.name)
-            elif any(c.get('id') == 'minecraft' and c.get('available') for c in plan.get('components', [])):
+            elif any(c.get('id') == component and c.get('available') for c in plan.get('components', [])):
                 raise ContinuityError('Retained source plan is missing')
         for key in ('plan_id','rollback_plan_id'):
             if state.get(key) and state[key] not in plan_ids:

@@ -17,7 +17,7 @@ import time
 import urllib.request
 from pathlib import Path
 
-from installation_guard import ContinuityError, digest, durable_write, installation_lock, read
+from installation_guard import ContinuityError, digest, durable_write, installation_lock, read, enrollment_ids
 from installation_retention import Retention
 
 REPOSITORY = 'microsoft/amplifier-acp-minecraft'
@@ -78,6 +78,7 @@ def verify_sdk(venv, app):
 
 class Provider:
     def __init__(self, cfg):
+        enrollment_ids(cfg)
         self.c = cfg
         self.root, self.home = Path(cfg['state']), Path(cfg['home'])
         self.root.mkdir(parents=True, exist_ok=True, mode=0o700)
@@ -255,7 +256,7 @@ class Provider:
                 'source_marker':read(self.home/'app-source.json')}
 
     def frozen(self, envelope, *, candidate=True):
-        if envelope.get('component') != 'minecraft' or str(uuid.UUID(envelope['id'])) != envelope['id']:
+        if envelope.get('component') != enrollment_ids(self.c)[1]['minecraft'] or str(uuid.UUID(envelope['id'])) != envelope['id']:
             raise ValueError('Wrong source provider envelope')
         plan = envelope['plan']
         stage = Path(plan['stage'])

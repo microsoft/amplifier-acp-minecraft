@@ -6,10 +6,24 @@ service lifecycle separately; these functions never infer permission to start it
 import hashlib
 import json
 import os
+import re
 import tempfile
 from collections import Counter
 from contextlib import contextmanager
 from pathlib import Path
+
+
+def enrollment_ids(cfg):
+    """Exact installation-owned IDs let one Instance enroll multiple game connections."""
+    ids = cfg.get('component_ids', {'minecraft':'minecraft', 'task-helpers':'task-helpers'})
+    participant = cfg.get('participant_id', 'minecraft')
+    if (not isinstance(ids, dict) or set(ids) != {'minecraft','task-helpers'}
+            or any(not isinstance(v,str) or not re.fullmatch('[a-z][a-z0-9-]{0,63}',v)
+                   for v in [participant,*ids.values()])
+            or len(set(ids.values())) != 2
+            or {'instance','runtime','engine','container-image'} & set(ids.values())):
+        raise ValueError('Invalid per-connection updater IDs')
+    return participant, ids
 
 
 class NotIdle(RuntimeError):

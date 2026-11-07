@@ -58,6 +58,27 @@ class ParticipantTests(unittest.TestCase):
         for _ in range(5):
             if p.prepare()['ready']: return p
         self.fail('never ready')
+    def test_second_connection_only_responds_to_its_own_source_component(self):
+        self.cfg.update(participant_id='minecraft-visit', component_ids={'minecraft':'minecraft-visit','task-helpers':'task-helpers-visit'})
+        self.envelope['participant']='minecraft-visit'
+        self.envelope['plan']['components']=['minecraft']
+        p=self.participant();self.assertTrue(p.prepare()['ready']);self.assertEqual(self.backend.actions,[])
+        self.envelope['plan']['components']=['minecraft-visit']
+        p=self.ready();self.assertEqual(self.backend.actions,[('controller','stop'),('body','stop')])
+        p.verify('applied');p.restore('applied')
+        self.assertEqual(read(self.home/'session.json'),{'id':'original-session'})
+
+    def test_wrong_participant_and_shared_role_collisions_rejected(self):
+        self.cfg['participant_id']='minecraft-visit'
+        with self.assertRaises(ValueError):self.participant()
+        self.envelope['participant']='minecraft-visit'
+        for ids in [{'minecraft':'instance','task-helpers':'task-helpers-visit'},
+                    {'minecraft':'same','task-helpers':'same'},
+                    {'minecraft':'../other','task-helpers':'valid'}]:
+            self.cfg['component_ids']=ids
+            with self.assertRaises(ValueError):self.participant()
+        self.assertEqual(self.backend.actions,[])
+
     def test_shared_only_keeps_body_and_never_renews_or_replays(self):
         before=(self.home/'workshop.json').read_bytes();p=self.ready()
         self.assertEqual(self.backend.actions,[('controller','stop')])
