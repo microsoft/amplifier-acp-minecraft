@@ -130,3 +130,19 @@ for (const [label, restriction] of [['lower cumulative cap', {max_turns:7}], ['e
   }finally{f.close();}
  });
 }
+
+test('authenticated local operator source accepts with its own provenance, not a fabricated player UUID',()=>{
+ const f=fixture();try{
+  const e=f.human('Inspect a safe route only','Operator',{provenance:'operator_control',transport:{kind:'authenticated_operator_control'}});
+  const a={request_id:e.id,goal:'Inspect safe route',max_turns:3,seconds:300};
+  const r=f.intake.accept(a);assert.equal(r.accepted,true);assert.equal(f.h.data.turn.may_mutate,false);
+  const source=f.h.task().authority.source;assert.equal(source.evidence_origin,'authenticated_operator_control');assert.equal(source.actor.server_player_uuid,null);assert.equal(source.audience.kind,'private');
+  const reloaded=new TaskIntake(new WorkshopState(f.file),f.cfg);assert.equal(reloaded.accept(a).task_id,r.task_id);assert.equal(reloaded.accept(a).duplicate,true);
+ }finally{f.close();}
+});
+test('stale or unbound operator controls and matching text on another transport never grant new authority',()=>{
+ for(const changes of [{time:new Date(Date.now()-700000).toISOString()},{transport:{kind:'server_player_uuid'}},{transport:null}]){
+  const f=fixture();try{const e=f.human('Build','Operator',{provenance:'operator_control',transport:{kind:'authenticated_operator_control'},...changes});assert.throws(()=>f.intake.accept({request_id:e.id,goal:'Build'}));assert.equal(f.h.task(),null);}finally{f.close();}
+ }
+ const f=fixture();try{const e=f.human('Build','Operator',{provenance:'operator_control',transport:{kind:'authenticated_operator_control'}});f.h.data.turn.request_ids=[];assert.throws(()=>f.intake.accept({request_id:e.id,goal:'Build'}));}finally{f.close();}
+});

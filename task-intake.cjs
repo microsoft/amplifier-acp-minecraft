@@ -69,11 +69,12 @@ class TaskIntake {
   this.limits();
   const review=(data.reviewed_task_sources||[]).find(r=>r.source.id===id&&r.valid_until>this.now());
   const e=review?.source||data.events.find(e=>e.id===id),at=Date.parse(e?.time);
-  if(!e||e.kind!=='chat'||e.source!=='human'||e.accepted!==true||e.whisper||e.provenance!=='minecraft_public_chat'||!Number.isFinite(at)||at>this.now()+5000||at<=(data.task_source_cutoff||0))throw Error('A public human source is required');
-  if(!review&&(!turn.request_ids.includes(id)||at<=this.now()-600000||e.transport?.kind!=='server_player_uuid'||e.transport?.username!==e.username||!e.transport.uuid))throw Error('Source must be fresh, bound to this turn and attributed by the game transport; historical sources require explicit operator review');
-  const actor={kind:'human',name:e.username,server_player_uuid:e.transport?.uuid||null},audience={kind:'public',experience:'minecraft'};
+  const operator=!review&&e?.provenance==='operator_control'&&e?.transport?.kind==='authenticated_operator_control';
+  if(!e||e.kind!=='chat'||e.source!=='human'||e.accepted!==true||e.whisper||(!operator&&e.provenance!=='minecraft_public_chat')||!Number.isFinite(at)||at>this.now()+5000||at<=(data.task_source_cutoff||0))throw Error('A public human source is required');
+  if(!review&&(!turn.request_ids.includes(id)||at<=this.now()-600000||(!operator&&(e.transport?.kind!=='server_player_uuid'||e.transport?.username!==e.username||!e.transport.uuid))))throw Error('Source must be fresh, bound to this turn and attributed by the game transport; historical sources require explicit operator review');
+  const actor={kind:'human',name:e.username,server_player_uuid:e.transport?.uuid||null},audience=operator?{kind:'private',experience:'installation_control'}:{kind:'public',experience:'minecraft'};
   const original={id:e.id,actor,audience,message:e.message,time:e.time};
-  return {...original,username:e.username,revision:digest(original),source_hash:digest(e),transport:e.transport||null,evidence_origin:review?'authenticated_operator_review':'server_player_uuid'};
+  return {...original,username:e.username,revision:digest(original),source_hash:digest(e),transport:e.transport||null,evidence_origin:review?'authenticated_operator_review':operator?'authenticated_operator_control':'server_player_uuid'};
  }
  receipt(operation,args){
   const old=(this.history.data.task_authorizations||[]).find(r=>r.source.id===args.request_id);

@@ -376,3 +376,16 @@ test('actual activity reply turn cannot accept/amend tasks or perform world effe
   await f.request('/stop',{});assert.equal(await f.request('/activity/participation'),null);
  }finally{f.close();}
 });
+
+test('authenticated operator updates have their own bounded view, never public chat or authority',async()=>{
+ const f=fixture('BuilderOne');try{
+  const before=JSON.stringify(f.history.task());
+  const r=await f.request('/task',{text:'Do not place the lamp. Keep it in inventory.'});
+  const control=await f.request('/operator-inputs'),room=await f.request('/conversation');
+  assert.equal(control.revision,r.request_id);assert.equal(control.messages[0].author,'Operator');
+  assert.match(control.messages[0].text,/Do not place/);assert.match(control.scope,/not public/);
+  assert.equal(room.messages.length,0);assert.equal(room.revision,'empty');
+  assert.equal(f.inbox.length,1,'delivery facts never consume a request or grant authority');
+  assert.equal(JSON.stringify(f.history.task()),before);
+ }finally{f.close();}
+});

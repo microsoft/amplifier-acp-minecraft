@@ -204,7 +204,7 @@ async function operate(name,a={},sequenceId=null){
   if(busy)throw Error('Another action is running; wait for its result');
   if(name==='action_sequence'||name==='start_sequence'){
     const turn=history.data.turn,epoch=generation;
-    const humanRevision=()=>history.data.events.filter(e=>e.kind==='chat'&&e.source==='human'&&e.transport?.kind==='server_player_uuid').at(-1)?.id||null;
+    const humanRevision=()=>history.data.events.filter(e=>e.kind==='chat'&&e.source==='human'&&(e.transport?.kind==='server_player_uuid'||e.provenance==='operator_control')).at(-1)?.id||null;
     const originalHuman=humanRevision();
     // Validate every step before any effects, even through the local API.
     const steps=a.steps.map(step=>{if(!SEQUENCE_TOOLS.includes(step.tool))throw Error('Tool is not allowed in a sequence');return {tool:step.tool,arguments:z.object(definitions[step.tool][1]).strict().parse(step.arguments)};});
@@ -443,6 +443,12 @@ const server=http.createServer(async(req,res)=>{
     if(req.method==='GET'&&req.url==='/state')result=snapshot();
     else if(req.method==='GET'&&req.url==='/observation')result=worldView(snapshot());
     else if(req.method==='GET'&&req.url==='/conversation')result={...conversation.snapshot(),generation,turn_active:Date.now()<turnUntil};
+    else if(req.method==='GET'&&req.url==='/operator-inputs'){
+      // Authenticated local control is never inserted into public conversation/context.
+      const all=history.data.events.filter(e=>e.kind==='chat'&&e.source==='human'&&e.accepted&&e.provenance==='operator_control'&&e.transport?.kind==='authenticated_operator_control');
+      result={revision:all.at(-1)?.id||'empty',messages:all.slice(-16).map(e=>({id:e.id,time:e.time,author:'Operator',source:'human',text:e.message})),
+       older_messages_omitted:all.length>16,turn_active:Date.now()<turnUntil,generation,scope:'Private authenticated installation control; not public player speech.'};
+    }
     else if(req.method==='GET'&&req.url==='/watch-context')result=watchContext();
     else if(req.method==='POST'&&req.url==='/watch'){if(!workAllowed())throw Error('Current mode/task cannot schedule work watches');result=await watchOperation(await json(req));}
     else if(req.method==='POST'&&req.url==='/continuation'){
@@ -518,7 +524,7 @@ const server=http.createServer(async(req,res)=>{
     else if(req.method==='POST'&&req.url==='/task'){
       const a=await json(req);if(typeof a.text!=='string'||!a.text.trim()||a.text.length>12000||inbox.length>=8)throw Error('Task must contain 1–12000 characters and the queue must have space');
       const reviewers=a.reviewers||[];if(!Array.isArray(reviewers)||reviewers.length>8||reviewers.some(n=>typeof n!=='string'||!(cfg.bot_names||[]).includes(n)||n===cfg.username))throw Error('Reviewers must be configured peers other than this player');
-      lastHumanAt=Date.now();const e=record('chat',{username:'Operator',message:a.text,provenance:'operator_control',source:'human',accepted:true,whisper:false,reviewers:[...new Set(reviewers)]});inbox.push({id:e.id,username:'Operator',message:a.text,source:'human'});history.save();result={queued:true,request_id:e.id};}
+      lastHumanAt=Date.now();const e=record('chat',{username:'Operator',message:a.text,provenance:'operator_control',transport:{kind:'authenticated_operator_control'},source:'human',accepted:true,whisper:false,reviewers:[...new Set(reviewers)]});inbox.push({id:e.id,username:'Operator',message:a.text,source:'human'});history.save();result={queued:true,request_id:e.id};}
     else if(req.method==='POST'&&req.url==='/action'){const a=await json(req);if(!definitions[a.name])throw Error('Unknown action');const args=z.object(definitions[a.name][1]).strict().parse(a.arguments||{});result=await operate(a.name,args);}
     else {res.writeHead(404);return res.end();}
     res.writeHead(200,{'Content-Type':'application/json'});res.end(JSON.stringify(result));

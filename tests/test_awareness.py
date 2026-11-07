@@ -187,3 +187,30 @@ class AwarenessWire(unittest.IsolatedAsyncioTestCase):
             self.assertFalse(c.supports_input_receipts())
         c.info = {'_meta': {'steering': {'supported': True, 'receiptsMethod': '_session/input_receipts'}}}
         self.assertTrue(c.supports_input_receipts())
+
+class OperatorAwareness(unittest.IsolatedAsyncioTestCase):
+    async def test_operator_delivery_is_private_separate_and_never_replayed(self):
+        class Fake:
+            info={}
+            session='same-session'
+            active_prompt_id='active'
+            calls=[]
+            def supports_awareness(self): return True
+            async def request(self,method,params):
+                self.calls.append((method,params))
+                return {'outcome':'injected'}
+        with tempfile.TemporaryDirectory() as home:
+            client=Fake();observe=lambda *a,**k:None
+            public=Awareness(home,client,{'revision':'empty'},observe)
+            operator=Awareness(home,client,{'revision':'empty'},observe,audience='operator')
+            update={'revision':'owner-1','turn_active':True,'messages':[{'id':'owner-1','author':'Operator','text':'Keep the lamp.'}]}
+            await operator.consider(update);await operator.consider(update)
+            self.assertEqual(len(client.calls),1)
+            text=client.calls[0][1]['prompt'][0]['text']
+            self.assertIn('private control-channel',text);self.assertNotIn('Public Minecraft conversation',text)
+            self.assertEqual(public.receipts,[])
+            self.assertNotEqual(public.path,operator.path)
+            self.assertEqual(operator.receipts[0]['state'],'received','acceptance is not incorporation')
+            restarted=Awareness(home,client,{'revision':'empty'},observe,audience='operator')
+            await restarted.consider(update)
+            self.assertEqual(len(client.calls),1)
