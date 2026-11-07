@@ -14,6 +14,7 @@ import subprocess
 import tarfile
 import uuid
 import time
+import urllib.request
 from pathlib import Path
 
 from installation_guard import ContinuityError, digest, durable_write, installation_lock, read
@@ -91,7 +92,16 @@ class Provider:
             raise ValueError('Explicit channel and exact required check names are mandatory')
 
     def gh(self, endpoint):
-        return json.loads(run(['gh','api','--hostname','github.com','repos/'+REPOSITORY+'/'+endpoint]))
+        route='repos/'+REPOSITORY+'/'+endpoint
+        request=urllib.request.Request('https://api.github.com/'+route,headers={'User-Agent':'Minecraft-installation-updates'})
+        try:
+            with urllib.request.urlopen(request,timeout=15) as response:
+                return json.loads(response.read(2*1024*1024))
+        except urllib.error.HTTPError as error:
+            # Public metadata needs no credentials. Optional owner gh auth is
+            # only a fallback for API rate limiting, never agent/Brian secrets.
+            if error.code not in (403,429):raise
+            return json.loads(run(['gh','api','--hostname','github.com',route]))
 
     def status(self):
         source = read(self.home/'app-source.json')

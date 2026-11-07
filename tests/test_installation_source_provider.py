@@ -5,6 +5,7 @@ import sys
 import tempfile
 import unittest
 import uuid
+import io
 from pathlib import Path
 from unittest.mock import patch
 from installation_guard import ContinuityError, durable_write, read, digest
@@ -133,6 +134,14 @@ class SourceProviderTests(unittest.TestCase):
                 return {'sha':'b'*40}
             with patch.object(self.provider,'gh',gh):
                 with self.assertRaises(ContinuityError):Provider.candidate(self.provider)
+    def test_public_metadata_does_not_require_a_github_login(self):
+        with patch('installation_source_provider.urllib.request.urlopen',return_value=io.BytesIO(b'{"sha":"public"}')) as http, patch('installation_source_provider.run') as command:
+            self.assertEqual(self.provider.gh('commits/main'),{'sha':'public'})
+            command.assert_not_called()
+            self.assertNotIn('Authorization',http.call_args.args[0].headers)
+    def test_unsupported_lifecycle_platform_is_not_enrolled(self):
+        with patch('installation_enrollment.platform.system',return_value='Darwin'):
+            with self.assertRaises(ValueError):registration('/unused','/unused','/unused')
 
 
 if __name__=='__main__':unittest.main()

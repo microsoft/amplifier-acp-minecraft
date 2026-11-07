@@ -4,6 +4,8 @@ The included provider and participant are opt-in installation tooling. Merely
 updating this repository does not enroll an installation, enable a schedule, or authorize world work.
 The generic installation updater owns scheduling and release selection. The
 Minecraft installation owns its source, dependencies, helper and game boundary.
+This lifecycle driver currently supports Linux with systemd user services. The
+game adapter remains portable; do not enroll this optional driver on another OS.
 
 ## Components
 

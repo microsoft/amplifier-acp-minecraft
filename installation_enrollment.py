@@ -3,12 +3,15 @@
 import argparse
 import json
 import sys
+import platform
 from pathlib import Path
 from installation_guard import read
 from installation_source_provider import Provider
 
 
 def registration(config, helper_directory, python):
+    if platform.system()!='Linux':
+        raise ValueError('This lifecycle driver requires Linux systemd-user; do not enroll on other platforms')
     config, helper_directory, python = map(Path,(config,helper_directory,python))
     if not all(p.is_absolute() for p in (config,helper_directory,python)):
         raise ValueError('Use absolute owner-installed helper/config/interpreter paths')
