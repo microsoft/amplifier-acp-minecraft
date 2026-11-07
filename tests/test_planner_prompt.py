@@ -36,3 +36,10 @@ class PlannerPrompt(unittest.TestCase):
         self.assertIn('A copied quote from the peer is insufficient',text)
         self.assertIn('No physical effects until a subsequent authorized work turn',text)
         self.assertNotIn('CONVERSATION-ONLY TURN: Reply to fresh human input',text)
+
+class ExistingWorkPrompt(unittest.TestCase):
+    def test_existing_authority_does_not_instruct_the_agent_to_refuse_movement(self):
+        text=planner_prompt([],{'conversation_only':True,'reply_work_allowed':True})
+        self.assertIn('including movement',text)
+        self.assertNotIn('No movement, building',text)
+        self.assertIn('no new scope or limits',text)

@@ -197,7 +197,7 @@ async def run(home):
         def permission_tools():
             status=control(cfg,'/status')
             if status.get('conversation_only'):
-                return REPLY_TOOLS | ({'task_accept','task_amend','task_accept_help'} if status.get('task_intake_enabled') and not status.get('ambient_activity') else set())
+                return (GAME_TOOLS if status.get('reply_work_allowed') else REPLY_TOOLS) | ({'task_accept','task_amend','task_accept_help'} if status.get('task_intake_enabled') and not status.get('ambient_activity') else set())
             return GAME_TOOLS
         client.permission_tools=permission_tools
         if not client.info.get('agentCapabilities',{}).get('mcpCapabilities',{}).get('http'):
@@ -393,7 +393,11 @@ async def run(home):
                 # those receipts, but do not publish an unsupported completion claim.
                 result['final_text']=''
                 observe('final_reply_withheld',reason='background_operation_settled_after_prompt')
-            disposition=turn_disposition(result,(await request('/status')).get('busy',False))
+            final_status=await request('/status')
+            if conversation_only and final_status.get('conversation_only') is False:
+                calls.append(time.time());save(calls_path,calls)
+                observe('reply_work_accounted',task_id=(final_status.get('task') or {}).get('id'))
+            disposition=turn_disposition(result,final_status.get('busy',False))
             # If the human stopped the work, do not post a late final response.
             text=result.get('final_text',result['text']).strip()
             if disposition=='complete' and text:

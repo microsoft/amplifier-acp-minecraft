@@ -2,7 +2,7 @@ const test=require('node:test'),assert=require('node:assert/strict');
 const fs=require('node:fs'),os=require('node:os'),path=require('node:path'),vm=require('node:vm');
 const {EventEmitter}=require('node:events'),{createRequire}=require('node:module'),{Readable}=require('node:stream');
 const root=path.resolve(__dirname,'..'),realRequire=createRequire(path.join(root,'body.cjs'));
-function fixture(configOverride={}){
+function fixture(configOverride={},walkingOverride=null){
  const home=fs.mkdtempSync(path.join(os.tmpdir(),'body-lease-')),config=path.join(home,'config.json');
  fs.writeFileSync(config,JSON.stringify({username:'Builder',token:'fixture',...configOverride}));
  const now=Date.now(),task={id:'accepted',status:'running',deadline:now+3600000,turns:120,max_turns:135,progress:[]};
@@ -10,7 +10,7 @@ function fixture(configOverride={}){
  const bot=new EventEmitter();Object.assign(bot,{username:'Builder',players:{},loadPlugin(){},pathfinder:{setGoal(){}},clearControlStates(){},stopDigging(){},entity:{position:{clone:()=>({x:0,y:64,z:0})}},health:20});
  let handle,current=now;const timers=new Set();
  class Clock extends Date{static now(){return current;}}
- const ctx=vm.createContext({require:n=>n==='mineflayer'?{createBot:()=>bot}:n==='node:http'?{createServer:h=>{handle=h;return {listen(){},close(){}};}}:realRequire(n),
+ const ctx=vm.createContext({require:n=>n==='./walking.cjs'&&walkingOverride?walkingOverride:n==='mineflayer'?{createBot:()=>bot}:n==='node:http'?{createServer:h=>{handle=h;return {listen(){},close(){}};}}:realRequire(n),
  module:{exports:{}},console:{log(){}},Date:Clock,Buffer,process:{argv:['node','body.cjs',config],on(){},exit(){}},
  setTimeout:(fn,ms)=>{const t={fn,at:current+ms,unref(){}};timers.add(t);return t;},clearTimeout:t=>timers.delete(t)});
  vm.runInContext(fs.readFileSync(path.join(root,'body.cjs'),'utf8')+'\nready=true;module.exports={history,operate,actionsRemaining};',ctx);
@@ -224,5 +224,23 @@ test('malformed installation gate fails closed without changing task state',asyn
   fs.writeFileSync(path.join(folder,'gate.json'),'{}');
   await f.request('/turn',{renewable_lease:true,continuation:true},400);
   assert.equal(JSON.stringify(f.history.data),before);
+ }finally{f.close();}
+});
+
+
+test('actual body allows human-requested movement under unchanged assignment, then retains ordinary work accounting',async()=>{
+ let moved=0;
+ const f=fixture({incoming_chat_only:true,human_engagement:{enabled:true},human_task_intake:{enabled:true}},{async move(bot,p,_range,check){check();moved++;bot.entity.position=p;return {reached:true,position:p};}});
+ try{
+  const {Vec3}=realRequire('vec3');f.bot.entity.position=new Vec3(0,64,0);
+  const task=f.history.task();task.authority={kind:'human_game_request'};task.authority_revision=1;
+  const e=f.history.record({kind:'chat',source:'human',username:'Visitor',message:'Go stand by it',accepted:true,provenance:'minecraft_public_chat',time:new Date().toISOString(),transport:{kind:'server_player_uuid',username:'Visitor',uuid:'verified-human'}});
+  f.history.data.inbox.push({id:e.id,source:'human',username:'Visitor',message:e.message});f.history.save();
+  await f.request('/turn',{conversation_only:true,message_ids:[e.id]});
+  assert.equal((await f.request('/status')).reply_work_allowed,true);assert.equal(f.history.task().turns,120);
+  const r=await f.operate('move',{x:1,y:64,z:0,mode:'walk_only'});assert.equal(r.reached,true);assert.equal(moved,1);
+  assert.equal(f.history.task().turns,121);const status=await f.request('/status');assert.equal(status.conversation_only,false);assert.equal(status.action_lease.renewable,true);
+  await f.operate('work_report',{status:'running',summary:'Reached the requested spot; the existing assignment remains.'});await f.request('/finish',{});
+  assert.equal(f.history.task().id,'accepted');assert.equal(f.history.task().deadline,f.task.deadline);assert.equal(f.history.data.last_turn.actions.filter(a=>a.status==='pending').length,0);
  }finally{f.close();}
 });

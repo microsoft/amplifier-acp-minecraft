@@ -59,6 +59,8 @@ let ready=false, busy=false, activeAction=null, generation=0, turnUntil=0, actio
 let lastHumanAt=Date.parse(history.data.events.filter(e=>e.kind==='chat'&&e.source==='human').at(-1)?.time)||0;
 let agentWakeTimes=[],lastNoticeAt=0;
 const {ConversationAdmission,REPLY_TOOLS}=require('./conversation-admission.cjs');
+const replyWork=require('./reply-work.cjs');
+const replyWorkAllowed=()=>replyWork.available(history.data.turn,history.task(),workAllowed()&&!taskIntake.requiresReview(history.task()));
 const replyAdmission=new ConversationAdmission(history,cfg);
 const events=[], inbox=history.data.inbox||(history.data.inbox=[]), receipts=[];
 const routeHuman=conversationRouter(cfg.username,{aliases:cfg.aliases||{}});
@@ -126,7 +128,7 @@ function snapshot(){
   humanActivity.sample(bot.players);
   const p=bot.entity.position;
   const blocks=bot.findBlocks({matching:b=>b.name!=='air'&&b.name!=='water'&&b.name!=='grass_block'&&b.name!=='dirt'&&b.name!=='stone',maxDistance:16,count:50});
-  return {username:bot.username,ready,busy,generation,turn_active:Date.now()<turnUntil,pending_messages:inbox.length,incoming_chat_only:cfg.incoming_chat_only===true,conversation_only:history.data.turn?.conversation_only===true,ambient_activity:history.data.turn?.ambient_activity===true,peer_proposal:history.data.turn?.peer_proposal===true,task_capabilities:taskIntake.capabilities(),position:p,health:bot.health,food:bot.food,time:bot.time.timeOfDay,
+  return {username:bot.username,ready,busy,generation,turn_active:Date.now()<turnUntil,pending_messages:inbox.length,incoming_chat_only:cfg.incoming_chat_only===true,conversation_only:history.data.turn?.conversation_only===true,reply_work_allowed:replyWorkAllowed(),ambient_activity:history.data.turn?.ambient_activity===true,peer_proposal:history.data.turn?.peer_proposal===true,task_capabilities:taskIntake.capabilities(),position:p,health:bot.health,food:bot.food,time:bot.time.timeOfDay,
     inventory:bot.inventory.items().map(i=>({name:i.name,count:i.count})),
     terrain:spatial.localMap(bot,3),
     players:Object.values(bot.players).map(p=>({name:p.username,position:p.entity?.position})),
@@ -150,12 +152,12 @@ function actionsRemaining(){return cfg.human_engagement?.enabled===true?null:Mat
 let speechTurn=null, speechReceipts=new Map();
 function speechIdentity(text){
  if(speechTurn!==history.data.turn){speechTurn=history.data.turn;speechReceipts=new Map();}
- const recipient=history.data.turn?.conversation_only?history.data.turn.reply_recipient:null;
+ const recipient=history.data.turn?.reply_recipient||null;
  return JSON.stringify([conversation.snapshot().revision,recipient||null,text]);
 }
 function speak(text){
  const s=text.replace(/[\r\n\x00-\x1f]/g,' ').trim();if(!s||s.startsWith('/'))throw Error('Use ordinary chat, not slash commands');
- const recipient=history.data.turn?.conversation_only?history.data.turn.reply_recipient:null;
+ const recipient=history.data.turn?.reply_recipient||null;
  const result={sent:s.slice(0,240),...(recipient?{whisper:true,provenance:'minecraft_whisper',recipient}:{})};
  if(recipient)bot.whisper(recipient,result.sent);else bot.chat(result.sent);
  // Record only text handed to its bound audience, never an attempted/failed tool input.
@@ -180,7 +182,15 @@ async function operate(name,a={},sequenceId=null){
     const result=name==='task_accept'?taskIntake.accept(a):name==='task_accept_help'?taskIntake.acceptHelp(a):taskIntake.amend(a);
     record('task_authorization',{operation:name,...result});return result;
   }
-  if((!workAllowed()||history.data.turn?.conversation_only)&&!REPLY_TOOLS.has(name))throw Error('Conversation-only or unauthorized turn: World effects are unavailable in this mode/turn. Inspect task_capabilities for the specific policy and source requirements.');
+  if(!REPLY_TOOLS.has(name)){
+    if(!workAllowed())throw Error('Conversation-only or unauthorized assignment: inspect task_capabilities before effects');
+    if(history.data.turn?.conversation_only){
+      if(Date.now()>=turnUntil||busy)throw Error('Reply action window ended or an operation is unsettled');
+      replyWork.promote(history,workAllowed()&&!taskIntake.requiresReview(history.task()));
+      lease.begin(history.data.turn,history.task(),true);scheduleLease();
+      record('reply_work_started',{task_id:history.task().id,consumed_turns:history.task().turns});
+    }
+  }
   if(name==='observe')return a.detail==='full'?snapshot():worldView(snapshot());
   if(name==='conversation')return conversation.snapshot();
   if(name==='entities')return survival.entities(bot,a);
@@ -485,7 +495,7 @@ const server=http.createServer(async(req,res)=>{
         }
       }else result={action:'hold'};
     }
-    else if(req.method==='GET'&&req.url==='/status')result={ready,busy,turn_active:Date.now()<turnUntil,incoming_chat_only:cfg.incoming_chat_only===true,conversation_only:history.data.turn?.conversation_only===true,ambient_activity:history.data.turn?.ambient_activity===true,peer_proposal:history.data.turn?.peer_proposal===true,task_intake_enabled:taskIntake.capabilities().task_intake_enabled,task_capabilities:taskIntake.capabilities(),task:history.task(),action_lease:lease.view(history.task()),action_sequence:actionSequence.status()};
+    else if(req.method==='GET'&&req.url==='/status')result={ready,busy,turn_active:Date.now()<turnUntil,incoming_chat_only:cfg.incoming_chat_only===true,conversation_only:history.data.turn?.conversation_only===true,reply_work_allowed:replyWorkAllowed(),ambient_activity:history.data.turn?.ambient_activity===true,peer_proposal:history.data.turn?.peer_proposal===true,task_intake_enabled:taskIntake.capabilities().task_intake_enabled,task_capabilities:taskIntake.capabilities(),task:history.task(),action_lease:lease.view(history.task()),action_sequence:actionSequence.status()};
     else if(req.method==='GET'&&req.url==='/inbox/peek')result=(cfg.human_engagement?.enabled===true&&inbox.some(m=>m.source==='human'&&!m.attention_offer)?inbox.filter(m=>m.source==='human'&&!m.attention_offer):inbox).slice(0,8);
     else if(req.method==='GET'&&req.url==='/conversation/admission')result=replyAdmission.status(inbox);
     else if(req.method==='GET'&&['/participation','/participation?human_only=1'].includes(req.url))result=participation.enabled?participationProposal(req.url.endsWith('human_only=1')):null;
@@ -515,7 +525,7 @@ const server=http.createServer(async(req,res)=>{
       const ids=a.message_ids||[];
       if(!Array.isArray(ids)||ids.length>8||new Set(ids).size!==ids.length||ids.some(id=>!inbox.some(m=>m.id===id)))throw Error('Queued request changed before turn start');
       if(a.conversation_only===true){
-       replyAdmission.start(ids,inbox);stop();turnUntil=Date.now()+240000;
+       replyAdmission.start(ids,inbox);replyWork.bind(history,cfg,workAllowed()&&!taskIntake.requiresReview(history.task()));stop();turnUntil=Date.now()+240000;
        leaseTimer=setTimeout(()=>{stop();record('conversation_window_expired');},240000);leaseTimer.unref?.();
        actions=0;replies=0;conversation.expose();result={active:true,conversation_only:true,action_lease:lease.view(history.task())};
       }else {

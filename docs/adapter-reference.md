@@ -880,14 +880,19 @@ implement another engage/hold policy. Plain ACP retains ordinary prompt fallback
 Instance and provider limits still apply; rejected prompts are not retried as
 fresh commands or rerouted around a host cap.
 
+[Human-led play](human-led-play.md#human-replies-within-an-existing-assignment)
+also permits a verified human reply to use unchanged existing assignment
+authority, with ordinary work accounting and effect recovery.
+
 The body independently validates accepted human provenance, original ten-minute
 freshness, distinct reply audience and ticket, and remaining reply capacity. It
 atomically reserves the allowance and removes selected inbox IDs before the
 planner request. Restart or an ambiguous reply cannot replay that input. Reply
-attempts have separate `reply-calls.json` telemetry and never create construction
-slots in `calls.json`. Instance offer issuance is not a planner admission.
+attempts have separate `reply-calls.json` telemetry. Under human-led play, a
+reply that uses an unchanged existing assignment also records a work attempt in
+`calls.json`; it never creates a new allowance. Instance offer issuance is not a planner admission.
 
-A conversation-only turn permits bounded observation and chat. It opens no action lease and cannot move, build, transfer, change
+An unassigned conversation-only turn permits bounded observation and chat. It opens no action lease and cannot move, build, transfer, change
 watches, start/reopen/report tasks or renew authority. Its nonrenewable four-minute
 reply window limits this unassigned interaction; it is not an assignment extension
 or a provider reasoning timeout. Read/reply permissions are advertised per turn

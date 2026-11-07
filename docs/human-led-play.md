@@ -16,6 +16,23 @@ fallback. This is not a claim that every unaddressed human sentence is intended
 for every agent. The setting removes the three-second artificial continuation
 delay as well. All actual planner calls remain measured.
 
+## Human replies within an existing assignment
+
+With human-led play enabled, a fresh transport-attributed human reply can use
+world tools already authorized by the same running or waiting assignment.
+Merely replying consumes no work allowance. The first work tool durably reserves
+one existing task turn, binds the ordinary renewable action lease and follows
+normal effect settlement/recovery. This avoids promising movement while the
+reply tool policy forbids it.
+
+The task ID, bounds, consumed count and authority revision must still match the
+assignment observed at reply admission. Stop, expiry, exhaustion and unresolved
+interruption remain binding. Peer proposals and ambient activity stay effect-free;
+new acceptance or amendment still needs a subsequent work turn. A reply grants
+no new scope, allowance or authority. Private replies retain their audience even
+if they use existing work authority. The controller records promoted work in
+`calls.json` as well as the original human-reply attempt.
+
 ## Continuous action plans
 
 `action_sequence` accepts an agent-selected ordered list of up to sixteen
