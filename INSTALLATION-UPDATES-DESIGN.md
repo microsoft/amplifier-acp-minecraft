@@ -116,6 +116,7 @@ Create a private owner config outside agent/container mounts. Required fields:
 {
   "home": "/absolute/player-home",
   "state": "/absolute/owner-update-state",
+  "shared_plans": "/absolute/shared-updater-installation/plans",
   "app": "/absolute/player-home/app",
   "venv": "/absolute/player-home/venv",
   "python": "/absolute/base-python",
@@ -178,3 +179,28 @@ assignments, replays unknown inputs, changes engine families, or enables a
 previously disabled work policy. Enabling hourly idle installation is a separate
 generic updater policy setting. The provider never prompts a model to resume:
 restored controllers continue only authority already valid in their saved state.
+
+### Regenerable source artifacts
+
+Enroll the installation's actual shared updater `plans` directory in
+`shared_plans`, outside the game home and Minecraft owner state. Install
+`installation_retention.py` alongside the other six owner helpers. This path
+is read-only reference evidence, not permission to prune shared plans.
+
+Repeated checks reuse a verified build of the same revision and build inputs.
+Failed unreferenced builds are removed immediately, with a compact ownership
+and pruning receipt. Other unreferenced stages have a 24-hour grace period
+after their last offer, including the interval before the shared worker saves
+a returned plan. All retained shared plans, current app/venv links and rollback
+targets protect their stages. Obsolete backups are removed only when they
+contain managed stage links; original directories and unexpected files remain.
+Unmarked historical stages are never adopted or deleted automatically.
+
+Missing, changed or uncertain journals prevent collection; unfinished builds
+and transactions also prevent allocating another build. Existing task/session
+files are outside the cleanup scope. Edited ready stages remain untouched.
+`cleanup-last.json` records the most recent result, and compact artifact
+receipts remain after large regenerable directories are pruned. This bounds
+repeated busy checks and failed dependency builds, not the size of deliberately
+retained shared plans, baseline data or uncertain recovery evidence. Source
+checks require this enrollment before hourly installation is enabled.

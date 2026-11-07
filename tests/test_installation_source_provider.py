@@ -29,6 +29,8 @@ class SourceProviderTests(unittest.TestCase):
     def setUp(self):
         self.tmp=tempfile.TemporaryDirectory();self.addCleanup(self.tmp.cleanup)
         self.root=Path(self.tmp.name);self.home=self.root/'game';self.home.mkdir()
+        shared=self.root/'shared';(shared/'plans').mkdir(parents=True)
+        durable_write(shared/'state.json',{'state':'checking','transaction':None})
         for name in ('app','venv'):
             (self.home/name).mkdir();(self.home/name/'original').write_text(name)
         durable_write(self.home/'app-source.json',{'revision':'a'*40,'private_label':'preserve'})
@@ -37,6 +39,7 @@ class SourceProviderTests(unittest.TestCase):
                   'app':str(self.home/'app'),'venv':str(self.home/'venv'),'python':str(Path(sys.executable).resolve()),
                   'node':'/usr/bin/node','npm_cli':'/usr/bin/npm','required_checks':['test'],
                   'channel':'latest-passing-development','task_helper':str(self.home/'task-helpers/agent-runtime')}
+        self.cfg['shared_plans']=str(shared/'plans')
         self.provider=FakeProvider(self.cfg);self.plan=self.provider.plan()
         self.envelope={'id':str(uuid.uuid4()),'component':'minecraft','plan':self.plan}
         self.tx=str(uuid.uuid4())
