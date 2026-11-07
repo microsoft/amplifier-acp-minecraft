@@ -4,13 +4,39 @@ const {createHash}=require('node:crypto');
 const {digest}=require('./task-intake.cjs');
 const SEQUENCE_TOOLS=['move','place','build','craft','dig','set_open','till'];
 class ActionSequence {
- constructor(history){this.history=history;this.active=null;}
+ constructor(history){this.history=history;this.active=null;this.pending=null;}
  status(){return this.active?{id:this.active.id,status:'running',completed:this.active.results.length,cancel_requested:!!this.active.cancel_reason}:null;}
  cancel(reason='planner_cancelled'){if(!this.active)return {cancel_requested:false};this.active.cancel_reason=reason;return {cancel_requested:true,id:this.active.id,current_step_may_still_be_running:true};}
+ inspect(id){
+  const record=(this.history.data.action_sequences||[]).find(r=>r.id===id);
+  if(!record)return {id,status:'unknown',replayed:false};
+  return structuredClone({...record,status:record.status==='running'&&this.active?.id!==id?'interrupted':record.status,replayed:false});
+ }
+ async start(plan,options){
+  const previous=(this.history.data.action_sequences||[]).find(r=>r.id===plan.plan_id);
+  if(previous)return {...await this.run(plan,options),accepted:false};
+  const pending=this.run(plan,options),record=this.active;
+  // run reserves its durable ID before its first asynchronous operation.
+  // If admission failed, propagate that failure instead of claiming acceptance.
+  if(!record||record.id!==plan.plan_id)return await pending;
+  this.pending=pending;
+  pending.catch(error=>{
+   record.status='interrupted';record.reason=error.message;record.finished_at=new Date().toISOString();
+   try{this.history.save();}catch{}
+  }).finally(()=>{if(this.pending===pending)this.pending=null;});
+  return {id:record.id,accepted:true,status:'running',completed:false,completed_steps:record.results.length,
+   next:'Planning may continue. Use sequence_status for actual results before claiming completion; cancel_sequence stops pending steps.'};
+ }
+ async wait(id,ms=0){
+  if(this.active?.id===id&&this.pending&&ms>0){
+   let timer;try{await Promise.race([this.pending.catch(()=>{}),new Promise(resolve=>{timer=setTimeout(resolve,ms);})]);}finally{clearTimeout(timer);}
+  }
+  return this.inspect(id);
+ }
  async run({plan_id,steps}, {guard,execute}){
   const hash=digest(steps),records=this.history.data.action_sequences||[];
   const previous=records.find(r=>r.id===plan_id);
-  if(previous){if(previous.hash!==hash)throw Error('Plan ID already binds a different sequence');return {...previous,status:previous.status==='running'?'interrupted':previous.status,duplicate:true,replayed:false};}
+  if(previous){if(previous.hash!==hash)throw Error('Plan ID already binds a different sequence');return {...previous,status:previous.status==='running'&&this.active?.id!==previous.id?'interrupted':previous.status,duplicate:true,replayed:false};}
   if(this.active)throw Error('Another action sequence is running');
   guard();
   const record={id:plan_id,hash,task_id:this.history.data.turn?.task_id,started_at:new Date().toISOString(),status:'running',results:[]};

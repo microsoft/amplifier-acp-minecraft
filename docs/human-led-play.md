@@ -28,9 +28,22 @@ A new human input, changed authority, Stop, explicit `cancel_sequence`, failed
 step or partial/unconfirmed result prevents further steps. Cancellation waits
 for the current operation to settle; it does not falsely claim an in-flight
 operation never happened. Normal read-only observations remain available while
-a plan runs. A second effectful plan cannot run concurrently. Whether an engine
-can reason during a pending tool call depends on its actual ACP implementation;
-this tool does not invent a parallel-prompt capability.
+a plan runs. A second effectful plan cannot run concurrently.
+
+`start_sequence` starts the same guarded plan asynchronously and returns its
+operation ID with `accepted: true`, `completed: false`. The existing controlling
+prompt can continue reasoning, observe current facts, and use chat/tell while
+physical steps run. Speech retains its audience, conversation revision and
+settled action receipts without taking ownership of the physical action.
+There is still only one controlling ACP prompt per saved session.
+
+`sequence_status` returns actual retained results and can wait up to 30 seconds
+for settlement. Acceptance is not completion. Inspect those results before
+reporting success or starting another plan. If the planner ends early, the
+controller waits for the operation under the same renewable action lease and
+assignment limits; it withholds a final claim made without those results.
+Stop, a failed prompt or closed authority cancels unstarted steps. An unresolved
+physical effect remains uncertain and is never replayed or called complete.
 
 Use a unique `plan_id`. The body stores the plan before execution and records
 step outcomes. Repeating that ID reads its retained receipt without replaying

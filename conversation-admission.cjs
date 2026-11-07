@@ -1,5 +1,5 @@
 // Transport/resource admission only. Instance still owns engage/hold decisions.
-const REPLY_TOOLS=new Set(['observe','conversation','entities','inventory','inspect','read_sign','survey','map','plan_route','find','chat','task_capabilities']);
+const REPLY_TOOLS=new Set(['observe','conversation','entities','inventory','inspect','read_sign','survey','map','plan_route','find','chat','task_capabilities','sequence_status']);
 class ConversationAdmission {
  constructor(history,cfg,{now=Date.now}={}){this.history=history;this.cfg=cfg;this.now=now;}
  limit(){if(this.cfg.human_engagement?.enabled===true)return null;const n=this.cfg.human_reply_turns_per_hour??12;return Number.isInteger(n)&&n>=0&&n<=60?n:0;}
