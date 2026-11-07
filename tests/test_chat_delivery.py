@@ -70,5 +70,43 @@ class ChatDeliveryTests(unittest.IsolatedAsyncioTestCase):
             await deliver_final_reply('Ready to visit.','known',request,lambda *a,**k:None)
         self.assertEqual(len(calls),1)
 
+    async def test_peer_no_reply_final_does_not_publish_its_explanation(self):
+        for text in (
+            'No response needed — the inventory question is directed at another player.',
+            'No response warranted — that report is directed at someone else.\nNo help was requested.',
+            '  No reply is necessary: no new dependency to report.  ',
+            'NO RESPONSE REQUIRED.',
+            'No reply needed',
+        ):
+            with self.subTest(text=text):
+                events=[]
+                async def request(*args):self.fail('A no-reply final must not reach public delivery')
+                async def sleep(*args):self.fail('No packets to pace')
+                await deliver_final_reply(text,'known',request,lambda k,**d:events.append((k,d)),
+                    sleep=sleep,allow_silence=True)
+                self.assertEqual(events,[('final_reply_withheld',{'reason':'explicit_no_reply_final','sent_chunks':0})])
+
+    async def test_useful_peer_reply_and_mentions_of_no_reply_are_preserved(self):
+        for text in (
+            'The chest contains two sticks. No response needed.',
+            'No response needed from you; the finished chest is by the door.',
+            '"No response needed" was the message I saw.',
+            'No response needed? I still need the barrel coordinates.',
+            'No response neededness is not a useful label.',
+            'No response is possible because the route is blocked.',
+        ):
+            with self.subTest(text=text):
+                sent=[]
+                async def request(path,payload):sent.append(payload['text']);return {'sent':True}
+                await deliver_final_reply(text,'known',request,lambda *a,**k:None,allow_silence=True)
+                self.assertEqual(sent,[text])
+
+    async def test_direct_answer_is_not_suppressed_without_peer_silence_scope(self):
+        sent=[]
+        text='No response needed — you already answered the invitation.'
+        async def request(path,payload):sent.append(payload['text']);return {'sent':True}
+        await deliver_final_reply(text,'known',request,lambda *a,**k:None)
+        self.assertEqual(sent,[text])
+
 
 if __name__=='__main__':unittest.main()

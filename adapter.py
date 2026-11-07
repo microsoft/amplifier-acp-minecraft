@@ -48,7 +48,22 @@ def minecraft_reply_lines(text, limit=8, width=230):
     return lines,truncated
 
 
-async def deliver_final_reply(text, revision, request, observe, *, sleep=asyncio.sleep):
+def declares_no_reply(text):
+    """Recognize an explicit no-reply final, not whether a conversation merits one.
+
+    Keep the vocabulary and boundary narrow: quoted examples, a mention later
+    in a useful answer, and ambiguous continuations remain ordinary speech.
+    """
+    return bool(re.match(r'\Ano (?:response|reply) (?:is )?(?:needed|necessary|required|warranted)'
+                         r'(?:[.!](?:\s|$)|\s*[-–—:](?:\s|$)|\s*\Z)',text.strip(),re.IGNORECASE))
+
+
+async def deliver_final_reply(text, revision, request, observe, *, sleep=asyncio.sleep, allow_silence=False):
+    # Only after prompt settlement, before packetization or any public send.
+    # This does not re-evaluate attention, consume sources or replay delivery.
+    if allow_silence and declares_no_reply(text):
+        observe('final_reply_withheld',reason='explicit_no_reply_final',sent_chunks=0)
+        return
     lines,truncated=minecraft_reply_lines(text)
     sent=0
     for line in lines:
@@ -412,7 +427,12 @@ async def run(home):
                 if revision is None:
                     observe('final_reply_withheld',reason='public_context_not_exposed_or_incorporated')
                 else:
-                    await deliver_final_reply(text,revision,request,observe)
+                    # A peer/activity opportunity may finish silently. Preserve
+                    # direct human/work answers and any newly steered input.
+                    allow_silence=(bool(world.get('peer_proposal') or world.get('ambient_activity'))
+                        and awareness.cursor==awareness.initial_revision
+                        and (operator_awareness is None or operator_awareness.cursor==operator_awareness.initial_revision))
+                    await deliver_final_reply(text,revision,request,observe,allow_silence=allow_silence)
             observe('turn_completed',stop_reason=result['stop_reason'],disposition=disposition,
                     unsettled_tool_count=len(result.get('unsettled_tools',[])))
             if watches and not conversation_only and disposition=='complete':
