@@ -34,6 +34,8 @@ const { StreamableHTTPServerTransport } = require('@modelcontextprotocol/sdk/ser
 const { z } = require('zod');
 const { addressed, conversationRouter, peerIntent } = require('./routing.cjs');
 const cfg = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
+const updateAdmission=require('./update-admission.cjs');
+const requireAdmission=()=>updateAdmission.requireOpen(path.dirname(process.argv[2]));
 const version=cfg.version||'1.21.1';
 const taskHelperCommand=cfg.task_helpers?.command||cfg.decision_attention?.command;
 const {TaskIntake,INTAKE_TOOLS}=require('./task-intake.cjs');
@@ -449,6 +451,10 @@ const server=http.createServer(async(req,res)=>{
     }
     let result;
     if(req.method==='GET'&&req.url==='/state')result=snapshot();
+    else if(req.method==='GET'&&req.url==='/installation-state')result={version:1,ready,busy,turn_active:Date.now()<turnUntil,
+      task:history.task(),action_lease:lease.view(history.task()),action_sequence:actionSequence.status(),
+      inventory:ready?containers.inventorySnapshot(bot.inventory):null,position:ready?bot.entity.position:null,
+      window_open:!!bot.currentWindow,admission_gate:updateAdmission.state(path.dirname(process.argv[2]))};
     else if(req.method==='GET'&&req.url==='/observation')result=worldView(snapshot());
     else if(req.method==='GET'&&req.url==='/conversation')result={...conversation.snapshot(),generation,turn_active:Date.now()<turnUntil};
     else if(req.method==='GET'&&req.url==='/operator-inputs'){
@@ -493,6 +499,9 @@ const server=http.createServer(async(req,res)=>{
     else if(req.method==='POST'&&req.url==='/recover'){history.recover();stop();result={task:history.task()};}
     else if(req.method==='POST'&&req.url==='/turn'){
       const a=await json(req);
+      // Synchronous gate read and turn reservation share the same event-loop
+      // segment. A controller's earlier idle observation cannot admit a race.
+      requireAdmission();
       if(busy||Date.now()<turnUntil||history.data.turn)throw Error('A turn or unsettled operation is already active');
       if(a.expected_generation!==undefined&&a.expected_generation!==generation)throw Error('Turn was superseded by Stop or a connection change');
       if(!workAllowed()&&a.conversation_only!==true)throw Error('Current mode/task requires a bounded human reply; no autonomous authority');
