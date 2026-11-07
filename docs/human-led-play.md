@@ -92,3 +92,34 @@ observations in ordinary tool context; activity is never turned into fabricated
 chat or a second local social-model call. Host engagement and actual prompt
 admission remain separate outcomes. The initial implementation observes movement;
 interaction event capture is not yet implemented.
+
+## Independently accepted helper work
+
+`human_task_intake.delegation.enabled: true` enables `task_accept_help` for a
+recipient's effect-free peer-proposal reply. It does not grant a lead control of
+another agent. Both the original human request and the fresh peer request must
+exist in the recipient's own public game transcript with server UUID attribution.
+A peer's copied quotation, supplied actor name or responsibility record is not
+accepted as the original source.
+
+The recipient interprets the original human instruction and must supply an exact
+quote of explicit helper authorization and `budget_scope: independent_per_agent`.
+The initial implementation supports independently authorized per-agent limits,
+not allocation of a shared aggregate budget or further delegation. Ambiguous
+scope needs clarification. Mechanical source validation does not prove the
+model interpreted the human's meaning correctly.
+
+Acceptance retains both original receipts, creates one independent bounded task,
+and commits consumed source IDs with it. Retries/restarts return that outcome;
+they cannot create another allowance. The helper deadline is anchored to the
+original human source time, never refreshed by a later peer handoff. Existing
+work, unresolved effects, Stop, installation ceilings and source expiry remain
+enforced. Original public sources must still be within the ten-minute intake
+window. Existing expired work is archived unchanged if new work is accepted.
+
+Peer-proposal replies retain ambient attention/routing gates and their own local
+reply bound (four per hour by default, configurable from one to twelve through
+`human_task_intake.delegation.reply_turns_per_hour`). They never take the
+unmetered human-message lane. Ordinary ACP engines can use the same MCP tools;
+no native receipt or invented host delegation API is assumed. World effects
+remain denied in the acceptance reply and require a later valid work turn.

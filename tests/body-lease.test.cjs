@@ -133,3 +133,21 @@ test('actual async plan returns accepted before physical completion; Stop preven
   const final=await f.request('/action',{name:'sequence_status',arguments:{plan_id:args.plan_id}});assert.equal(final.status,'paused');assert.equal(effects,1);assert.equal((await f.request('/status')).action_lease.lease_id,null);
  }finally{f.close();}
 });
+
+test('actual body helper acceptance is metadata-only, source-bound and opens work only in a later turn',async()=>{
+ const f=fixture({incoming_chat_only:true,bot_names:['Lead'],human_engagement:{enabled:true},human_task_intake:{enabled:true,delegation:{enabled:true}}});try{
+  f.history.data.task.status='review';
+  const base={kind:'chat',time:new Date().toISOString(),whisper:false,provenance:'minecraft_public_chat'};
+  const root=f.history.record({...base,source:'human',username:'Human',message:'Lead may recruit helpers, each with an independent normal allowance.',accepted:false,transport:{kind:'server_player_uuid',username:'Human',uuid:'00000000-0000-0000-0000-000000000001'}});
+  const peer=f.history.record({...base,source:'agent',username:'Lead',message:'@Builder Please bring timber.',intent:'request',accepted:true,transport:{kind:'server_player_uuid',username:'Lead',uuid:'00000000-0000-0000-0000-000000000002'}});
+  f.history.data.inbox.push({id:peer.id,source:'agent',username:'Lead',message:peer.message});f.history.save();
+  await f.request('/turn',{conversation_only:true,message_ids:[peer.id]});
+  const args={request_id:root.id,peer_request_id:peer.id,authorization_quote:'recruit helpers, each with an independent normal allowance',budget_scope:'independent_per_agent',goal:'Bring timber for the human project'};
+  const result=await f.request('/action',{name:'task_accept_help',arguments:args});assert.equal(result.execution_started,false);assert.equal(result.turns,0);
+  await f.request('/action',{name:'dig',arguments:{x:1,y:64,z:0}},400);
+  assert.equal((await f.request('/status')).peer_proposal,true);
+  await f.request('/finish',{});await f.request('/turn',{continuation:true,renewable_lease:true});
+  assert.equal(f.history.data.turn.task_id,result.task_id);assert.equal(f.history.data.turn.may_mutate,true);assert.equal(f.history.task().turns,1);
+  await f.request('/stop',{});
+ }finally{f.close();}
+});
