@@ -170,7 +170,13 @@ needed. Updater enrollment remains a distinct owner operation.
   operation; it never invents a replacement operation or repeats an uncertain
   service dispatch. Unknown settlement remains visible and requires owner
   investigation. A confirmed verification failure returns a settled failed
-  result only after disconnecting safely.
+  result only after disconnecting safely. A correlated SDK rejection of
+  initialize/original-session load is distinguishable from timeout, transport
+  loss or malformed evidence; those uncertain outcomes stay unknown with
+  admission closed. A settled failed request retains its receipt and never
+  retries itself. The user may explicitly submit a new request with a new ID.
+  A busy Add preflight stays pending; a known refused Add has no connection
+  descriptor and leaves its prepared slot unchanged.
 
 The connection driver and updater share the installation lock. An update
 already in progress finishes first. While disconnected, participants defer

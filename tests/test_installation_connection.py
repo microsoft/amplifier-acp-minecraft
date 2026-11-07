@@ -20,9 +20,11 @@ class Fake(FakeInstallation):
         return {'pid':123,'start_ticks':'1','boot_id':'boot'}
     def probe_alive(self,identity):return True
     def settle_probe(self,success=True):
-        durable_write(self.probe_path,{'verified':success,'initialized':success,
+        result={'verified':success,'initialized':success,
             'saved_session_present':True,'saved_session_loaded':success,
-            'new_session_created':False,'prompt_sent':False})
+            'new_session_created':False,'prompt_sent':False}
+        if not success:result.update(failure_settled=True,request_method='session/load',request_error_code=-32002)
+        durable_write(self.probe_path,result)
 
 
 class ConnectionTests(unittest.TestCase):
@@ -129,6 +131,36 @@ class ConnectionTests(unittest.TestCase):
         self.assertTrue(r['settled']);self.assertTrue(r['failed']);self.assertEqual(r['state'],'disconnected')
         self.assertEqual(self.backend.units['controller']['ActiveState'],'inactive')
         self.assertEqual(read(self.home/'session.json'),{'id':'original-session'})
+
+    def test_settled_failure_can_be_followed_by_new_explicit_connect(self):
+        self.disconnect();self.connect_ready();self.op().run();self.backend.settle_probe(False)
+        for _ in range(5):failed=self.op().run()
+        failed_id=self.id;calls=list(self.backend.actions)
+        self.assertTrue(failed['failed']);self.assertTrue(failed['settled'])
+        self.assertEqual(failed['request_id'],failed_id)
+        self.assertEqual(self.backend.units['body']['ActiveState'],'inactive')
+        self.assertTrue((self.home/'installation-updates/gate.json').exists())
+        self.assertNotIn('context_ready',failed)
+        self.assertEqual(self.op().run(),failed);self.assertEqual(calls,self.backend.actions)
+        final=self.connect_settle()
+        self.assertNotEqual(self.id,failed_id);self.assertEqual(final['state'],'connected')
+        self.assertTrue(final['settled']);self.assertFalse(final['failed'])
+
+    def test_timeout_transport_loss_and_malformed_verification_stay_unknown(self):
+        self.disconnect();self.connect_ready();self.op().run()
+        calls=list(self.backend.actions)
+        for receipt in ({'verified':False,'failure_type':'TimeoutError'},
+                        {'verified':False,'failure_type':'ProtocolError'},
+                        {'verified':False,'failure_settled':True},
+                        {'verified':True}):
+            durable_write(self.backend.probe_path,receipt)
+            for _ in range(2):
+                result=self.op().run()
+                self.assertEqual(result['state'],'unknown');self.assertFalse(result['settled'])
+                self.assertFalse(result.get('failed',False));self.assertNotIn('context_ready',result)
+            self.assertEqual(calls,self.backend.actions)
+            self.assertEqual(self.backend.units['controller']['ActiveState'],'inactive')
+            self.assertTrue((self.home/'installation-updates/gate.json').exists())
     def test_unknown_probe_launch_is_never_repeated(self):
         self.disconnect();self.connect_ready()
         with patch.object(self.backend,'start_probe',side_effect=OSError('lost dispatch acknowledgement')):
@@ -207,6 +239,21 @@ class ProbeJobTests(unittest.TestCase):
             result=home/'failed.json'
             subprocess.run([sys.executable,str(source/'connection_session_job.py'),'--home',str(home),'--result',str(result)],check=True,timeout=10)
             self.assertFalse(read(result)['verified']);self.assertFalse((home/'session.json').exists())
+            self.assertTrue(read(result)['failure_settled'])
+            self.assertEqual(read(result)['request_method'],'initialize')
+            self.assertEqual(read(result)['request_error_code'],-32603)
+
+    def test_child_timeout_is_not_a_settled_failure(self):
+        import sys
+        from connection_session_job import main
+        async def timeout(*args,**kwargs):raise TimeoutError('uncertain')
+        with tempfile.TemporaryDirectory() as directory:
+            home=Path(directory);result=home/'result.json'
+            with patch('connection_session_job.probe',side_effect=timeout),patch.object(sys,'argv',
+                    ['probe','--home',str(home),'--result',str(result)]):
+                main()
+            self.assertFalse(read(result)['verified'])
+            self.assertNotIn('failure_settled',read(result))
 
 
 if __name__=='__main__':unittest.main()

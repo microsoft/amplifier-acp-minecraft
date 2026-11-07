@@ -200,7 +200,10 @@ def operation(c, request, backend=None):
                 raise ContinuityError('Saved connection configuration already exists')
             journal.update(phase='saving', baseline=baseline, config=saved_cfg, config_path=str(saved_path))
             durable_write(path,journal)
-        except (ContinuityError,NotIdle,FileNotFoundError,subprocess.SubprocessError):
+        except NotIdle:
+            response.update(state='busy',message='Waiting for the prepared connection to settle; nothing has been saved or started.')
+            return response
+        except (ContinuityError,FileNotFoundError):
             response.update(state='failed',settled=True,message='This choice is not an unused, stopped connection with verified private game/context routes and current registration. Complete owner setup first; existing connections were preserved.')
             journal['result']=response;durable_write(path,journal)
             return response

@@ -127,7 +127,25 @@ class AddTests(unittest.TestCase):
 
     def test_active_units_refused(self):
         self.game.units['body'].update(ActiveState='active',MainPID='101')
-        self.assertEqual(self.run_add()['state'],'failed'); self.assert_untouched()
+        result=self.run_add();self.assertEqual(result['state'],'busy');self.assertFalse(result['settled'])
+        self.assert_untouched()
+
+    def test_timeout_is_unknown_and_status_reconciles_only_same_request(self):
+        import subprocess
+        with patch.object(self.backend,'check',side_effect=subprocess.TimeoutExpired('read-only check',5)):
+            with self.assertRaises(subprocess.TimeoutExpired):self.run_add()
+        journal=read(Path(self.c['state'])/'operations'/(self.request['request_id']+'.json'))
+        self.assertNotIn('result',journal)
+        self.assertEqual(self.run_add('status')['state'],'saved');self.assert_untouched()
+
+    def test_known_add_failure_has_no_descriptor_and_new_request_can_succeed(self):
+        original=list(self.providers);self.providers=[]
+        failed=self.run_add();self.assertEqual(failed['state'],'failed');self.assertTrue(failed['settled'])
+        self.assertNotIn('connection',failed)
+        self.providers=original
+        self.assertEqual(self.run_add('status'),failed)
+        self.request['request_id']=str(uuid.uuid4())
+        self.assertEqual(self.run_add()['state'],'saved');self.assert_untouched()
 
     def test_existing_task_authority_or_intake_policy_is_not_cleared_for_setup(self):
         cfg=read(self.home/'config.json'); cfg['human_task_intake']['enabled']=True

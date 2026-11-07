@@ -306,7 +306,13 @@ class Client:
             self._fail(ProtocolError(f'ACP {method} violated its SDK schema'))
             raise self.failed from None
         except RequestError as error:
-            raise ProtocolError(f'ACP {method} rejected (code {error.code}; see endpoint logs)') from None
+            rejected = ProtocolError(f'ACP {method} rejected (code {error.code}; see endpoint logs)')
+            # Preserve the SDK's correlated rejection separately from timeout,
+            # transport loss and local schema errors. No exception-text parsing.
+            rejected.request_rejected = True
+            rejected.request_method = method
+            rejected.request_error_code = error.code
+            raise rejected from None
         except (ConnectionError, OSError) as error:
             self._fail(ProtocolError('ACP transport closed; delivery is unknown'))
             raise self.failed from error

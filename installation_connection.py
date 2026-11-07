@@ -291,6 +291,11 @@ class Connection:
                     or result.get('saved_session_present') is not present
                     or result.get('saved_session_loaded') is not present
                     or result.get('new_session_created') is not False or result.get('prompt_sent') is not False):
+                if not (result.get('verified') is False and result.get('failure_settled') is True
+                        and result.get('request_method') in ('initialize','session/load')
+                        and type(result.get('request_error_code')) is int
+                        and result.get('new_session_created') is False and result.get('prompt_sent') is False):
+                    return self.result('unknown',False,'Compatibility verification is uncertain; admission remains closed. No request or service action has been repeated.')
                 self.save(phase='stop_body',verification_failed=True,session=result)
                 return self.result(message='Verification failed; disconnecting without changing saved work.')
             now = self.backend.capture()

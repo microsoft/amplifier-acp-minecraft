@@ -18,6 +18,12 @@ def main():
     except Exception as error:
         result = {'verified':False, 'failure_type':type(error).__name__,
                   'message':'Original-session compatibility could not be verified; no prompt or replacement session was sent.'}
+        if (getattr(error,'request_rejected',False) is True
+                and getattr(error,'request_method',None) in ('initialize','session/load')
+                and type(getattr(error,'request_error_code',None)) is int):
+            result.update(failure_settled=True, request_method=error.request_method,
+                          request_error_code=error.request_error_code,
+                          new_session_created=False, prompt_sent=False)
     durable_write(args.result, result)
 
 
