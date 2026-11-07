@@ -98,3 +98,19 @@ test('Stop during asynchronous equip prevents mining and remains stopped',async(
   assert.equal(f.dug.length,0);assert.equal(f.history.task().status,'stopped');
  }finally{f.close();}
 });
+
+test('actual body blocks repeated unchanged occupied placement before another action admission',async()=>{
+ const f=fixture();try{
+  const a={...xyz(f.quarry),item:'oak_planks'},before=JSON.stringify(f.history.task());
+  for(let i=0;i<2;i++)await assert.rejects(f.operate('place',a),/Target is not empty/);
+  await assert.rejects(f.operate('place',a),e=>e.details.retry_guard.effect_attempted===false);
+  assert.equal(f.history.data.events.filter(e=>e.kind==='action_started').length,2);
+  assert.equal(f.history.data.events.at(-1).kind,'action_retry_blocked');
+  assert.equal(f.dug.length,0);assert.equal(f.moves.length,0);assert.equal(JSON.stringify(f.history.task()),before);
+  await f.operate('inspect',xyz(f.quarry));
+  await assert.rejects(f.operate('place',a),/Unchanged failed action/,'inspection alone must not clear the known condition');
+  f.blocks.set(f.quarry.toString(),'air');
+  await assert.rejects(f.operate('place',a),e=>!e.details?.retry_guard);
+  assert.equal(f.history.data.events.filter(e=>e.kind==='action_started').length,3,'changed terrain reaches original live checks');
+ }finally{f.close();}
+});

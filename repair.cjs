@@ -2,6 +2,9 @@
 const {createHash}=require('node:crypto');
 const {Vec3}=require('vec3');
 const rules=[
+ [/Target is out of reach/,'out_of_reach','Use map and plan_route to choose a supported standing cell within reach. Verify arrival before retrying; changing the target coordinates without moving does not improve reach.'],
+ [/Target is not empty/,'occupied_target','Inspect the existing target block. It may already match your intended result. Do not place again or remove it merely to repeat placement; preserve existing builds.'],
+ [/Requested support face has no solid supporting block/,'missing_support','Inspect the neighbor on the opposite side of the selected support_face. Choose a confirmed solid support and an empty target. Do not repeat the same unsupported placement.'],
  [/non_level_start/,'non_level_start','Your actual feet are between full block levels. Inspect footprint support_contacts and adjacent slabs/stairs. If appropriate, use normal navigation to separately verified full footing, then re-plan walk_only. Do not dig supporting blocks or repeat the unchanged level-walking request.'],
  [/different_elevation/,'different_elevation','walk_only cannot change feet height. Inspect the actual feet position and floor; choose a same-height destination. Use normal navigation only if stairs/climbing fit the task.'],
  [/unsafe_start/,'unsafe_start','Inspect feet, head and floor. walk_only requires full flat footing; slabs, stairs and ladders need their appropriate navigation mode. Do not dig the block supporting a player.'],
