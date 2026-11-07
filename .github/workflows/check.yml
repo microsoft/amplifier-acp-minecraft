@@ -17,6 +17,7 @@ jobs:
       - run: python -m pip install -r requirements.txt
       - run: npm ci --ignore-scripts
       - run: npm test
+      - run: python -m unittest discover -s ops/geyser-lan -p 'test_*.py'
       - run: npm run build:screenshots
       - run: npx playwright install --with-deps chromium
       - run: node --test tests/screenshots.test.cjs
