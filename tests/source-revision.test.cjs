@@ -11,7 +11,8 @@ test('attention and active awareness share source revision despite truncation/co
  assert.equal(first.context.messages[0].text.length,700);assert.equal(c.messages[0].text.length,800);
  assert.equal(first.sources[0].occurredAt,Date.parse(e.time));
  history.data.task={goal:'Changed surrounding task'};
- assert.notEqual(p.proposal(['Other']).signature,first.signature);
+ // A pending source keeps the same bounded evidence snapshot until settled.
+ assert.equal(p.proposal(['Other']).signature,first.signature);
  assert.deepEqual(p.proposal(['Other']).sources[0],first.sources[0]);
  assert.notEqual(publicSource({...e,message:e.message+'edit'}).revision,first.sources[0].revision);
 });

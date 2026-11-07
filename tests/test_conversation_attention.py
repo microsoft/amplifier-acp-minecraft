@@ -179,7 +179,7 @@ class Delivery(unittest.IsolatedAsyncioTestCase):
             posts.append(payload);return {'queued':False}
         a=ConversationAttention(lambda kind,**data:logs.append(data))
         self.assertFalse(await a.consider(request,client))
-        self.assertEqual(posts,[{'signature':'same','action':'hold'}])
+        self.assertEqual(posts,[{'signature':'same','action':'hold','source_id':'original'}])
         self.assertEqual(logs[0]['reason'],'duplicate')
 
     async def test_lost_delivery_reply_reconciles_fresh_source_without_replaying_accepted_work(self):
@@ -244,7 +244,7 @@ class Delivery(unittest.IsolatedAsyncioTestCase):
         with patch('conversation_attention.time.time',side_effect=lambda:clock[0]):
             self.assertFalse(await a.consider(request,client));self.assertFalse(posts)
             clock[0]=110;self.assertFalse(await a.consider(request,client))
-        self.assertEqual(posts,[{'signature':'same','action':'hold'}])
+        self.assertEqual(posts,[{'signature':'same','action':'hold','source_id':'original'}])
         self.assertEqual(logs[0]['stage'],'offer_validation')
         self.assertEqual([p['occurredAt'] for _,p in client.calls],[123,123])
         self.assertTrue(all(p['context']['trigger_id']=='original' for _,p in client.calls))

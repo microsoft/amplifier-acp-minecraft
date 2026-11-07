@@ -100,6 +100,7 @@ class ConversationAttention:
                 # This fallback has no pre-LLM decision-model savings.
                 offer={'action':'engage','reason':'ordinary_acp_fallback'}
             payload={'signature':proposal['signature'],'action':offer['action']}
+            if proposal.get('context',{}).get('trigger_id'):payload['source_id']=proposal['context']['trigger_id']
             if human_only:payload['human_only']=True
             if supported and offer['action']=='engage':payload['offer']={'id':offer['id'],'ticket':offer['ticket']}
             stage='local_delivery'

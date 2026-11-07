@@ -39,7 +39,14 @@ class WorkshopState {
   }
  }
  save(){fs.writeFileSync(this.file+'.tmp',JSON.stringify(this.data),{mode:0o600});fs.renameSync(this.file+'.tmp',this.file);}
- record(event){const saved={...event,id:crypto.randomUUID()};this.data.events.push(saved);this.data.events=this.data.events.slice(-1000);this.save();return saved;}
+ record(event){
+  const saved={...event,id:crypto.randomUUID()};this.data.events.push(saved);
+  // Pending input retains its original authority evidence independently of
+  // the rolling observation journal, only for the existing input lifetime.
+  const pinned=new Set([...(this.data.participation_pending||[]),...(this.data.inbox||[]).map(m=>m.id)]),recent=this.data.events.slice(-1000),ids=new Set(recent.map(e=>e.id)),now=Date.now();
+  this.data.events=[...this.data.events.filter(e=>!ids.has(e.id)&&pinned.has(e.id)&&now-Date.parse(e.time)<600000),...recent];
+  this.save();return saved;
+ }
  task(){const task=this.data.task;if(['running','waiting','review','blocked','needs_review'].includes(task?.status)&&Date.now()>task.deadline){task.status='budget_exhausted';this.save();}return task;}
  begin({request_id,goal}){
   if(['running','waiting'].includes(this.task()?.status))throw Error('An accepted task is already running');

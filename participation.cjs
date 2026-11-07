@@ -21,15 +21,33 @@ class Participation {
  queue(event){
   if(!isPublicChatEvent(event))return;
   const data=this.history.data;
-  data.participation_pending=[...(data.participation_pending||[]),event.id].slice(-8);
+  data.participation_pending=[...new Set([...(data.participation_pending||[]),event.id])];
   this.history.save();
  }
- proposal(players,{humanOnly=false}={}){
+ proposal(players,{humanOnly=false,sourceId=null}={}){
   const data=this.history.data;
-  const pending=new Set(data.participation_pending||[]);
-  const fresh=data.events.filter(e=>pending.has(e.id)&&(!humanOnly||e.source==='human')&&isPublicChatEvent(e)&&Date.now()-Date.parse(e.time)<600000);
-  if(!fresh.length)return null;
-  const chat=data.events.filter(isPublicChatEvent).slice(-24);
+  const now=Date.now(),byId=new Map(data.events.map(e=>[e.id,e]));
+  const pending=(data.participation_pending||[]).filter(id=>{
+   const e=byId.get(id),at=Date.parse(e?.time);
+   return e&&!e.accepted&&isPublicChatEvent(e)&&Number.isFinite(at)&&at<=now+5000&&now-at<600000;
+  });
+  if(pending.length!==(data.participation_pending||[]).length){
+   const removed=(data.participation_pending||[]).filter(id=>!pending.includes(id));
+   data.participation_outcomes=[...(data.participation_outcomes||[]),...removed.map(id=>({id,at:now,outcome:'expired_or_unavailable'}))].slice(-1000);
+   data.participation_pending=pending;
+   for(const id of removed)if(data.participation_proposals)delete data.participation_proposals[id];
+   this.history.save();
+  }
+  const fresh=pending.map(id=>byId.get(id)).filter(e=>(!humanOnly||e.source==='human')&&(!sourceId||e.id===sourceId));
+  // Each input owns its own outcome. A peer or a newer human input cannot
+  // consume another human source merely by sharing its contextual snapshot.
+  const trigger=fresh.find(e=>e.source==='human')||fresh[0];
+  if(!trigger)return null;
+  const sourceKey=crypto.createHash('sha256').update(JSON.stringify([publicSource(trigger),trigger.transport])).digest('hex');
+  const cached=data.participation_proposals?.[trigger.id];
+  if(cached?.source_key===sourceKey)return structuredClone(cached);
+  const recent=data.events.filter(isPublicChatEvent).slice(-23);
+  const chat=[...recent.filter(e=>e.id!==trigger.id),trigger];
   const names=[...new Set([this.cfg.username,...chat.map(e=>e.username||this.cfg.username),...players])].slice(0,64);
   const agents=new Set([this.cfg.username,...(this.cfg.bot_names||[])].map(name=>name.toLowerCase()));
   const participants=names.map(name=>{
@@ -46,15 +64,14 @@ class Participation {
   const context={conversation_id:this.cfg.conversation_id||'minecraft:workshop',
    agent:participants.find(p=>p.id===this.cfg.username),participants,
    messages:chat.map(e=>({id:e.id,sender:e.username||this.cfg.username,text:(e.message||e.sent||'').slice(0,700)})),
-   trigger_id:fresh.at(-1).id,
+   trigger_id:trigger.id,
    responsibilities:JSON.stringify({goal:data.task?.goal,status:data.task?.status,progress:data.task?.progress?.at(-1)?.summary}).slice(0,1500)};
-  // The trigger may fall outside bounded context after a long burst. Leave the
-  // newest visible candidate only; old public chat remains recorded, not replayed.
-  if(!context.messages.some(m=>m.id===context.trigger_id))return null;
-  const ids=fresh.filter(e=>context.messages.some(m=>m.id===e.id)).map(e=>e.id);
+  const ids=[trigger.id];
   const sources=chat.map(publicSource).filter(Boolean);
   const signature=crypto.createHash('sha256').update(JSON.stringify({context,ids,sources})).digest('hex');
-  return {context,ids,signature,occurred_at:Date.parse(fresh.at(-1).time),sources};
+  const proposal={context,ids,signature,occurred_at:Date.parse(trigger.time),sources,source_key:sourceKey};
+  data.participation_proposals={...(data.participation_proposals||{}),[trigger.id]:proposal};this.history.save();
+  return structuredClone(proposal);
  }
  // These are existing local delivery constraints, not social/model policy.
  // Recompute on both GET and POST; a preflight result never grants admission.
@@ -92,6 +109,8 @@ class Participation {
    }
   }
   data.participation_pending=(data.participation_pending||[]).filter(id=>!ids.has(id));
+  if(data.participation_proposals)for(const id of ids)delete data.participation_proposals[id];
+  data.participation_outcomes=[...(data.participation_outcomes||[]),...Array.from(ids,id=>({id,at:Date.now(),outcome:result.action}))].slice(-1000);
   this.history.save();
   return {queued:result.action==='engage',action:result.action,acp_admitted:false,message_ids:[...ids],trigger_id:proposal.context.trigger_id,signature:proposal.signature};
  }

@@ -347,3 +347,18 @@ test('human priority retains a burst beyond one turn batch without dropping or p
   assert.equal(new Set(f.inbox.map(m=>m.id)).size,12);
  }finally{f.close();}
 });
+test('real participation delivery targets one source despite later human arrivals and lost replies',async()=>{
+ const f=fixture('BuilderOne',true);try{
+  f.bot.emit('chat','VisitorOne','First question');const first=await f.request('/participation');
+  f.bot.emit('chat','VisitorOne','Second question');
+  assert.equal((await f.request('/participation')).signature,first.signature);
+  const payload={source_id:first.context.trigger_id,signature:first.signature,action:'hold'};
+  await f.request('/participation',payload);
+  assert.equal(f.history.data.participation_pending.length,1);const second=await f.request('/participation');
+  assert.notEqual(second.context.trigger_id,first.context.trigger_id);
+  await f.request('/participation',payload,409);
+  assert.equal(f.history.data.participation_pending.length,1);
+  await f.request('/participation',{source_id:second.context.trigger_id,signature:second.signature,action:'engage'});
+  assert.equal(f.inbox.length,1);assert.equal(f.inbox[0].message,'Second question');assert.deepEqual(f.history.task(),f.task);
+ }finally{f.close();}
+});
