@@ -99,7 +99,7 @@ class Provider:
                 return json.loads(response.read(2*1024*1024))
         except urllib.error.HTTPError as error:
             # Public metadata needs no credentials. Optional owner gh auth is
-            # only a fallback for API rate limiting, never agent/Brian secrets.
+            # only a fallback for API rate limiting, never agent credentials.
             if error.code not in (403,429):raise
             return json.loads(run(['gh','api','--hostname','github.com',route]))
 
