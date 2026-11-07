@@ -15,7 +15,7 @@ import sys
 import uuid
 from pathlib import Path
 
-from installation_connection import Backend, descriptor, stored_continuity
+from installation_connection import Backend, descriptor, stored_continuity, PROVIDER_FIELDS
 from installation_guard import (ContinuityError, NotIdle, digest, durable_write,
                                 installation_lock, read, require_idle)
 from installation_source_provider import verify_sdk
@@ -48,7 +48,8 @@ def load(path):
         raise ValueError('Enroll bounded prepared server choices')
     ids, homes, states, providers = set(), set(), set(), set()
     for slot in c['slots']:
-        if (set(slot) != {'id', 'label', 'config', 'config_sha256', 'route_receipt', 'route_sha256'}
+        if (set(slot)-{'activate_context_on_first_connect'} != {'id', 'label', 'config', 'config_sha256', 'route_receipt', 'route_sha256'}
+                or type(slot.get('activate_context_on_first_connect',False)) is not bool
                 or not re.fullmatch(r'[a-z][a-z0-9-]{0,40}', slot['id']) or slot['id'] in ids
                 or not isinstance(slot['label'], str) or not 1 <= len(slot['label'].strip()) <= 120):
             raise ValueError('Invalid or duplicate prepared server choice')
@@ -122,6 +123,8 @@ class Prerequisites:
             if not (Path(self.c['helpers'])/name).is_file():
                 raise ContinuityError('Install the complete reviewed owner helper set first')
         snapshot = self.game.capture()
+        snapshot['prepared_provider'] = {k:matched[0].get(k) for k in PROVIDER_FIELDS}
+        snapshot['prepared_provider_configured'] = matched[0].get('configured') is True
         require_idle(snapshot)
         history = read(home/'workshop.json')
         if (history.get('task') is not None or history.get('turn') is not None or history.get('action_sequences')
@@ -195,6 +198,16 @@ def operation(c, request, backend=None):
                 'prepared_context':{'agent_home':c['agent_home'],'provider':{
                     'id':route['context']['provider_id'],'url':route['context']['url'],
                     'secret_ref':route['context']['secret_ref']}}}; descriptor(saved_cfg)
+            if slot.get('activate_context_on_first_connect') is True:
+                expected = baseline.get('prepared_provider')
+                if (not isinstance(expected,dict) or set(expected)!=set(PROVIDER_FIELDS)
+                        or baseline.get('prepared_provider_configured') is not True
+                        or expected['enabled'] is not False
+                        or any(not isinstance(expected[k],str) or not expected[k]
+                               for k in PROVIDER_FIELDS if k!='enabled')):
+                    raise ContinuityError('One-use activation needs the exact initially disabled provider')
+                saved_cfg['prepared_context']['activation'] = {'version':1,'add_request_id':rid,
+                    'template_revision':c['revision'],'slot_id':slot['id'],'expected_provider':expected}
             saved_path = state/'saved-connection-config.json'
             if saved_path.exists():
                 raise ContinuityError('Saved connection configuration already exists')
@@ -221,7 +234,10 @@ def operation(c, request, backend=None):
     write_once(home/'installation-updates/gate.json',{'version':1,'transaction_id':rid,'closed':True})
     write_once(home/'installation-connections/state.json',{'schema':1,'phase':'disconnected','request_id':rid})
     args = [c['python'],str(Path(c['helpers'])/'installation_connection.py'),'--config',journal['config_path']]
-    response.update(state='saved',settled=True,message='Saved offline. Owner setup must confirm the mapped context gate is closed and enable this prepared provider before Connect. No work was authorized.',
+    response.update(state='saved',settled=True,message=(
+        'Saved offline. Connect will finish the authorized one-time provider activation when supported; no work was authorized.'
+        if saved_cfg['prepared_context'].get('activation') else
+        'Saved offline. Owner setup must confirm the mapped context gate is closed and enable this prepared provider before Connect. No work was authorized.'),
         connection={**entry,'service':'minecraft','commands':{a:args+[a] for a in ('status','connect','disconnect')}})
     journal.update(phase='saved',result=response);durable_write(path,journal)
     return response

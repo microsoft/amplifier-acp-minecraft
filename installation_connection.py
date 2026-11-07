@@ -15,6 +15,7 @@ import sys
 import time
 import uuid
 import urllib.request
+import urllib.parse
 from pathlib import Path
 
 from connection_state import state as connection_state
@@ -22,6 +23,10 @@ from installation_guard import (ContinuityError, NotIdle, continuity, digest, au
     durable_write, installation_lock, read, require_idle, restore_plan)
 from installation_participant import LocalInstallation
 from update_admission import process_identity
+
+CONTEXT_MUTATION = {'version':1, 'method':'PATCH',
+    'path':'api/v1/context/providers/{id}', 'precondition':'expected_provider'}
+PROVIDER_FIELDS = ('id','label','url','secret_ref','enabled')
 
 
 def descriptor(cfg):
@@ -79,6 +84,19 @@ class Backend(LocalInstallation):
         matches = [p for p in json.loads(result.stdout)['providers'] if p.get('id')==expected['id']]
         return (len(matches)==1 and all(matches[0].get(k)==v for k,v in expected.items())
                 and matches[0].get('enabled',True) is True)
+
+    def context_api(self, method, path, payload=None):
+        agent = Path(self.c['prepared_context']['agent_home'])
+        argv = [str(agent/'bin/agent-instance'),'--home',str(agent),'api',method,path]
+        if payload is not None:
+            request = Path(self.c['state'])/'connections/prepared-context-patch.json'
+            durable_write(request,payload)
+            argv += ['--file',str(request)]
+        remaining = self.deadline-time.monotonic()
+        if remaining <= 0:raise TimeoutError('Connection invocation budget reached')
+        result = subprocess.run(argv,capture_output=True,text=True,
+                                timeout=min(5,remaining),check=True)
+        return json.loads(result.stdout)
 
     def start_probe(self, result):
         job = Path(__file__).with_name('connection_session_job.py')
@@ -157,9 +175,6 @@ class Connection:
         return self.result('unknown',False,'Listener and game connection do not agree.')
 
     def start(self):
-        if (self.value['action']=='connect' and self.c.get('prepared_context') is not None
-                and not self.backend.prepared_context_ready()):
-            return self.result(message='Owner setup must enable the matching prepared context provider after its mapped offline gate is confirmed. Nothing has been started.')
         if self.active.exists():
             prior = read(self.root/'connections'/(read(self.active)['request_id']+'.json'))
             if prior['phase'] != 'terminal':
@@ -192,10 +207,95 @@ class Connection:
         if self.value['action']=='connect' and not self.gate.exists() and self.status()['state']=='connected':
             self.save(action='connect',revision=self.entry['revision'],config_hash=digest(self.c))
             return self.finish('connected')
+        if self.value['action']=='connect' and self.c.get('prepared_context') is not None:
+            pending = self.prepare_context(prior if baseline is not None else None)
+            if pending is not None:return pending
         self.save(revision=self.entry['revision'], config_hash=digest(self.c),
                   original=original, baseline=baseline, previous_gate=previous_gate, phase='gating')
         durable_write(self.active, {'request_id':self.id})
         return self.advance()
+
+    def prepare_context(self, prior):
+        """One-use setup activation; no repeated PATCH after uncertain dispatch.
+
+        The host has already ACKed closed context before dispatching Connect.
+        Body/controller remain stopped under the original offline admission gate.
+        """
+        prepared = self.c['prepared_context']; grant = prepared.get('activation')
+        if grant is None:
+            if self.backend.prepared_context_ready():return None
+            return self.result(message='Owner setup must enable the matching prepared context provider. No automatic activation was authorized for this connection.')
+        if (not isinstance(grant,dict) or set(grant) != {'version','add_request_id','template_revision','slot_id','expected_provider'}
+                or type(grant['version']) is not int or grant['version'] != 1
+                or not isinstance(grant['add_request_id'],str)
+                or not re.fullmatch(r'[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}',grant['add_request_id'])
+                or not isinstance(grant['template_revision'],str) or not re.fullmatch(r'[0-9a-f]{64}',grant['template_revision'])
+                or not isinstance(grant['slot_id'],str) or not re.fullmatch(r'[a-z][a-z0-9-]{0,40}',grant['slot_id'])
+                or not isinstance(grant['expected_provider'],dict)
+                or set(grant['expected_provider']) != set(PROVIDER_FIELDS)
+                or grant['expected_provider']['enabled'] is not False
+                or any(grant['expected_provider'].get(k)!=v for k,v in prepared['provider'].items())
+                or self.entry['context_provider_ids'] != [grant['expected_provider']['id']]):
+            raise ContinuityError('Prepared activation provenance is invalid')
+        grant_hash = digest({'grant':grant,'connection':self.entry})
+        path = self.root/'connections/prepared-context-activation.json'
+        receipt = read(path) if path.exists() else None
+        if receipt is not None and receipt.get('grant_hash') != grant_hash:
+            raise ContinuityError('Prepared activation authorization changed')
+        if receipt is None:
+            setup = self.root/'connections'/(grant['add_request_id']+'.json')
+            if (not prior or not setup.exists() or read(setup) != prior
+                    or prior.get('action') != 'setup' or prior.get('phase') != 'terminal'
+                    or prior.get('config_hash') != digest(self.c)
+                    or prior.get('baseline',{}).get('task_hash') != digest(None)
+                    or (self.home/'session.json').exists()
+                    or not all(s.get('ActiveState')=='inactive' and str(s.get('MainPID'))=='0'
+                               for s in self.backend.services().values())):
+                raise ContinuityError('Only the original unused prepared slot can be activated')
+            capability = self.backend.context_api('GET','descriptor').get('context_provider_mutation')
+            if capability != CONTEXT_MUTATION or type(capability.get('version')) is not int:
+                return self.result(message='Waiting for advertised conditional provider activation support; nothing has started.')
+        catalog = self.backend.context_api('GET','service-connections')
+        entry = [c for c in catalog.get('connections',[]) if c.get('id')==self.entry['id']]
+        command = (catalog.get('request') or {}).get('command',{})
+        if (len(entry)!=1 or any(entry[0].get(k)!=v for k,v in self.entry.items())
+                or entry[0].get('service')!='minecraft' or entry[0].get('enrolled') is not True
+                or entry[0].get('context_active') is not False
+                or entry[0].get('request_id')!=self.id or entry[0].get('state')!='busy'
+                or any(command.get(k)!=v for k,v in {'action':'connect','connection_id':self.entry['id'],
+                    'revision':self.entry['revision'],'request_id':self.id}.items())):
+            raise ContinuityError('Prepared activation requires the matching saved Connect and closed host context gate')
+        providers = self.backend.context_api('GET','context/providers').get('providers',[])
+        matches = [p for p in providers if p.get('id')==grant['expected_provider']['id']]
+        if (len(matches)!=1 or matches[0].get('configured') is not True
+                or type(matches[0].get('enabled')) is not bool):
+            raise ContinuityError('Prepared context metadata or credential is unavailable')
+        observed = {k:matches[0].get(k) for k in PROVIDER_FIELDS}
+        expected = grant['expected_provider']; enabled = {**expected,'enabled':True}
+        if receipt is not None:
+            if receipt.get('phase') not in ('intent','verified'):
+                raise ContinuityError('Prepared activation receipt has unknown phase')
+            if receipt.get('phase')=='verified':
+                if observed != enabled:raise ContinuityError('Provider changed after one-use activation; never re-enable it')
+                return None
+            if receipt.get('request_id')!=self.id:
+                raise ContinuityError('An earlier activation has unknown settlement')
+            if observed != enabled:
+                return self.result('unknown',message='Prepared activation settlement is unknown; only read-only reconciliation is allowed.')
+            # Observed target state, not a claim about which writer caused it.
+            durable_write(path,{**receipt,'phase':'verified','read_back':observed})
+            self.save(context_activation={'grant_hash':grant_hash,'observed_enabled':True})
+            return None
+        if observed != expected:
+            raise ContinuityError('Prepared provider changed before its one-use activation')
+        durable_write(path,{'grant_hash':grant_hash,'request_id':self.id,'phase':'intent',
+                           'expected_provider':expected,'enabled':True})
+        self.save(context_activation={'grant_hash':grant_hash,'dispatch_recorded':True})
+        # Any timeout, lost reply, refusal or crash leaves the intent consumed.
+        # A later STATUS may read back, but cannot dispatch another PATCH.
+        self.backend.context_api('PATCH','context/providers/'+urllib.parse.quote(expected['id'],safe=''),
+                                 {'expected_provider':expected,'enabled':True})
+        return self.result(message='Prepared provider activation sent; verifying its actual state before starting.')
 
     def service(self, kind):
         services = self.backend.services()

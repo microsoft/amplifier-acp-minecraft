@@ -104,7 +104,8 @@ agent-writable mounts. Create a private owner template (mode 0600):
     "config": "/owner/prepared-visit.json",
     "config_sha256": "<SHA256 of that connection's owner configuration>",
     "route_receipt": "/owner/visit-route-ready.json",
-    "route_sha256": "<SHA256 of the route receipt>"
+    "route_sha256": "<SHA256 of the route receipt>",
+    "activate_context_on_first_connect": true
   }]
 }
 ```
@@ -139,14 +140,31 @@ because a host port responds. Add checks this original owner evidence, the
 unchanged configuration files and the actual Instance provider registration.
 It does **not** claim a fresh runtime-namespace reachability test while the
 body is stopped. Missing, prematurely enabled or changed registration prevents
-saving. After Add settles, the setup owner confirms the mapped connection is
-reported disconnected with its context gate closed, then explicitly enables
-only that prepared provider through the supported registration API/read-back.
-Do not enable a provider against a host without the matching connection gate.
-This one-time setup step is separate from Add and never overrides a deliberately
-disabled existing connection. Connect remains pending without starting services
-until the exact provider metadata and enabled state match; it then checks the
-live body and initializes the actual ACP endpoint.
+saving.
+
+For ordinary **Add → Connect**, explicitly set
+`activate_context_on_first_connect: true` in the owner template. Add records a
+one-use grant tied to that template revision, request, unused slot and complete
+initially-disabled provider metadata. Add itself still makes no Instance write
+or service start. Connect verifies the actual saved descriptor, matching pending
+host request and closed context gate, then conditionally enables only that
+provider before starting the body. It does not rewrite the provider list.
+
+This path requires the actual Instance descriptor to advertise
+`context_provider_mutation` version 1, method `PATCH`, path
+`api/v1/context/providers/{id}` and precondition `expected_provider`. It is never
+inferred from a version number. Without that capability, Connect reports the
+missing support and starts nothing. Deploy and validate the matching shared
+implementation before enrolling this automated setup flow.
+
+Activation intent is durable before dispatch. A lost reply is reconciled only
+by reading the exact provider state; an uncertain PATCH is never repeated.
+Later intentional disables are not undone, even by another explicit Connect.
+Absent/false template opt-in retains the explicit owner-setup prerequisite for
+legacy configurations and conveys no provider-enable authority. It is not the
+automated Add flow. Existing connections never inherit an activation grant.
+After activation, the normal body, original-session and continuity checks still
+precede listener restoration; activation grants no Minecraft work.
 
 Run the installed helper with `--config /owner/add-template.json enrollment`.
 It prints one service descriptor with a revision bound to that template, a
