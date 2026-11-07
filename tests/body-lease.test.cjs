@@ -112,3 +112,24 @@ test('actual body sequence validates steps, executes ordinary guarded actions, a
  }finally{f.close();}
  }
 });
+test('actual async plan returns accepted before physical completion; Stop prevents the second effect',async()=>{
+ const f=fixture();try{
+  const {Vec3}=realRequire('vec3');f.bot.entity.position=new Vec3(0,64,0);let release,effects=0;const opened=new Set();
+  f.bot.blockAt=p=>({name:'oak_door',position:p,getProperties:()=>({open:opened.has(p.x)})});
+  f.bot.activateBlock=async block=>{effects++;await new Promise(r=>release=r);opened.add(block.position.x);};
+  await f.request('/turn',{renewable_lease:true,continuation:true});
+  const args={plan_id:'async-door-plan',steps:[{tool:'set_open',arguments:{x:1,y:64,z:0,open:true}},{tool:'set_open',arguments:{x:2,y:64,z:0,open:true}}]};
+  const started=await f.request('/action',{name:'start_sequence',arguments:args});assert.equal(started.accepted,true);assert.equal(started.completed,false);assert.equal(effects,1);
+  const running=await f.request('/action',{name:'sequence_status',arguments:{plan_id:args.plan_id}});assert.equal(running.status,'running');assert.equal(running.results.length,0);
+  const status=await f.request('/status');assert.equal(status.action_sequence.id,args.plan_id);
+  const spoken=[];f.bot.chat=text=>spoken.push(text);f.bot.players.Peer={};
+  const conversation=await f.request('/action',{name:'conversation'});
+  await f.request('/action',{name:'chat',arguments:{text:'I am on my way.',conversation_revision:conversation.revision}});
+  await f.request('/action',{name:'tell',arguments:{player:'Peer',intent:'update',text:'The first step is still running.',conversation_revision:conversation.revision}});
+  assert.equal(spoken.length,2);assert.equal((await f.request('/status')).busy,true);assert.equal(effects,1);
+  assert.equal(f.history.data.turn.actions.filter(a=>a.status==='pending').length,1);
+
+  await f.request('/stop',{});release();for(let i=0;i<8;i++){await new Promise(setImmediate);f.advance(350);}
+  const final=await f.request('/action',{name:'sequence_status',arguments:{plan_id:args.plan_id}});assert.equal(final.status,'paused');assert.equal(effects,1);assert.equal((await f.request('/status')).action_lease.lease_id,null);
+ }finally{f.close();}
+});

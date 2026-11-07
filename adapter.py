@@ -12,6 +12,7 @@ import urllib.request
 from conversation_awareness import Awareness
 from planner_prompt import planner_prompt
 from prompt_lifecycle import await_terminal
+from sequence_settlement import settle_sequence
 from acp_client import Client, turn_disposition, GAME_TOOLS, REPLY_TOOLS
 from attention import Attention, fingerprint
 from assessment import Assessment, POLICY, signature
@@ -362,6 +363,12 @@ async def run(home):
                 await awareness.finish()
             finally:
                 if not pending.done():pending.cancel()
+            operation=await settle_sequence(request,result,observe)
+            if operation['waited']:
+                # The model ended before seeing final physical results. Preserve
+                # those receipts, but do not publish an unsupported completion claim.
+                result['final_text']=''
+                observe('final_reply_withheld',reason='background_operation_settled_after_prompt')
             disposition=turn_disposition(result,(await request('/status')).get('busy',False))
             # If the human stopped the work, do not post a late final response.
             text=result.get('final_text',result['text']).strip()

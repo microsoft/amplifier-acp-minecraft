@@ -145,8 +145,15 @@ function speak(text){
  // This transport receipt is not proof of delivery to every player.
  record('chat_sent',result);return result;
 }
+function speech(name,a){
+ if(name==='chat')return speak(a.text);
+ if(a.player===bot.username||!bot.players[a.player])throw Error('Choose another connected player by their exact name');
+ const marker={request:'',update:'[FYI] ',ack:'[ACK] '}[a.intent];
+ return {...speak('@'+a.player+' '+marker+a.text),intent:a.intent,requests_reply:a.intent==='request'};
+}
 async function operate(name,a={},sequenceId=null){
   if(!ready)throw Error('Player is not connected');
+  if(name==='sequence_status')return actionSequence.wait(a.plan_id,a.wait_ms||0);
   if(name==='task_capabilities')return taskIntake.capabilities();
   if(INTAKE_TOOLS.has(name)){
     if(history.data.turn?.ambient_activity||!taskIntake.capabilities().task_intake_enabled||!history.data.turn?.conversation_only||Date.now()>=turnUntil||busy)throw Error('Task intake requires a current idle human reply turn and enabled installation policy');
@@ -174,15 +181,26 @@ async function operate(name,a={},sequenceId=null){
   }
   if(Date.now()>=turnUntil)throw Error('No active action lease; inspect current task authority. Do not replay prior actions.');
   if(name==='cancel_sequence')return actionSequence.cancel();
+  // Speech has its own settled receipt and never takes ownership of an
+  // in-flight physical operation. The same audience/revision/lease checks apply.
+  if(['chat','tell'].includes(name)&&actionSequence.active){
+    conversation.guard(a.conversation_revision);
+    if(++actions>24)throw Error('This turn reached its 24-action budget; inspect the sequence before reporting');
+    const actionId=crypto.randomUUID();history.actionStarted(actionId);record('action_started',{action_id:actionId,action:name,arguments:a});
+    try{
+      const result=speech(name,a);history.actionSettled(actionId,true);
+      const r=record('action_result',{action_id:actionId,action:name,arguments:a,result});receipts.push(r);if(receipts.length>100)receipts.shift();return result;
+    }catch(e){history.actionSettled(actionId,false);record('action_failed',{action_id:actionId,action:name,arguments:a,error:e.message});throw e;}
+  }
   if(actionSequence.active&&sequenceId!==actionSequence.active.id)throw Error('An action sequence is running; observe, steer or cancel it before another action');
   if(busy)throw Error('Another action is running; wait for its result');
-  if(name==='action_sequence'){
+  if(name==='action_sequence'||name==='start_sequence'){
     const turn=history.data.turn,epoch=generation;
     const humanRevision=()=>history.data.events.filter(e=>e.kind==='chat'&&e.source==='human'&&e.transport?.kind==='server_player_uuid').at(-1)?.id||null;
     const originalHuman=humanRevision();
     // Validate every step before any effects, even through the local API.
     const steps=a.steps.map(step=>{if(!SEQUENCE_TOOLS.includes(step.tool))throw Error('Tool is not allowed in a sequence');return {tool:step.tool,arguments:z.object(definitions[step.tool][1]).strict().parse(step.arguments)};});
-    return actionSequence.run({plan_id:a.plan_id,steps},{guard:()=>{
+    return actionSequence[name==='start_sequence'?'start':'run']({plan_id:a.plan_id,steps},{guard:()=>{
       if(history.data.turn!==turn||generation!==epoch||Date.now()>=turnUntil||!workAllowed())throw Error('Sequence authority changed; inspect without replay');
       if(humanRevision()!==originalHuman)throw Error('New human input: reconsider the remaining plan');
     },execute:(step,id)=>operate(step.tool,step.arguments,id)});
@@ -247,7 +265,7 @@ async function operate(name,a={},sequenceId=null){
       if(name==='furnace')return survival.furnace(bot,coord(a),a,check);
       if(name==='container')return containers.container(bot,coord(a),a,check,{beforeTransfer:()=>conversation.guard(a.conversation_revision)});
       if(name==='till')return farming.till(bot,coord(a),a,check);
-      if(name==='tell'){if(a.player===bot.username||!bot.players[a.player])throw Error('Choose another connected player by their exact name');const marker={request:'',update:'[FYI] ',ack:'[ACK] '}[a.intent];return {...speak('@'+a.player+' '+marker+a.text),intent:a.intent,requests_reply:a.intent==='request'};}
+      if(name==='tell')return speech(name,a);
       if(name==='move'){const p=coord(a),before=bot.entity.position.clone();if(a.mode==='walk_only')return walking.move(bot,p,a.range??0,check);await go(p,a.range??0,true);return {mode:'normal',position:bot.entity.position,before,target:p,reached:true,exact_feet_y:true};}
       if(name==='write_sign')return signs.write(bot,coord(a),a,check);
       if(name==='set_open'){const p=coord(a),block=bot.blockAt(p);if(!block||!/(?:_door|_trapdoor|_fence_gate)$/.test(block.name))throw Error('Only doors, trapdoors and fence gates can be opened here');if(p.distanceTo(bot.entity.position)>4)throw Error('Move within reach first');if(block.getProperties().open!==a.open){await bot.activateBlock(block);await delay(300);check();}const actual=bot.blockAt(p)?.getProperties().open;if(actual!==a.open)throw Error('Server did not confirm the requested open state');return {position:p,name:block.name,open:actual,verified:true};}
@@ -379,6 +397,9 @@ const definitions={
 };
 definitions.cancel_sequence=['Stop pending steps in the current plan. The current operation must still settle; inspect before choosing a new plan. Does not stop the task or replay anything.',{}];
 definitions.action_sequence=['Execute an explicit ordered plan without a model round trip between steps. Each step uses its normal live checks. Stops on new human input, changed authority, cancellation, errors or partial results. Use a unique plan_id; retrying the same ID only reads its receipt, never replays. No arbitrary scripts. You may observe or cancel while it runs. Inspect results before further plans.',{plan_id:z.string().min(1).max(100),steps:z.array(z.discriminatedUnion('tool',SEQUENCE_TOOLS.map(tool=>z.object({tool:z.literal(tool),arguments:z.object(definitions[tool][1]).strict()}).strict()))).min(1).max(16)}];
+definitions.start_sequence=['Start an asynchronous ordered plan. Returns accepted/running and an operation ID, NOT completed effects. Continue reasoning/read-only planning while it executes; sequence_status waits for real results. Same lease/task/Stop and no-replay guards as action_sequence.',definitions.action_sequence[1]];
+definitions.sequence_status=['Inspect an exact plan operation and its actual step receipts. Optional bounded wait avoids polling while a plan settles. Unknown/interrupted is not completion; never replay to discover outcome.',{plan_id:z.string().min(1).max(100),wait_ms:z.number().int().min(0).max(30000).optional()}];
+
 function mcpServer(){
   const m=new McpServer({name:'minecraft-player',version:'0.1.0'});
   require('./screenshots.cjs').registerTools(m,screenshots);
@@ -427,7 +448,7 @@ const server=http.createServer(async(req,res)=>{
         }
       }else result={action:'hold'};
     }
-    else if(req.method==='GET'&&req.url==='/status')result={ready,busy,turn_active:Date.now()<turnUntil,incoming_chat_only:cfg.incoming_chat_only===true,conversation_only:history.data.turn?.conversation_only===true,ambient_activity:history.data.turn?.ambient_activity===true,task_intake_enabled:taskIntake.capabilities().task_intake_enabled,task_capabilities:taskIntake.capabilities(),task:history.task(),action_lease:lease.view(history.task())};
+    else if(req.method==='GET'&&req.url==='/status')result={ready,busy,turn_active:Date.now()<turnUntil,incoming_chat_only:cfg.incoming_chat_only===true,conversation_only:history.data.turn?.conversation_only===true,ambient_activity:history.data.turn?.ambient_activity===true,task_intake_enabled:taskIntake.capabilities().task_intake_enabled,task_capabilities:taskIntake.capabilities(),task:history.task(),action_lease:lease.view(history.task()),action_sequence:actionSequence.status()};
     else if(req.method==='GET'&&req.url==='/inbox/peek')result=(cfg.human_engagement?.enabled===true&&inbox.some(m=>m.source==='human'&&!m.attention_offer)?inbox.filter(m=>m.source==='human'&&!m.attention_offer):inbox).slice(0,8);
     else if(req.method==='GET'&&req.url==='/conversation/admission')result=replyAdmission.status(inbox);
     else if(req.method==='GET'&&['/participation','/participation?human_only=1'].includes(req.url))result=participation.enabled?participationProposal(req.url.endsWith('human_only=1')):null;
@@ -460,6 +481,7 @@ const server=http.createServer(async(req,res)=>{
       }else {
       if(a.continuation&&history.task()?.status!=='running')throw Error('Task is no longer running');
       if(history.budgetCheckpoint()&&a.continuation)throw Error('Task budget saved for review');history.startTurn({peerOnly:!!a.peer_only,requestIds:ids});for(let i=inbox.length-1;i>=0;i--)if(ids.includes(inbox[i].id))inbox.splice(i,1);history.save();stop();lease.begin(history.data.turn,history.task(),a.renewable_lease===true);scheduleLease();actions=0;replies=0;conversation.expose();result={active:true,action_lease:lease.view(history.task())};}}
+    else if(req.method==='POST'&&req.url==='/sequence/cancel'){result=actionSequence.cancel('controller_settlement');}
     else if(req.method==='POST'&&req.url==='/turn/renew'){
       const a=await json(req);if(!ready)throw Error('Player disconnected');
       result=lease.renew(a,history.task(),history.data.turn);scheduleLease();

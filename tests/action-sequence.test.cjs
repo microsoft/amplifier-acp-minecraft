@@ -37,3 +37,21 @@ test('interrupted receipt and evicted receipt never reopen possibly accepted wor
  h.data.action_sequences=[];h.data.consumed_sequence_ids=[require('node:crypto').createHash('sha256').update(plan.plan_id).digest('hex')];h.save();
  await assert.rejects(()=>runner.run(plan,{guard(){},execute:never.execute}),/already consumed/);
 });
+test('async start returns before effect settlement and exposes exact status without replay',async t=>{
+ const {runner}=fixture(t);let release,effects=0;
+ const opts={guard(){},async execute(){effects++;await new Promise(r=>release=r);return {verified:true};}};
+ const started=await runner.start(plan,opts);assert.equal(started.accepted,true);assert.equal(started.completed,false);assert.equal(effects,1);
+ assert.equal(runner.inspect(plan.plan_id).status,'running');assert.equal(runner.inspect(plan.plan_id).results.length,0);
+ const duplicate=await runner.start(plan,opts);assert.equal(duplicate.duplicate,true);assert.equal(duplicate.status,'running');assert.equal(effects,1);
+ const settled=runner.wait(plan.plan_id,1000);runner.cancel('human correction');release();const receipt=await settled;
+ assert.equal(receipt.status,'paused');assert.equal(receipt.results.length,1);assert.equal(effects,1);
+ assert.equal((await runner.start(plan,opts)).duplicate,true);assert.equal(effects,1);
+});
+test('async reservation rejection and interrupted restart never claim acceptance or replay',async t=>{
+ const {runner,h}=fixture(t);await assert.rejects(()=>runner.start(plan,{guard(){throw Error('expired');},execute(){assert.fail();}}),/expired/);
+ assert.equal(runner.inspect(plan.plan_id).status,'unknown');
+ let release;await runner.start(plan,{guard(){},execute(){return new Promise(r=>release=r);}});
+ const loaded=new ActionSequence(new WorkshopState(h.file));assert.equal(loaded.inspect(plan.plan_id).status,'interrupted');
+ const r=await loaded.start(plan,{guard(){assert.fail();},execute(){assert.fail();}});assert.equal(r.accepted,false);assert.equal(r.replayed,false);
+ runner.cancel();release({verified:true});await runner.wait(plan.plan_id,1000);
+});
