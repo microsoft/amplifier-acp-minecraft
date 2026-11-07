@@ -57,7 +57,9 @@ and enrolled; a link to documentation is not an interactive setup flow.
 
 - Disconnect closes game admission, waits for the current controller turn,
   action lease, sequence and inventory to settle, captures continuity, then
-  stops the controller and body. It retains all saved work and unit settings.
+  stops the controller. Its `context_quiesced` report lets the host close the
+  context gate only after active work settles; after the report is acknowledged,
+  a later status call stops the body. It retains all saved work and unit settings.
   Offline intent also prevents an ordinary body restart from rejoining.
 - Connect starts the body under closed admission. The matching `context_ready`
   report lets the host reopen only the mapped context route. The host must

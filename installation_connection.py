@@ -229,7 +229,13 @@ class Connection:
         if self.value['phase']=='await_controller':
             if not self.stopped('controller'):return self.result()
             stored_continuity(self.value['baseline'],self.backend.capture())
-            self.save(phase='stop_body' if self.value['action']=='disconnect' else 'start_body')
+            if self.value['action']=='disconnect':
+                self.save(phase='context_quiesced')
+                return self.result(context_quiesced=True, message='Current work is settled; context can now be closed.')
+            self.save(phase='start_body')
+        if self.value['phase']=='context_quiesced':
+            # Host acknowledges this phase before invoking STATUS again.
+            self.save(phase='stop_body')
         if self.value['phase']=='stop_body':
             self.save(phase='await_body_stop')
             if not self.stopped('body'):self.backend.action('body','stop')

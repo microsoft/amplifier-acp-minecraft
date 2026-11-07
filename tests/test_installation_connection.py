@@ -70,6 +70,19 @@ class ConnectionTests(unittest.TestCase):
         self.assertEqual(before,(self.home/'workshop.json').read_bytes())
         self.assertTrue((self.home/'installation-updates/gate.json').exists())
         self.assertEqual(read(self.home/'installation-connections/state.json')['phase'],'disconnected')
+    def test_disconnect_reports_quiescence_after_controller_stop_before_body_stop(self):
+        self.op('disconnect').run();self.ack()
+        first=self.op().run()
+        self.assertNotIn('context_quiesced',first)
+        self.assertEqual(self.backend.actions,[('controller','stop')])
+        settled_controller=self.op().run()
+        self.assertTrue(settled_controller['context_quiesced'])
+        self.assertFalse(settled_controller['settled'])
+        self.assertEqual(self.backend.units['body']['ActiveState'],'active')
+        self.assertEqual(self.backend.actions,[('controller','stop')])
+        self.op().run()
+        self.assertEqual(self.backend.actions,[('controller','stop'),('body','stop')])
+
     def test_context_readiness_precedes_probe_and_release(self):
         self.disconnect();before=(self.home/'workshop.json').read_bytes()
         self.connect_ready()
