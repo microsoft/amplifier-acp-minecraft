@@ -666,6 +666,13 @@ extend a deadline. Instance still owns engage/hold evaluation. The same path is
 used for any backend advertising that capability; the adapter does not identify
 or special-case native versus Codex engines.
 
+Background awareness waits while an observed ACP tool call is pending or in
+progress. Some backends interrupt pending tools when steering arrives. The
+adapter retains the source cursor and original facts, then coalesces updates at
+the next observed settled boundary. A prompt ending first does not start another
+prompt or replay an input. This is not an atomic backend scheduling guarantee;
+Stop and effect permissions remain enforced immediately by the body.
+
 The ACP transport has one reader, routing concurrent replies by request ID while
 retaining notification order. A private `awareness-receipts.json` journal records
 source IDs, prompt binding, delivery and incorporation states, without copying

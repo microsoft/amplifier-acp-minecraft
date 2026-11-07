@@ -33,6 +33,8 @@ class AwarenessWire(unittest.IsolatedAsyncioTestCase):
                 while c.active_prompt_id is None:
                     await asyncio.sleep(.001)
                 prompt_id = c.active_prompt_id
+                while c.tool_calls.get('inspect', {}).get('status') != 'completed':
+                    await asyncio.sleep(.001)
                 await awareness.consider(snapshot())
                 result = await task
                 self.assertEqual(result['final_text'], 'Fresh peer evidence received.')
@@ -72,6 +74,8 @@ class AwarenessWire(unittest.IsolatedAsyncioTestCase):
                 a = Awareness(tmp, c, {'revision': 'old'}, c.observe)
                 task = asyncio.create_task(c.prompt('Existing accepted work', 10))
                 while c.active_prompt_id is None:
+                    await asyncio.sleep(.001)
+                while c.tool_calls.get('inspect', {}).get('status') != 'completed':
                     await asyncio.sleep(.001)
                 await a.consider(snapshot())
                 result = await task
