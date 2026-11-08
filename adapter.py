@@ -281,13 +281,14 @@ async def run(home):
             # Leave queued messages in the body. Stop clears them immediately;
             # state is reread after each wait so deadlines still expire normally.
             work_allowed=state.get('task_capabilities',{}).get('autonomous_work_allowed',not incoming_chat_only)
-            if work_allowed and not state.get('turn_active') and not state.get('busy'):
+            if (work_allowed or state.get('task_capabilities',{}).get('recovery_review_allowed')) and not state.get('turn_active') and not state.get('busy'):
                 continuation=await request('/continuation',{'generation':state.get('generation')})
                 continuation_key=(state.get('task',{}).get('id') if state.get('task') else None,json.dumps(continuation,sort_keys=True))
                 if continuation.get('action') not in ('hold','continue') and continuation_key!=last_continuation:
                     observe('continuation_policy',**continuation)
                 last_continuation=continuation_key
                 state=await request('/state')
+                work_allowed=state.get('task_capabilities',{}).get('autonomous_work_allowed',not incoming_chat_only)
             calls[:]=[t for t in calls if t>time.time()-3600]
             conversation_only=False
             messages=[]
@@ -329,8 +330,22 @@ async def run(home):
                 await asyncio.sleep(0 if (cfg.get('human_engagement') or {}).get('enabled') is True else 3)
                 newer=await request('/inbox/peek')
                 if newer:messages=newer
-            from delivery_queue import select_turn_messages
+            from delivery_queue import select_turn_messages, attention_reply_messages
             messages=select_turn_messages(messages)
+            admission=await request('/conversation/admission') if any(m.get('attention_offer') for m in messages) else {}
+            optional=attention_reply_messages(messages,admission.get('eligible_ids',[]))
+            if optional is not None:
+                if optional:
+                    messages=optional;conversation_only=True
+                else:
+                    # An unavailable social delivery cannot starve either
+                    # ordinary work or its existing dependency-watch checks.
+                    if work_allowed:state=await observe_attention(state)
+                    if work_allowed and (state.get('task') or {}).get('status')=='running':
+                        messages=[{'source':'continuation','message':'Continue the accepted game task. Inspect current world state and progress before acting.'}]
+                        conversation_only=False
+                    else:
+                        await asyncio.sleep(2);continue
             await connect()
             offers=[m['attention_offer'] for m in messages if m.get('attention_offer')]
             attention_offer=offers[0] if offers else None

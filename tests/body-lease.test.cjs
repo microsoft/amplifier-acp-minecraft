@@ -2,7 +2,7 @@ const test=require('node:test'),assert=require('node:assert/strict');
 const fs=require('node:fs'),os=require('node:os'),path=require('node:path'),vm=require('node:vm');
 const {EventEmitter}=require('node:events'),{createRequire}=require('node:module'),{Readable}=require('node:stream');
 const root=path.resolve(__dirname,'..'),realRequire=createRequire(path.join(root,'body.cjs'));
-function fixture(configOverride={},walkingOverride=null){
+function fixture(configOverride={},walkingOverride=null,bridgeOverride=null){
  const home=fs.mkdtempSync(path.join(os.tmpdir(),'body-lease-')),config=path.join(home,'config.json');
  fs.writeFileSync(config,JSON.stringify({username:'Builder',token:'fixture',...configOverride}));
  const now=Date.now(),task={id:'accepted',status:'running',deadline:now+3600000,turns:120,max_turns:135,progress:[]};
@@ -10,7 +10,7 @@ function fixture(configOverride={},walkingOverride=null){
  const bot=new EventEmitter();Object.assign(bot,{username:'Builder',players:{},loadPlugin(){},pathfinder:{setGoal(){}},clearControlStates(){},stopDigging(){},entity:{position:{clone:()=>({x:0,y:64,z:0})}},health:20});
  let handle,current=now;const timers=new Set();
  class Clock extends Date{static now(){return current;}}
- const ctx=vm.createContext({require:n=>n==='./walking.cjs'&&walkingOverride?walkingOverride:n==='mineflayer'?{createBot:()=>bot}:n==='node:http'?{createServer:h=>{handle=h;return {listen(){},close(){}};}}:realRequire(n),
+ const ctx=vm.createContext({require:n=>n==='./watch-bridge.cjs'&&bridgeOverride?bridgeOverride:n==='./walking.cjs'&&walkingOverride?walkingOverride:n==='mineflayer'?{createBot:()=>bot}:n==='node:http'?{createServer:h=>{handle=h;return {listen(){},close(){}};}}:realRequire(n),
  module:{exports:{}},console:{log(){}},Date:Clock,Buffer,process:{argv:['node','body.cjs',config],on(){},exit(){}},
  setTimeout:(fn,ms)=>{const t={fn,at:current+ms,unref(){}};timers.add(t);return t;},clearTimeout:t=>timers.delete(t)});
  vm.runInContext(fs.readFileSync(path.join(root,'body.cjs'),'utf8')+'\nready=true;module.exports={history,operate,actionsRemaining};',ctx);
@@ -250,5 +250,55 @@ test('actual body allows human-requested movement under unchanged assignment, th
   assert.equal(f.history.task().turns,121);const status=await f.request('/status');assert.equal(status.conversation_only,false);assert.equal(status.action_lease.renewable,true);
   await f.operate('work_report',{status:'running',summary:'Reached the requested spot; the existing assignment remains.'});await f.request('/finish',{});
   assert.equal(f.history.task().id,'accepted');assert.equal(f.history.task().deadline,f.task.deadline);assert.equal(f.history.data.last_turn.actions.filter(a=>a.status==='pending').length,0);
+ }finally{f.close();}
+});
+
+
+test('recovery inspection stays reachable with effects closed and preserves assignment accounting',async()=>{
+ let calls=0;
+ const bridge={...realRequire('./watch-bridge.cjs'),invoke:async(_command,_home,facts)=>{calls++;assert.equal(facts.receipts_complete,true);return {action:'inspect_then_continue'};}};
+ const f=fixture({incoming_chat_only:true,automatic_recovery:true,task_helpers:{command:'/fixture/helper'},human_task_intake:{enabled:true}},null,bridge);
+ try{
+  Object.assign(f.history.data.task,{status:'needs_review',authority:{kind:'human_game_request'},authority_revision:1});
+  f.history.data.last_turn={task_id:'accepted',interrupted:true,started_at:new Date().toISOString(),actions:[{id:'settled',status:'succeeded'}]};f.history.save();
+  const before=structuredClone(f.history.task()),status=await f.request('/status');
+  assert.equal(status.task_capabilities.autonomous_work_allowed,false);
+  assert.equal(status.task_capabilities.recovery_review_allowed,true);
+  await f.request('/action',{name:'dig',arguments:{x:1,y:64,z:0}},400);
+  assert.equal((await f.request('/continuation',{generation:0})).action,'inspect_then_continue');
+  assert.equal(calls,1);assert.equal(f.history.task().status,'running');
+  for(const k of ['id','turns','max_turns','deadline','authority_revision','authority'])assert.deepEqual(f.history.task()[k],before[k]);
+  assert.equal(f.history.task().recovery_attempts,1);assert.equal((await f.request('/status')).action_lease.lease_id,null);
+  await f.request('/continuation',{generation:0});assert.equal(calls,1);
+ }finally{f.close();}
+});
+test('recovery inspection never bypasses Stop, limits, uncertain effects or installation policy',async()=>{
+ for(const scenario of ['stopped','expired','exhausted','pending','uncertain','attempts','disabled','chat_only']){
+  let calls=0;const bridge={...realRequire('./watch-bridge.cjs'),invoke:async()=>{calls++;throw Error('Must not invoke');}};
+  const f=fixture({incoming_chat_only:true,automatic_recovery:scenario!=='disabled',task_helpers:{command:'/fixture/helper'},human_task_intake:{enabled:scenario!=='chat_only'}},null,bridge);
+  try{
+   Object.assign(f.history.data.task,{status:scenario==='stopped'?'stopped':'needs_review',authority:{kind:'human_game_request'}});
+   if(scenario==='expired')f.history.data.task.deadline=Date.now()-1;
+   if(scenario==='exhausted')f.history.data.task.max_turns=f.history.data.task.turns;
+   if(scenario==='attempts')f.history.data.task.recovery_attempts=2;
+   f.history.data.last_turn={task_id:'accepted',interrupted:true,started_at:new Date().toISOString(),actions:[{id:'effect',status:['pending','uncertain'].includes(scenario)?scenario:'succeeded'}]};f.history.save();
+   assert.equal((await f.request('/status')).task_capabilities.recovery_review_allowed,false,scenario);
+   const before=JSON.stringify(f.history.data);assert.equal((await f.request('/continuation',{generation:0})).action,'hold');
+   assert.equal(calls,0);assert.equal(JSON.stringify(f.history.data),before,scenario);
+  }finally{f.close();}
+ }
+});
+test('optional attention cannot reserve a construction turn or poison an existing task on reply failure',async()=>{
+ const f=fixture({incoming_chat_only:true,human_engagement:{enabled:true},human_task_intake:{enabled:true}});
+ try{
+  f.history.data.task.authority={kind:'human_game_request'};
+  const e=f.history.record({kind:'chat',source:'human',username:'Visitor',message:'How is it going?',accepted:true,provenance:'minecraft_public_chat',time:new Date().toISOString()});
+  f.history.data.inbox.push({id:e.id,source:'human',username:'Visitor',message:e.message,attention_offer:{id:'offer',ticket:'ticket'}});f.history.save();
+  const task=JSON.stringify(f.history.task());
+  await f.request('/turn',{message_ids:[e.id],renewable_lease:true},400);
+  assert.equal(JSON.stringify(f.history.task()),task);assert.equal(f.history.data.inbox.length,1);
+  await f.request('/turn',{conversation_only:true,message_ids:[e.id]});
+  await f.request('/finish',{error:true});
+  assert.equal(JSON.stringify(f.history.task()),task);assert.equal(f.history.data.last_conversation_turn.interrupted,true);
  }finally{f.close();}
 });

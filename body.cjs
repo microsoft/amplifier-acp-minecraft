@@ -489,16 +489,16 @@ const server=http.createServer(async(req,res)=>{
     else if(req.method==='POST'&&req.url==='/watch'){if(!workAllowed())throw Error('Current mode/task cannot schedule work watches');result=await watchOperation(await json(req));}
     else if(req.method==='POST'&&req.url==='/continuation'){
       const a=await json(req);if(a.generation!==generation||busy||Date.now()<turnUntil)throw Error('Continuation observation changed');
-      if(!workAllowed())result={action:'hold',reason:!taskIntake.enabled()&&cfg.incoming_chat_only===true?'incoming_chat_only':'task_authority_unavailable'};
-      else if(history.budgetCheckpoint()){record('budget_checkpoint',{task_id:history.task().id});result={action:'checkpoint'};}
-      else if(cfg.automatic_recovery&&taskHelperCommand&&history.task()?.status==='needs_review'&&ready){
+      if(taskIntake.recoveryReviewAllowed()&&taskHelperCommand&&ready){
         const epoch=generation,taskId=history.task().id;
         result=await watchBridge.invoke(taskHelperCommand,path.dirname(process.argv[2]),{...history.recoveryFacts(),idle:true,observation_current:true},'continuation');
         if(result.action==='inspect_then_continue'){
-          if(epoch!==generation||busy||Date.now()<turnUntil||history.task()?.id!==taskId)throw Error('Recovery superseded');
+          if(epoch!==generation||busy||Date.now()<turnUntil||history.task()?.id!==taskId||!taskIntake.recoveryReviewAllowed())throw Error('Recovery superseded');
           const task=history.reconcile({position:bot.entity.position.clone(),health:bot.health});record('receipt_reconciliation',{task_id:task.id,attempt:task.recovery_attempts});
         }
-      }else result={action:'hold'};
+      }else if(!workAllowed())result={action:'hold',reason:!taskIntake.enabled()&&cfg.incoming_chat_only===true?'incoming_chat_only':'task_authority_unavailable'};
+      else if(history.budgetCheckpoint()){record('budget_checkpoint',{task_id:history.task().id});result={action:'checkpoint'};}
+      else result={action:'hold'};
     }
     else if(req.method==='GET'&&req.url==='/status')result={ready,busy,turn_active:Date.now()<turnUntil,incoming_chat_only:cfg.incoming_chat_only===true,conversation_only:history.data.turn?.conversation_only===true,reply_work_allowed:replyWorkAllowed(),ambient_activity:history.data.turn?.ambient_activity===true,peer_proposal:history.data.turn?.peer_proposal===true,task_intake_enabled:taskIntake.capabilities().task_intake_enabled,task_capabilities:taskIntake.capabilities(),task:history.task(),action_lease:lease.view(history.task()),action_sequence:actionSequence.status()};
     else if(req.method==='GET'&&req.url==='/inbox/peek')result=(cfg.human_engagement?.enabled===true&&inbox.some(m=>m.source==='human'&&!m.attention_offer)?inbox.filter(m=>m.source==='human'&&!m.attention_offer):inbox).slice(0,8);
@@ -533,6 +533,7 @@ const server=http.createServer(async(req,res)=>{
       if(!workAllowed()&&a.conversation_only!==true)throw Error('Current mode/task requires a bounded human reply; no autonomous authority');
       const ids=a.message_ids||[];
       if(!Array.isArray(ids)||ids.length>8||new Set(ids).size!==ids.length||ids.some(id=>!inbox.some(m=>m.id===id)))throw Error('Queued request changed before turn start');
+      if(a.conversation_only!==true&&ids.some(id=>inbox.find(m=>m.id===id)?.attention_offer))throw Error('Attention deliveries require a separate conversation turn');
       if(a.conversation_only===true){
        replyAdmission.start(ids,inbox);replyWork.bind(history,cfg,workAllowed()&&!taskIntake.requiresReview(history.task()));stop();turnUntil=Date.now()+240000;
        leaseTimer=setTimeout(()=>{stop();record('conversation_window_expired');},240000);leaseTimer.unref?.();
