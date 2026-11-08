@@ -74,6 +74,28 @@ test('static helper discovery checks exact independent versions/commands and doe
   const input={status:'running',remaining_ms:bounds.unbounded(),remaining_turns:bounds.unbounded()};await assert.rejects(()=>bridge.invoke(command,f.dir,input,'continuation'),/unavailable/);
  }finally{f.close();}
 });
+test('readiness rediscovers an atomically replaced helper without a model/tool call',async()=>{
+ const f=fixture();try{
+  const command=path.join(f.dir,'runtime'),calls=path.join(f.dir,'discoveries');
+  const manifest={schema_version:1,helpers:{watch:{version:2,command:'watch-v2',bound_kinds:['finite','no_configured_bound'],watch_ttl_seconds:{minimum:30,maximum:1800}},continuation:{version:2,command:'continuation-v2',bound_kinds:['finite','no_configured_bound']}}};
+  function replace(value){
+   const next=command+'.new';
+   fs.writeFileSync(next,`#!/usr/bin/env node\nif(process.argv.slice(2).join(' ')!=='helper-capabilities')process.exit(1);require('node:fs').appendFileSync(${JSON.stringify(calls)},'x');process.stdout.write(${JSON.stringify(JSON.stringify(value))});`,{mode:0o700});
+   fs.renameSync(next,command);
+  }
+  replace(manifest);await helpers.discover(command);assert.equal(helpers.ready(command),true);
+  replace({...manifest,runtime_version:'next'});
+  for(let n=0;n<20;n++)assert.equal(helpers.ready(command),false);
+  const until=Date.now()+3000;
+  while(!helpers.ready(command)&&Date.now()<until)await new Promise(resolve=>setTimeout(resolve,10));
+  assert.equal(helpers.ready(command),true,'state-only readiness must recover after helper replacement');
+  assert.equal(fs.readFileSync(calls,'utf8'),'xx','one static discovery per binary identity');
+  replace({schema_version:1,helpers:{}});assert.equal(helpers.ready(command),false);
+  await helpers.discover(command);assert.equal(helpers.ready(command),false);
+  for(let n=0;n<20;n++)assert.equal(helpers.ready(command),false);
+  assert.equal(fs.readFileSync(calls,'utf8'),'xxx','unsupported helper must not cause repeated processes');
+ }finally{f.close();}
+});
 test('watch and continuation projections retain exact identity and explicit bounds without mutating assignment',()=>{
  const f=fixture();try{const e=f.human();f.intake.accept({request_id:e.id,goal:'shop',max_turns:8});const before=JSON.stringify(f.h.task());
   const c=bridge.context({username:'Agent'},f.h,{ready:false});assert.equal(c.task.id,f.h.task().id);assert.deepEqual(c.task.deadline_ms,bounds.unbounded());assert.deepEqual(c.task.remaining_turns,bounds.finite(8));assert.deepEqual(f.h.recoveryFacts().remaining_ms,bounds.unbounded());assert.equal(JSON.stringify(f.h.task()),before);

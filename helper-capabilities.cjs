@@ -21,5 +21,12 @@ async function discover(command){
   entry.value=value;return value;
  }catch{return null;}})();return entry.promise;
 }
-function ready(command){const v=current(command);return supports(v,'watch')&&supports(v,'continuation');}
+function ready(command){
+ const v=current(command);
+ // An idle helper update changes the binary without restarting the body.
+ // Re-discover its identity on ordinary state reads; remain closed until done.
+ // discover coalesces concurrent reads and caches failures for that identity.
+ if(v===null||v===undefined)void discover(command);
+ return supports(v,'watch')&&supports(v,'continuation');
+}
 module.exports={discover,current,supports,ready};

@@ -181,7 +181,15 @@ test('actual body accepts completion-bound work only after local helper discover
   const accepted=await f.request('/action',{name:'task_accept',arguments:{request_id:e.id,goal:'Finish the whole commission'}});
   assert.equal(accepted.execution_started,false);assert.equal(accepted.bounds.deadline_ms.kind,'no_configured_bound');assert.deepEqual(f.history.data.task_history.at(-1),old);
   await f.request('/action',{name:'dig',arguments:{x:1,y:64,z:0}},400);
-  await f.request('/finish',{});const start=await f.request('/turn',{continuation:true,renewable_lease:true}),taskId=accepted.task_id;
+  await f.request('/finish',{});
+  const saved=JSON.stringify(f.history.data),replacement=command+'.new';
+  fs.copyFileSync(command,replacement);fs.renameSync(replacement,command);
+  assert.equal((await f.request('/status')).task_capabilities.autonomous_work_allowed,false);
+  const until=Date.now()+3000;
+  while(!(await f.request('/status')).task_capabilities.autonomous_work_allowed&&Date.now()<until)await new Promise(resolve=>setTimeout(resolve,10));
+  assert.equal((await f.request('/status')).task_capabilities.autonomous_work_allowed,true);
+  assert.equal(JSON.stringify(f.history.data),saved,'helper replacement cannot change assignment or consume input');
+  const start=await f.request('/turn',{continuation:true,renewable_lease:true}),taskId=accepted.task_id;
   const before=JSON.stringify(f.history.task());
   for(let i=0;i<90;i++){f.advance(30000);await f.request('/turn/renew',{lease_id:start.action_lease.lease_id,task_id:taskId});}
   assert.equal(JSON.stringify(f.history.task()),before);assert.equal(f.history.task().turns,1);
