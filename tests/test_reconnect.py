@@ -49,6 +49,8 @@ class Reconnect(unittest.IsolatedAsyncioTestCase):
                 return {'turn_active': active, 'busy': False, 'task': dict(task), 'action_lease': {'version': 1, 'renewable': False}}
             if path == '/continuation':
                 return {'action': 'continue'}
+            if path == '/conversation/admission':
+                return {'version':1,'remaining':12,'eligible_ids':[m['id'] for m in messages]}
             if path == '/inbox/peek':
                 return messages[:1]
             if path == '/participation':
@@ -62,7 +64,7 @@ class Reconnect(unittest.IsolatedAsyncioTestCase):
                 messages.pop(0)
                 active = True
                 reserved += 1
-                task['turns'] += 1
+                if not payload.get('conversation_only'):task['turns'] += 1
                 return {}
             if path == '/finish':
                 active = False
@@ -156,12 +158,12 @@ class Reconnect(unittest.IsolatedAsyncioTestCase):
                                   'initialize', 'session/load', '_amplifier/attention', 'session/prompt'])
         self.assertEqual(len(result['attention_posts']), 1)
         self.assertEqual(result['reserved'], 2)
-        self.assertEqual(len(result['calls']), 2)
+        self.assertEqual(len(result['calls']), 1)
         self.assertTrue(all(not r['error'] for r in result['finishes']))
         self.assertEqual(result['frames'][-1]['session'], 'durable-session')
         self.assertEqual(result['frames'][-1]['meta']['com.microsoft.amplifier.attention'],
                          {'id': 'offer', 'ticket': 'fixture-ticket'})
-        self.assertEqual(result['task']['turns'], 14)
+        self.assertEqual(result['task']['turns'], 13)
         self.assertEqual(result['task']['max_turns'], 45)
 
     async def test_failed_reload_before_attention_preserves_candidate_and_budget(self):

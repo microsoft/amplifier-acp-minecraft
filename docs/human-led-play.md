@@ -33,6 +33,24 @@ no new scope, allowance or authority. Private replies retain their audience even
 if they use existing work authority. The controller records promoted work in
 `calls.json` as well as the original human-reply attempt.
 
+## Continuation and interruption
+
+An optional peer, activity or attention delivery uses a separate conversation turn,
+including plain ACP peer delivery. Its rejection
+or transport failure does not consume a construction turn or interrupt the
+existing assignment. Unavailable optional delivery stays queued until its own
+expiry; it cannot prevent separately authorized work from continuing. Tickets
+are never stripped or retried as ordinary input.
+
+With `automatic_recovery` enabled, the controller can inspect recovery evidence
+while world effects remain closed. The existing helper and receipt checks must
+approve before the same assignment resumes. Pending or uncertain effects,
+explicit Stop, exhausted human limits, missing helper support and exhausted
+recovery attempts still prevent automatic resumption. Recovery retains task
+identity, source authority and spent counts; it does not extend work or replay
+an earlier action. The adapter never treats an arbitrary ACP error code as proof
+that no input was forwarded.
+
 ## Continuous action plans
 
 `action_sequence` accepts an agent-selected ordered list of up to sixteen

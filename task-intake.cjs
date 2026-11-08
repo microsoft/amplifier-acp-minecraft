@@ -26,6 +26,18 @@ class TaskIntake {
   return !(task.progress||[]).some(p=>['operator_recovery','receipt_reconciliation'].includes(p.kind)&&Date.parse(p.at)>=Date.parse(turn.started_at));
  }
  runnable(){const t=this.history.task();return !!(this.enabled()&&t?.authority?.kind==='human_game_request'&&['running','waiting'].includes(t.status)&&(!t.bounds||this.completionSupported())&&bounds.within(t,{now:this.now(),currentTurn:this.history.data.turn?.task_id===t.id}));}
+ recoveryReviewAllowed(){
+  const task=this.history.task();
+  if(!bounds.valid(task)||task?.status!=='needs_review')return false;
+  const facts=this.history.recoveryFacts();
+  let policyValid=true;try{this.limits();}catch{policyValid=false;}
+  // Inspection eligibility is not effect authority. Only the existing bounded
+  // settled-receipt recovery path may reopen this same assignment.
+  return !!(policyValid&&this.cfg.automatic_recovery&&task?.status==='needs_review'&&
+   (this.enabled()?task.authority?.kind==='human_game_request':this.cfg.incoming_chat_only!==true)&&
+   (!task.bounds||this.completionSupported())&&bounds.within(task,{now:this.now(),minimumMs:120000})&&
+   facts.receipts_complete&&facts.actions_succeeded&&facts.recovery_attempts<2);
+ }
  capabilities(){
   const enabled=this.enabled();let limits=null,policy_error=null;try{limits=this.limits();}catch(e){policy_error=e.message;}
   const configured_chat_only=this.cfg.incoming_chat_only===true,conversation_only=this.history.data.turn?.conversation_only===true,task=this.history.task();
@@ -36,7 +48,7 @@ class TaskIntake {
   const reply_work_allowed=replyWork.available(this.history.data.turn,task,!policy_error&&!this.requiresReview(task)&&(enabled?this.runnable():!configured_chat_only));
   return {version:1,reply_work_allowed,mode:enabled?'human_requests':configured_chat_only?'chat_only':'legacy_work',
    configured_chat_only,conversation_only,task_intake_enabled:enabled&&!policy_error,
-   can_accept,can_amend:!!can_amend,work_blocked_reason,
+   can_accept,can_amend:!!can_amend,work_blocked_reason,recovery_review_allowed:this.recoveryReviewAllowed(),
    can_delegate_execution:false,can_accept_help:enabled&&delegation.enabled(this.cfg)&&can_accept,delegation_reason:'A helper may independently accept a fresh locally verified human authorization and peer proposal when enabled. Aggregate budgets and further delegation are unavailable.',
    delegation_sources:delegation.humans(this.history,this.cfg,this.now()).map(e=>({id:e.id,username:e.username,message:e.message,time:e.time})),
    autonomous_work_allowed:enabled?(!policy_error&&this.runnable()):!configured_chat_only,
