@@ -6,6 +6,10 @@ def select_turn_messages(messages):
     return [message for message in messages if message.get('attention_offer') == offer]
 
 
+def optional_reply(messages):
+    return bool(messages.get("attention_offer") or messages.get("source") in ("agent", "activity"))
+
+
 def attention_reply_messages(messages, eligible_ids):
     """Optional delivery never reserves an autonomous work turn.
 
@@ -13,7 +17,7 @@ def attention_reply_messages(messages, eligible_ids):
     the controller may continue separately authorized work without that offer.
     No ticket is stripped, claimed again, or treated as fulfilled.
     """
-    if not any(message.get('attention_offer') for message in messages):
+    if not any(optional_reply(message) for message in messages):
         return None
     eligible = set(eligible_ids)
     return messages if all(message.get('id') in eligible for message in messages) else []

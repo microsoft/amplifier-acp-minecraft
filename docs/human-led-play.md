@@ -35,7 +35,8 @@ if they use existing work authority. The controller records promoted work in
 
 ## Continuation and interruption
 
-An optional attention delivery uses a separate conversation turn. Its rejection
+An optional peer, activity or attention delivery uses a separate conversation turn,
+including plain ACP peer delivery. Its rejection
 or transport failure does not consume a construction turn or interrupt the
 existing assignment. Unavailable optional delivery stays queued until its own
 expiry; it cannot prevent separately authorized work from continuing. Tickets

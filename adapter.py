@@ -330,9 +330,9 @@ async def run(home):
                 await asyncio.sleep(0 if (cfg.get('human_engagement') or {}).get('enabled') is True else 3)
                 newer=await request('/inbox/peek')
                 if newer:messages=newer
-            from delivery_queue import select_turn_messages, attention_reply_messages
+            from delivery_queue import select_turn_messages, attention_reply_messages, optional_reply
             messages=select_turn_messages(messages)
-            admission=await request('/conversation/admission') if any(m.get('attention_offer') for m in messages) else {}
+            admission=await request('/conversation/admission') if any(optional_reply(m) for m in messages) else {}
             optional=attention_reply_messages(messages,admission.get('eligible_ids',[]))
             if optional is not None:
                 if optional:

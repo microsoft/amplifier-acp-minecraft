@@ -5,7 +5,7 @@ from unittest.mock import patch
 import adapter
 
 class RecoveryScheduling(unittest.IsolatedAsyncioTestCase):
- async def exercise(self, optional_offer=False):
+ async def exercise(self, optional_offer=False, plain_peer=False):
   recovered=optional_offer;paths=[];reservations=[]
   def control(cfg,path,payload=None):
    nonlocal recovered
@@ -14,7 +14,7 @@ class RecoveryScheduling(unittest.IsolatedAsyncioTestCase):
    if path=='/state':return {'ready':True,'generation':1,'task':{'id':'same','status':'running' if recovered else 'needs_review'},'task_capabilities':{'autonomous_work_allowed':recovered,'recovery_review_allowed':not recovered}}
    if path=='/continuation':recovered=True;return {'action':'inspect_then_continue'}
    if path=='/conversation/admission':return {'version':1,'unmetered':True,'eligible_ids':[]}
-   if path=='/inbox/peek':return [{'id':'peer','source':'agent','attention_offer':{'id':'offered','ticket':'unchanged'}}] if optional_offer else []
+   if path=='/inbox/peek':return [{'id':'peer','source':'agent',**({} if plain_peer else {'attention_offer':{'id':'offered','ticket':'unchanged'}})}] if optional_offer else []
    if path=='/turn':reservations.append(payload);raise asyncio.CancelledError()
    raise AssertionError(path)
   class Client:
@@ -41,3 +41,6 @@ class RecoveryScheduling(unittest.IsolatedAsyncioTestCase):
 
  async def test_ineligible_optional_offer_does_not_block_or_enter_task_prompt(self):
   await self.exercise(optional_offer=True)
+
+ async def test_plain_acp_peer_notice_also_stays_out_of_task_reservation(self):
+  await self.exercise(optional_offer=True,plain_peer=True)

@@ -533,7 +533,7 @@ const server=http.createServer(async(req,res)=>{
       if(!workAllowed()&&a.conversation_only!==true)throw Error('Current mode/task requires a bounded human reply; no autonomous authority');
       const ids=a.message_ids||[];
       if(!Array.isArray(ids)||ids.length>8||new Set(ids).size!==ids.length||ids.some(id=>!inbox.some(m=>m.id===id)))throw Error('Queued request changed before turn start');
-      if(a.conversation_only!==true&&ids.some(id=>inbox.find(m=>m.id===id)?.attention_offer))throw Error('Attention deliveries require a separate conversation turn');
+      if(a.conversation_only!==true&&ids.some(id=>{const m=inbox.find(m=>m.id===id);return m?.attention_offer||['agent','activity'].includes(m?.source);}))throw Error('Optional deliveries require a separate conversation turn');
       if(a.conversation_only===true){
        replyAdmission.start(ids,inbox);replyWork.bind(history,cfg,workAllowed()&&!taskIntake.requiresReview(history.task()));stop();turnUntil=Date.now()+240000;
        leaseTimer=setTimeout(()=>{stop();record('conversation_window_expired');},240000);leaseTimer.unref?.();
