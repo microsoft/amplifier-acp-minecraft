@@ -38,7 +38,9 @@ class ContinuityError(RuntimeError):
 # Source observations can arrive while game admission is closed. These fields
 # confer no execution authority. Pending inbox/participation inputs may append,
 # but existing entries must not disappear or be edited during the cutover.
-OBSERVATIONS = {'events', 'inbox', 'participation_pending', 'activity_pending', 'activity_tracks'}
+# Public history is a bounded retrieval cache of the same public events, not
+# an input queue or work grant. Task sources and work_resumptions remain protected.
+OBSERVATIONS = {'events', 'public_conversation_history', 'inbox', 'participation_pending', 'activity_pending', 'activity_tracks'}
 
 
 def digest(value):

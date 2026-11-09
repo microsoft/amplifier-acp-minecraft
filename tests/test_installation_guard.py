@@ -96,6 +96,32 @@ class InstallationGuardTests(unittest.TestCase):
         continuity(before, self.snap())
         self.assertEqual(len(json.loads((self.home/'workshop.json').read_text())['events']), 1)
 
+    def test_public_history_cache_initialization_and_retention_are_observations(self):
+        before = self.snap()
+        self.history['public_conversation_history'] = [{'id':'old-chat','kind':'chat','text':'original'}]
+        self.write()
+        continuity(before, self.snap(), body_restart=True)
+        before = self.snap()
+        self.history['public_conversation_history'] = [{'id':'new-chat','kind':'chat','text':'new'}]
+        self.write()
+        continuity(before, self.snap(), body_restart=True)
+        self.assertEqual(json.loads((self.home/'workshop.json').read_text()), self.history)
+
+    def test_public_history_does_not_hide_task_receipt_or_pending_input_changes(self):
+        before = self.snap()
+        for key, value in [('work_resumptions',[{'request_id':'new-authority'}]),
+                           ('task', {**self.history['task'],'turns':0}),
+                           ('unknown_receipts',[])]:
+            saved = copy.deepcopy(self.history)
+            self.history['public_conversation_history'] = [{'id':'chat'}]
+            self.history[key] = value
+            self.body['task'] = copy.deepcopy(self.history['task'])
+            self.write()
+            with self.assertRaises(ContinuityError):continuity(before,self.snap(),body_restart=True)
+            self.history = saved
+            self.body['task'] = copy.deepcopy(self.history['task'])
+            self.write()
+
     def test_new_or_changed_accounting_file_is_detected(self):
         before = self.snap()
         (self.home/'new-accounting.json').write_text('{}')
