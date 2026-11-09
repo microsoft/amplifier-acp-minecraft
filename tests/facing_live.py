@@ -71,6 +71,14 @@ def main():
                         assert 'Test passed' in confirmation, confirmation
                         report['checks'].append({'item': item, 'facing': facing, 'result': result,
                                                  'independent_server_confirmation': confirmation})
+                control(cfg, '/finish', {}); control(cfg, '/turn', {})
+                r('setblock 2 81 1 air'); r('give FacingTester redstone 2'); time.sleep(.2)
+                result = act('place', x=2, y=81, z=1, item='redstone', support_face='up')
+                assert result['verified'] and result['actual'] == 'redstone_wire', result
+                confirmation = r('execute if block 2 81 1 minecraft:redstone_wire[power=0]')
+                assert 'Test passed' in confirmation, confirmation
+                report['checks'].append({'item': 'redstone', 'result': result,
+                                         'independent_server_confirmation': confirmation})
                 for name in ['stone_button','lever']:
                     control(cfg, '/finish', {}); control(cfg, '/turn', {})
                     r(f'setblock 2 81 1 {name}[face=floor,powered=false]'); time.sleep(.2)

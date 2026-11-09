@@ -88,3 +88,16 @@ test('partial build retains failed coordinates, occupancy hints and authority wi
   assert.equal(f.history.data.events.at(-1).result.repair.code,'placement_unconfirmed');
  }finally{f.close();}
 });
+
+
+test('redstone item verifies its placed wire block without accepting missing or different blocks',async()=>{
+ for(const actual of ['redstone_wire','air','stone']){
+  const f=fixture('redstone',{power:0},actual);try{
+   if(actual==='redstone_wire'){
+    const r=await f.run();assert.equal(r.verified,true);assert.equal(r.actual,'redstone_wire');assert.equal(r.properties.power,0);
+    assert.equal(f.history.data.turn.actions[0].status,'succeeded');
+   }else await assert.rejects(f.run(),/Placement mismatch/);
+   assert.equal(f.observation().sends,1);
+  }finally{f.close();}
+ }
+});
