@@ -10,7 +10,7 @@ p.add_argument('--directory',type=Path,required=True,help='Prefer screenshots/mi
 p.add_argument('--browser-path',type=Path)
 p.add_argument('--node',type=Path,default=shutil.which('node'))
 p.add_argument('--app',type=Path,default=Path(__file__).resolve().parents[1],help='Installed adapter source with locked dependencies')
-a=p.parse_args();config=json.loads(a.config.read_text());directory=a.directory.expanduser().resolve()
+a=p.parse_args();original_config=a.config.read_bytes();config=json.loads(original_config);directory=a.directory.expanduser().resolve()
 if not a.node:p.error('Node executable is required')
 app=a.app.resolve(strict=True);node=a.node.resolve(strict=True)
 browser=a.browser_path or (config.get('screenshots') or {}).get('browser_path')
@@ -19,6 +19,7 @@ command=[str(node),str(app/'screenshot-browser.cjs'),'prepare']
 if browser:command+=['--browser-path',str(browser)]
 # Fail before writing config if browser installation, launch or graphics fail.
 subprocess.run(command,cwd=app,check=True,timeout=360)
+if a.config.read_bytes()!=original_config:raise SystemExit('Configuration changed during browser setup; inspect and rerun without overwriting it')
 directory.mkdir(parents=True,exist_ok=True,mode=0o700)
 config['screenshots']={'enabled':True,'directory':str(directory)}
 if browser:config['screenshots']['browser_path']=str(browser)
