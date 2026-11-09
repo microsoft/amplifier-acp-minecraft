@@ -205,3 +205,50 @@ class SourceMarkerTests(unittest.TestCase):
         self.provider.rollback(self.envelope,self.tx)
 
 if __name__=='__main__':unittest.main()
+
+class ScreenshotBrowserTests(unittest.TestCase):
+    setUp=SourceProviderTests.setUp
+    def test_disabled_screenshots_do_not_prepare_browser(self):
+        with patch('installation_source_provider.run') as call:
+            self.provider.screenshot_browser(self.home/'app',prepare=True)
+        call.assert_not_called()
+    def test_enabled_browser_is_provisioned_and_checked_with_current_policy(self):
+        durable_write(self.home/'config.json',{'screenshots':{'enabled':True}})
+        with patch('installation_source_provider.run') as call:
+            self.provider.screenshot_browser(self.home/'app',prepare=True)
+            self.assertEqual(call.call_args.args[0], [self.cfg['node'],str(self.home/'app/screenshot-browser.cjs'),'prepare'])
+            self.provider.screenshot_browser(self.home/'app')
+            self.assertEqual(call.call_args.args[0][-1],'check')
+        self.assertEqual(self.provider.build_inputs()['screenshot_browser'],{'enabled':True,'browser_path':None})
+    def test_custom_browser_policy_is_exact_and_failure_prevents_candidate(self):
+        durable_write(self.home/'config.json',{'screenshots':{'enabled':True,'browser_path':'/owner/chromium'}})
+        with patch('installation_source_provider.run',side_effect=RuntimeError('launch failed')):
+            with self.assertRaisesRegex(RuntimeError,'launch failed'):
+                self.provider.screenshot_browser(self.home/'app',prepare=True)
+        durable_write(self.home/'config.json',{'screenshots':{'enabled':True,'browser_path':'relative'}})
+        with self.assertRaises(ContinuityError):self.provider.build_inputs()
+    def test_changed_browser_policy_blocks_frozen_apply_before_swap(self):
+        durable_write(self.home/'config.json',{'screenshots':{'enabled':True}})
+        with self.assertRaisesRegex(ContinuityError,'policy changed'):
+            self.provider.frozen(self.envelope)
+        self.assertFalse((self.home/'app').is_symlink())
+    def test_real_build_checks_browser_after_assets_and_before_candidate_use(self):
+        import tarfile
+        durable_write(self.home/'config.json',{'screenshots':{'enabled':True}})
+        archive=io.BytesIO()
+        with tarfile.open(fileobj=archive,mode='w') as tar:
+            value=f'agent-client-protocol @ git+{SDK_URL}@{SDK}\n'.encode()
+            info=tarfile.TarInfo('requirements.txt');info.size=len(value);tar.addfile(info,io.BytesIO(value))
+        calls=[]
+        def command(argv,**kwargs):
+            calls.append(argv)
+            if 'archive' in argv:return archive.getvalue()
+            if '--version' in argv:return 'v22.23.2'
+            if any(str(x).endswith('screenshot-browser.cjs') for x in argv):raise RuntimeError('browser unavailable')
+            return b''
+        with patch('installation_source_provider.run',side_effect=command),patch('installation_source_provider.subprocess.run') as git:
+            git.return_value.returncode=0
+            with self.assertRaisesRegex(RuntimeError,'browser unavailable'):
+                Provider.build(self.provider,'b'*40,'a'*40,self.root/'new-stage')
+        self.assertTrue(any('build:screenshots' in argv for argv in calls))
+        self.assertFalse(any('venv' in argv for argv in calls));self.assertFalse((self.home/'app').is_symlink())

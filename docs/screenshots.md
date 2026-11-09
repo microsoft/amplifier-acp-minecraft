@@ -16,17 +16,31 @@ In that player's adapter checkout/application folder (Node 22 or newer):
 ```sh
 npm ci --ignore-scripts
 npm run build:screenshots
-PLAYWRIGHT_SKIP_BROWSER_GC=1 npx playwright install chromium
 python3 ops/enable_screenshots.py \
   --config /path/to/player/config.json \
   --directory /path/to/agent/workspace/screenshots/minecraft
 ```
+
+The enable helper installs the exact locked Playwright headless browser and checks
+that it can launch with WebGL2 before saving the configuration. It disables
+Playwright cache garbage collection to preserve other installations. Use `--node`
+and `--app` when the owner-installed Node or application is elsewhere. It never
+installs operating-system packages automatically.
 
 Linux hosts may need Chromium system libraries (`npx playwright install-deps
 chromium`, with administrator assistance). `--browser-path` selects an already
 installed Chromium executable. Each player can have its own application and
 storage. No shared service is required. Install without optional packages if
 screenshots are not wanted; they are disabled unless explicitly enabled.
+
+Source updates for screenshot-enabled installations prepare and check the staged
+version’s matching browser before cutover. Cached stages are checked again, and
+a changed browser policy invalidates the stage. Disabled installations do not
+download a browser; an explicit `--browser-path` is checked without replacing it.
+Refresh the fixed owner source-provider helper when adopting this behavior;
+updating application files alone does not replace installation-owned helpers.
+For a non-mutating readiness check, run `node screenshot-browser.cjs check` in
+the installed app, adding `--browser-path` if configured.
 
 Restart the body only when its controller has no active turn or action. Preserve
 `workshop.json`, endpoint/session files, task deadlines and budgets. Reconnect the
