@@ -23,6 +23,9 @@ class BlockControls {
   check();const block=bot.blockAt(p),button=block?.name.endsWith('_button'),lever=block?.name==='lever';
   if(!button&&!lever)throw Error('Only ordinary buttons and levers are supported');
   if(p.distanceTo(bot.entity.position)>4)throw Error('Move within reach of the control first');
+  const eye=bot.entity.position.offset(0,bot.entity.eyeHeight||1.62,0),ray=p.offset(.5,.5,.5).minus(eye),distance=ray.norm();
+  const hit=distance?bot.world.raycast(eye,ray.scaled(1/distance),distance):null;
+  if(hit&&!hit.position.equals(p))throw Error('Control is obstructed; choose a clear reachable position');
   if(!args.block_revision||revision(block)!==args.block_revision)throw Error('Control changed; inspect again before acting');
   if(button&&(args.operation!=='press'||args.powered!==undefined)||lever&&(args.operation!=='set'||typeof args.powered!=='boolean'))throw Error('Press a button or set a lever to an explicit powered state');
   const powered=block.getProperties().powered;
