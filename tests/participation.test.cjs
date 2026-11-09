@@ -196,3 +196,72 @@ test('human-led peer delivery keeps backpressure pending across reload without a
   again.apply(pending,{signature:pending.signature,action:'hold'},[]);assert.equal(again.proposal([]),null);assert.equal(JSON.stringify(h.task()),task);
  }finally{f.close();}
 });
+
+test('older trigger retains recorded source order beside newer evidence',()=>{
+ const f=fixture();try{
+  const trigger=f.chat('@Builder Please inspect the east door.','Lead');
+  const correction=f.chat('@Builder [FYI] East door is now fixed.','Lead');
+  const r=f.p.proposal(['Lead','Builder']);
+  assert.deepEqual(r.context.messages.map(m=>m.id),[trigger.id,correction.id]);
+  assert.equal(r.context.trigger_id,trigger.id);assert.deepEqual(r.ids,[trigger.id]);
+  assert.equal(r.occurred_at,Date.parse(trigger.time));
+  assert.equal(r.context.messages[0].text,trigger.message);
+ }finally{f.close();}
+});
+test('trigger outside recent window stays first, bounded, and immutable across cached restart',()=>{
+ const f=fixture();try{
+  const all=Array.from({length:30},(_,i)=>f.chat('Evidence '+i));
+  const r=f.p.proposal([]);
+  assert.deepEqual(r.context.messages.map(m=>m.id),[all[0],...all.slice(-23)].map(e=>e.id));
+  assert.equal(r.context.trigger_id,all[0].id);
+  const restored=new WorkshopState(f.history.file),p=new Participation(restored,f.p.cfg);
+  assert.deepEqual(p.proposal([]),r);
+  f.chat('Later change');assert.deepEqual(f.p.proposal([]),r);
+ }finally{f.close();}
+});
+test('visible first address is projected without intent, authority, text rewrite or reply linkage',()=>{
+ const f=fixture();try{
+  const e=f.chat('@lead [FYI] Builder already inspected this.','Visitor');
+  const r=f.p.proposal(['Lead']);const m=r.context.messages[0];
+  assert.deepEqual(m.recipients,['Lead']);assert.equal(m.text,e.message);
+  assert.equal(m.intent,undefined);assert.equal(m.reply_to,undefined);
+  assert.equal(m.authority,undefined);assert.equal(e.accepted,false);assert.equal(f.inbox.length,0);
+ }finally{f.close();}
+});
+test('quoted, later, unmarked and broadcast addressees are not inferred',()=>{
+ for(const text of ['"@Builder help" was quoted','Lead says @Builder help','Builder, please help','Everyone please help',' @Builder leading space']){
+  const f=fixture();try{
+   f.chat(text);const m=f.p.proposal([]).context.messages[0];
+   assert.deepEqual(m.recipients,[]);assert.equal(m.text,text);
+  }finally{f.close();}
+ }
+});
+test('FYI ACK and unmarked tell syntax preserve only visible recipient',()=>{
+ for(const text of ['@Builder [FYI] News','@Builder [ACK] Thanks','@Builder Please inspect']){
+  const f=fixture();try{
+   f.chat(text,'Lead');const m=f.p.proposal([]).context.messages[0];
+   assert.deepEqual(m.recipients,['Builder']);assert.equal(m.intent,undefined);assert.equal(m.text,text);
+  }finally{f.close();}
+ }
+});
+test('separate speech packets remain separate sources without inferred completion',()=>{
+ const f=fixture();try{
+  const a=f.chat('@Builder First packet.','Lead'),b=f.chat('@Builder Next packet.','Lead');
+  const r=f.p.proposal([]);assert.deepEqual(r.ids,[a.id]);
+  assert.deepEqual(r.context.messages.map(m=>m.id),[a.id,b.id]);
+  assert.ok(r.context.messages.every(m=>m.complete===undefined&&m.operation_id===undefined));
+  f.p.apply(r,{signature:r.signature,action:'hold'},f.inbox);
+  assert.deepEqual(f.p.proposal([]).ids,[b.id]);
+ }finally{f.close();}
+});
+test('already frozen legacy proposal is returned unchanged without retroactive projection',()=>{
+ const f=fixture();try{
+  f.chat('@Builder inspect','Lead');f.chat('Newer evidence');
+  const old=f.p.proposal([]);old.context.messages.reverse();
+  for(const m of old.context.messages)delete m.recipients;
+  old.signature='previously-frozen-signature';
+  f.history.data.participation_proposals[old.context.trigger_id]=old;f.history.save();
+  const restored=new WorkshopState(f.history.file),p=new Participation(restored,f.p.cfg);
+  assert.deepEqual(p.proposal([]),old);
+ }finally{f.close();}
+});
