@@ -55,3 +55,16 @@ test('a fresh human can amend scope without resetting spent work or replacing or
  assert.equal(f.h.task().status,'running');assert.equal(f.h.task().goal,args.goal);
  const loaded=new WorkshopState(f.h.file),i=new TaskIntake(loaded,f.cfg);assert.equal(i.amend(args).duplicate,true);assert.equal(loaded.task().authority_revision,2);
 });
+test('original accepted human lead authorization remains usable after intake expiry and event eviction, only for that live assignment',t=>{
+ const f=fixture(t),now=Date.now();f.h.data.task=null;
+ const root=f.event('human','Finish the shop. Lead is in charge. Use the crew.',now-1);
+ f.i.now=()=>now;f.h.data.turn.request_ids=[root.id];f.h.data.turn.peer_proposal=false;
+ f.i.accept({request_id:root.id,goal:'Finish the shop'});const original=structuredClone(f.h.task().authority.source);
+ f.h.task().turns=8;f.h.task().status='waiting';f.i.now=()=>now+1200000;
+ const peer=f.event('agent','Please complete the signs',now+1200000);
+ f.h.data.events=[peer];f.h.data.public_conversation_history=[];f.h.data.turn.request_ids=[peer.id];f.h.data.turn.peer_proposal=true;
+ assert.ok(f.i.capabilities().delegation_sources.some(e=>e.id===root.id));
+ const args={...f.help,request_id:root.id,peer_request_id:peer.id,expected_task_id:f.h.task().id};
+ f.i.acceptHelp(args);assert.deepEqual(f.h.task().coordination[0].source,original);assert.equal(f.h.task().turns,8);
+ f.h.task().status='stopped';assert.equal(f.i.capabilities().delegation_sources.some(e=>e.id===root.id),false);
+});

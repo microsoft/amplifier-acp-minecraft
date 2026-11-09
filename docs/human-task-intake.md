@@ -90,7 +90,7 @@ responsibility to a current active assignment using `expected_task_id` and
 `expected_revision`. Original goal, identity, spent work and limits remain;
 the new responsibility retains both human authorization and peer proposal.
 This path takes no `seconds` or `max_turns`. Locally verified public human
-instructions recorded during that same assignment remain usable for its
+instructions in the original accepted request or recorded during that same assignment remain usable for its
 coordination, including a human appointing a lead and asking it to use the crew.
 They cannot create a new assignment after expiry. New independent assignments
 still require fresh authority. The model interprets the human's scope; a peer

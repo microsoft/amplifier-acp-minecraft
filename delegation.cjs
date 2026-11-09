@@ -10,7 +10,15 @@ function humans(history,cfg,now,{existing=false}={}){
  const task=history.task(),start=Date.parse(task?.started_at);
  const retained=existing&&task?.authority?.kind==='human_game_request'&&['running','waiting'].includes(task.status)&&Number.isFinite(start);
  const events=[...new Map([...(retained?history.data.public_conversation_history||[]:[]),...history.data.events].map(e=>[e.id,e])).values()];
- return events.filter(e=>e.source==='human'&&publicSource(e,now,history.data.task_source_cutoff||0,retained?null:600000)&&(!retained||Date.parse(e.time)>=start)).slice(-32);
+ const result=events.filter(e=>e.source==='human'&&publicSource(e,now,history.data.task_source_cutoff||0,retained?null:600000)&&(!retained||Date.parse(e.time)>=start)).slice(-16);
+ // Acceptance follows its original request. Retain that exact authority even
+ // when its public event has aged out; unrelated pre-assignment chat is not a grant.
+ const s=task?.authority?.source;
+ if(retained&&s?.actor?.kind==='human'&&s.audience?.kind==='public'&&s.audience.experience==='minecraft'&&s.evidence_origin==='server_player_uuid'){
+  const original={id:s.id,kind:'chat',source:'human',username:s.username,message:s.message,time:s.time,transport:s.transport,provenance:'minecraft_public_chat',accepted:true,accepted_task_source:s};
+  if(publicSource(original,now,history.data.task_source_cutoff||0,null)&&!result.some(e=>e.id===s.id))result.unshift(original);
+ }
+ return result;
 }
 function peer(history,cfg,message,now){
  const e=history.data.events.find(e=>e.id===message.id);

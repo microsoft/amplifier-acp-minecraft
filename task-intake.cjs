@@ -114,7 +114,7 @@ class TaskIntake {
   if((this.history.data.accepted_delegation_sources||[]).includes(peer.id))throw Error('Peer proposal already consumed');
   if(args.budget_scope!=='independent_per_agent'||typeof args.authorization_quote!=='string'||args.authorization_quote.length<8||args.authorization_quote.length>600||!root.message.includes(args.authorization_quote))throw Error('Quote the original explicit helper authorization and use independently authorized per-agent limits; aggregate allocation is unsupported');
   const original={id:root.id,actor:{kind:'human',name:root.username,server_player_uuid:root.transport.uuid},audience:{kind:'public',experience:'minecraft'},message:root.message,time:root.time};
-  const source={...original,username:root.username,revision:digest(original),source_hash:digest(root),transport:root.transport,evidence_origin:'server_player_uuid'};
+  const source=root.accepted_task_source?structuredClone(root.accepted_task_source):{...original,username:root.username,revision:digest(original),source_hash:digest(root),transport:root.transport,evidence_origin:'server_player_uuid'};
   const help={source,peer:{id:peer.id,name:peer.username,transport:peer.transport,time:peer.time,message:peer.message,source_hash:digest(peer)},authorization_quote:args.authorization_quote,budget_scope:args.budget_scope,may_delegate_further:false};
   if(operation==='accept_help')return this.accept(args,help);
   const task=structuredClone(this.history.task());
