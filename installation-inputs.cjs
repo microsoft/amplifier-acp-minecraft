@@ -21,7 +21,7 @@ function callers(cfg){
  const list=cfg.installation_callers??[];
  if(!Array.isArray(list)||list.length>16)throw Error('Invalid installation caller enrollment');
  const ids=new Set(),secrets=new Set([cfg.token,cfg.context_token,cfg.presence_token].filter(Boolean));
- for(const c of list){object(c,['id','label','token']);text(c.id,80);text(c.label,160);if(!/^[a-zA-Z0-9_.-]+$/.test(c.id)||typeof c.token!=='string'||c.token.length<32||c.token.length>256||ids.has(c.id)||secrets.has(c.token))throw Error('Caller identity and dedicated secret must be unique');ids.add(c.id);secrets.add(c.token);}
+ for(const c of list){object(c,['id','label','token']);text(c.id,80);text(c.label,160);if(!/^[a-zA-Z0-9_.-]+$/.test(c.id)||typeof c.token!=='string'||!/^[A-Za-z0-9_-]{32,256}$/.test(c.token)||ids.has(c.id)||secrets.has(c.token))throw Error('Caller identity and dedicated secret must be unique');ids.add(c.id);secrets.add(c.token);}
  return list;
 }
 function authenticate(list,authorization){return list.find(c=>equal(authorization,`Bearer ${c.token}`))||null;}

@@ -500,7 +500,7 @@ const server=http.createServer(async(req,res)=>{
   const secret=caller?caller.token:contextRequest?cfg.context_token:cfg.token;
   if(!secret){res.writeHead(403);return res.end();}
   const expected=`Bearer ${secret}`;
-  if(auth.length!==expected.length||!crypto.timingSafeEqual(Buffer.from(auth),Buffer.from(expected))){res.writeHead(401);return res.end();}
+  if(Buffer.byteLength(auth)!==Buffer.byteLength(expected)||!crypto.timingSafeEqual(Buffer.from(auth),Buffer.from(expected))){res.writeHead(401);return res.end();}
   if(req.headers.origin){res.writeHead(403);return res.end();}
   try{
     if(caller){

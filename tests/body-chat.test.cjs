@@ -498,7 +498,7 @@ test('scoped installation token reaches only idempotent original input and exact
  const caller={id:'fixture-voice',label:'Fixture voice',token:'v'.repeat(40)},f=fixture('BuilderOne',false,{installation_callers:[caller]});
  const body={text:'Original human words',source:{version:1,request_id:'87ca622b-3360-4694-a8c6-f0ebd4c522e7',call_id:'call1',intent_id:'intent1',revision:'1',occurred_at:new Date().toISOString(),actor:{id:'fixture-user',label:'Fixture user'},audience:{kind:'private',experience:'companion',id:'fixture-audience'}}};
  try{
-  const baseline=JSON.stringify(f.history.task());const caps=await f.request('/source-capabilities',undefined,200,caller.token);assert.equal(caps.version,1);assert.equal(caps.outcomes.method,'POST');
+  const baseline=JSON.stringify(f.history.task());await f.request('/source-capabilities',undefined,401,'é'.repeat(7));const caps=await f.request('/source-capabilities',undefined,200,caller.token);assert.equal(caps.version,1);assert.equal(caps.outcomes.method,'POST');
   const first=await f.request('/task',body,200,caller.token),again=await f.request('/task',body,200,caller.token);assert.equal(first.request_id,again.request_id);assert.equal(again.duplicate,true);assert.equal(f.inbox.length,1);
   const read=await f.request('/source-outcomes',{version:1,requests:[{request_id:first.request_id,source:body.source}]},200,caller.token);assert.equal(read.outcomes[0].delivery,'queued');assert.equal(read.outcomes[0].source.actor.id,'fixture-user');
   for(const route of ['/action','/stop','/inbox/drain','/mcp'])await f.request(route,{},403,caller.token);

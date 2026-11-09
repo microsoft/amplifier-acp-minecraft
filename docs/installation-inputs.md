@@ -7,7 +7,7 @@ or a Minecraft player identity. Legacy owner `/task` calls remain unchanged.
 
 Configure `installation_callers` in the private body configuration as an array
 of `{id,label,token}`. IDs and tokens must be unique; tokens must contain at
-least 32 characters and differ from the body, context and presence credentials.
+least 32 URL-safe alphanumeric, underscore or hyphen characters and differ from the body, context and presence credentials.
 Use a generated secret and installation-owned private distribution. This gives
 the caller human-input ingress, not maintenance, world tools or journal access.
 The caller must independently authorize the current human, agent and connection.
