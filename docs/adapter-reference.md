@@ -352,6 +352,17 @@ audience grant. Private owner conversations do not become visible to the game.
 The history is bounded and reports its coverage. Standard ACP does not itself
 merge conversations or authorize cross-surface retrieval.
 
+Context `list` is compact discovery, not a detailed read of every world. Items
+retain conversation identity, observation time, connected/busy/turn-active facts,
+and recorded task ID/status with current `limit_state`. Unobserved live facts
+remain `null`; recorded status is not proof of completion or the reason work
+stopped. Each item includes `read: {operation: "read", conversation_id: ...}`.
+Use that operation (Instance's `context_read`) on the selected conversation for
+details and evidence. Goals, progress, nested observations, authority records and
+position are omitted from discovery only. `read` and `orientation` retain their
+existing owner/grant projections; this does not expand shared access. Listing
+does not rewrite tasks, expire them, or change execution authority.
+
 Shared history uses explicit projections: public chat text, task/progress
 summaries, and action IDs, names, lifecycle stages and bounded outcome flags.
 It never serializes arbitrary local events. Tool arguments, returned payloads,
