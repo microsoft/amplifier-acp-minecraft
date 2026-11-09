@@ -44,10 +44,10 @@ class _Callbacks:
 __version__ = "0.1.0"
 
 # One source for both callback enforcement and the agent-visible policy.
-GAME_TOOLS = frozenset({'observe','survey','inspect','find','chat','tell','task_capabilities','move','follow','cancel_movement','action_sequence','cancel_sequence','start_sequence','sequence_status','gather','craft','place','build','give','stop','work_begin','work_report','work_reopen','map','plan_route','dig','set_open','activate_control','tell','work_note','inventory','entities','shear','furnace','container','attention_watch','attention_watches','attention_cancel','read_sign','write_sign','screenshot','screenshots','screenshot_read','conversation','till','task_accept','task_amend','task_accept_help','work_resume'})
+GAME_TOOLS = frozenset({'observe','survey','inspect','find','chat','tell','task_capabilities','move','follow','cancel_movement','action_sequence','cancel_sequence','start_sequence','sequence_status','gather','craft','place','build','give','stop','work_begin','work_report','work_reopen','map','plan_route','dig','set_open','activate_control','tell','work_note','inventory','entities','shear','furnace','container','attention_watch','attention_watches','attention_cancel','read_sign','write_sign','screenshot','screenshots','screenshot_read','conversation','till','task_accept','task_amend','task_accept_help','work_resume','resume_activity'})
 
 
-REPLY_TOOLS = frozenset({'observe','conversation','entities','inventory','inspect','read_sign','survey','map','plan_route','find','chat','tell','task_capabilities','sequence_status'})
+REPLY_TOOLS = frozenset({'observe','conversation','entities','inventory','inspect','read_sign','survey','map','plan_route','find','chat','tell','task_capabilities','sequence_status','resume_activity'})
 
 
 class ProtocolError(RuntimeError):
@@ -346,7 +346,7 @@ class Client:
         permission_text = (
             'Current adapter permission policy for this turn:\n' + json.dumps(permissions) + '\n'
             'An earlier adapter denial describes that earlier invocation, not a permanent restriction. '
-            'If this current policy explicitly covers an operation that is still needed for your accepted task, '
+            'If this current policy explicitly covers an operation that is still needed for your permitted activity, '
             'you may try it through the offered tool. Each invocation is checked again; a new denial or human Stop still applies. '
             'This snapshot does not prove the operation succeeded, resolve uncertain prior effects, '
             'grant access on another connection, or extend task scope/deadlines/budgets. '

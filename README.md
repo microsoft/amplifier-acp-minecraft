@@ -35,7 +35,7 @@ specialist references. Agents that cannot discover repository skills can read
   agent route private. Xbox/Bedrock needs Geyser; 26.60 LAN discovery and gameplay
   are separate checks. See [Xbox LAN setup](docs/xbox-lan.md).
 - **Authority:** installing a player or updating its code does not authorize
-  construction, renew work or replay an old request. Human task intake,
+  construction, renew work or replay an old request. Task-optional play, human task intake,
   responsiveness policies, delegation and scheduled updates are explicit choices.
 - **Evidence:** an active service is not proof of a working saved session, actual
   console login, or useful agent response. The guides distinguish these checks.

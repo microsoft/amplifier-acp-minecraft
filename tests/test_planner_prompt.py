@@ -44,3 +44,13 @@ class ExistingWorkPrompt(unittest.TestCase):
         self.assertIn('including movement',text)
         self.assertNotIn('No movement, building',text)
         self.assertIn('no new scope or limits',text)
+
+class TaskOptionalPrompt(unittest.TestCase):
+    def test_task_optional_prompt_does_not_restore_task_gate_and_fresh_input_is_last(self):
+        messages=[{'id':'current','source':'human','message':'Help with the path'}]
+        world={'conversation_only':True,'peer_proposal':True,'task_capabilities':{'task_optional':True},'task':{'status':'blocked'}}
+        text=planner_prompt(messages,world)
+        self.assertIn('without a task record',text)
+        self.assertNotIn('Only a human request authorizes continuing work',text)
+        self.assertNotIn('No physical effects until a subsequent authorized work turn',text)
+        self.assertGreater(text.index('"messages":'),text.index('"world":'))

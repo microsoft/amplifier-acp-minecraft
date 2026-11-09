@@ -67,6 +67,11 @@ async def deliver_final_reply(text, revision, request, observe, *, sleep=asyncio
             shortened=truncated,all_chunks_sent=sent==len(lines))
 
 
+def continuation_messages(state):
+    ordinary=state.get('task_capabilities',{}).get('activity_continuation')
+    return [{'source':'continuation','message':('Continue useful ordinary activity from your last settled progress report; inspect current facts and do not replay effects. Tasks are optional.' if ordinary else 'Continue the accepted game task. Inspect current world state and progress before acting.')}]
+
+
 def control(cfg, path, payload=None):
     req = urllib.request.Request(f"http://127.0.0.1:{cfg['control_port']}{path}",
         data=json.dumps(payload).encode() if payload is not None else None,
@@ -217,6 +222,8 @@ async def run(home):
         return client
 
     async def observe_attention(state):
+        if not state.get('task') or state.get('task_capabilities',{}).get('activity_continuation'):
+            return state
         watch_managed=False
         notifications=[]
         if watches:
@@ -314,9 +321,9 @@ async def run(home):
                 messages=await request('/inbox/peek')
             if not messages:
                 state=await observe_attention(state)
-                if (state.get('task') or {}).get('status')!='running':
+                if (state.get('task') or {}).get('status')!='running' and not state.get('task_capabilities',{}).get('activity_continuation'):
                     await asyncio.sleep(1);continue
-                messages=[{'source':'continuation','message':'Continue the accepted game task. Inspect current world state and progress before acting.'}]
+                messages=continuation_messages(state)
                 await asyncio.sleep(0 if (cfg.get('human_engagement') or {}).get('enabled') is True else 3)
                 newer=await request('/inbox/peek')
                 if newer:messages=newer
@@ -331,8 +338,8 @@ async def run(home):
                     # An unavailable social delivery cannot starve either
                     # ordinary work or its existing dependency-watch checks.
                     if work_allowed:state=await observe_attention(state)
-                    if work_allowed and (state.get('task') or {}).get('status')=='running':
-                        messages=[{'source':'continuation','message':'Continue the accepted game task. Inspect current world state and progress before acting.'}]
+                    if work_allowed and ((state.get('task') or {}).get('status')=='running' or state.get('task_capabilities',{}).get('activity_continuation')):
+                        messages=continuation_messages(state)
                         conversation_only=False
                     else:
                         await asyncio.sleep(2);continue
@@ -341,15 +348,15 @@ async def run(home):
             attention_offer=offers[0] if offers else None
             if offers and any(offer!=attention_offer for offer in offers):
                 raise RuntimeError('Mixed attention offers cannot share a turn')
-            await request('/turn',{'renewable_lease':not conversation_only,'conversation_only':conversation_only,'expected_generation':state.get('generation'),'continuation':all(m.get('source')=='continuation' for m in messages),'peer_only':all(m.get('source')=='agent' for m in messages),'message_ids':[m['id'] for m in messages if m.get('id')]})
+            await request('/turn',{'activity':bool(state.get('task_capabilities',{}).get('activity_continuation')),'renewable_lease':not conversation_only,'conversation_only':conversation_only,'expected_generation':state.get('generation'),'continuation':all(m.get('source')=='continuation' for m in messages),'peer_only':all(m.get('source')=='agent' for m in messages),'message_ids':[m['id'] for m in messages if m.get('id')]})
             turn_started=True
             state=await request('/state')  # The new turn resets action/time budgets.
             watch_notifications=[]
-            if watches and not conversation_only:
+            if watches and not conversation_only and not state.get('ordinary_activity'):
                 await watches.poll()
                 watch_notifications=await watches.pending()
             assessment=None
-            if assessment_enabled and not conversation_only:
+            if assessment_enabled and not conversation_only and not state.get('ordinary_activity'):
                 assessment=await attention.before_turn(state)
                 fresh=await request('/state')
                 if not fresh.get('turn_active') or fresh.get('generation')!=state.get('generation'):
@@ -433,7 +440,7 @@ async def run(home):
                     observe('final_reply_withheld',reason='public_context_not_exposed_or_incorporated')
                 else:
                     await deliver_final_reply(text,revision,request,observe,
-                        explicit_speech=bool(world.get('peer_proposal') or world.get('ambient_activity')))
+                        explicit_speech=bool(final_status.get('explicit_speech') or world.get('peer_proposal') or world.get('ambient_activity')))
             observe('turn_completed',stop_reason=result['stop_reason'],disposition=disposition,
                     unsettled_tool_count=len(result.get('unsettled_tools',[])))
             if watches and not conversation_only and disposition=='complete':
