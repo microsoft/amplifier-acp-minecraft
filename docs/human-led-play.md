@@ -159,8 +159,11 @@ and commits consumed source IDs with it. Retries/restarts return that outcome;
 they cannot create another allowance. Any finite helper deadline is anchored to the
 original human source time, never refreshed by a later peer handoff. Existing
 work, unresolved effects, Stop, installation ceilings and source expiry remain
-enforced. Original public sources must still be within the ten-minute intake
-window. Existing expired work is archived unchanged if new work is accepted.
+enforced. Original public sources for a new assignment must still be within the
+ten-minute intake window. Existing active assignments can incorporate proposals
+under retained human instructions from that assignment without resetting spent
+work or limits; see [task intake](human-task-intake.md#continuing-an-existing-assignment).
+Existing expired work is archived unchanged if new work is accepted.
 
 Peer-proposal replies retain ambient attention/routing gates and their own local
 reply bound (four per hour by default, configurable from one to twelve through

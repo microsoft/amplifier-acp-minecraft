@@ -4,7 +4,7 @@ const {ConversationAdmission}=require('./conversation-admission.cjs');
 const delegation=require('./delegation.cjs');
 const bounds=require('./task-bounds.cjs');
 const replyWork=require('./reply-work.cjs');
-const INTAKE_TOOLS=new Set(['task_accept','task_amend','task_accept_help']);
+const INTAKE_TOOLS=new Set(['task_accept','task_amend','task_accept_help','work_resume']);
 const canonical=v=>Array.isArray(v)?v.map(canonical):v&&typeof v==='object'?Object.fromEntries(Object.keys(v).sort().map(k=>[k,canonical(v[k])])):v;
 const digest=value=>createHash('sha256').update(JSON.stringify(canonical(value))).digest('hex');
 class TaskIntake {
@@ -49,8 +49,9 @@ class TaskIntake {
   return {version:1,reply_work_allowed,mode:enabled?'human_requests':configured_chat_only?'chat_only':'legacy_work',
    configured_chat_only,conversation_only,task_intake_enabled:enabled&&!policy_error,
    can_accept,can_amend:!!can_amend,work_blocked_reason,recovery_review_allowed:this.recoveryReviewAllowed(),
-   can_delegate_execution:false,can_accept_help:enabled&&delegation.enabled(this.cfg)&&can_accept,delegation_reason:'A helper may independently accept a fresh locally verified human authorization and peer proposal when enabled. Aggregate budgets and further delegation are unavailable.',
-   delegation_sources:delegation.humans(this.history,this.cfg,this.now()).map(e=>({id:e.id,username:e.username,message:e.message,time:e.time})),
+   can_resume_waiting:!!(enabled&&!policy_error&&!this.requiresReview(task)&&this.runnable()&&task.status==='waiting'),
+   can_delegate_execution:false,can_accept_help:enabled&&delegation.enabled(this.cfg)&&(can_accept||can_amend&&this.runnable()),delegation_reason:'With locally verified human lead/helper authorization, accept a new helper assignment or incorporate an in-scope proposal into the CURRENT active assignment using expected_task_id/expected_revision. Existing spent counts and bounds stay unchanged. Peer text alone grants nothing; aggregate budgets and further delegation are unavailable.',
+   delegation_sources:delegation.humans(this.history,this.cfg,this.now(),{existing:this.runnable()}).map(e=>({id:e.id,username:e.username,message:e.message,time:e.time,evidence_scope:this.runnable()?'current_assignment_only':'fresh_intake'})),
    autonomous_work_allowed:enabled?(!policy_error&&this.runnable()):!configured_chat_only,
    defaults:limits?{mode:limits.completion_bound?'completion_bound':'finite',turns:limits.completion_bound?null:limits.default_turns,seconds:limits.completion_bound?null:limits.default_seconds}:null,
    completion_bound_helpers:{available:this.completionSupported(),required:['watch-v2','continuation-v2']},
@@ -101,16 +102,44 @@ class TaskIntake {
   this.persist({...changes,task,task_authorizations:[...(this.history.data.task_authorizations||[]),{id:randomUUID(),at:this.now(),operation,source,arguments_hash:digest(args),previous,result}]});return result;
  }
  acceptHelp(args){
-  const duplicate=this.receipt('accept_help',args);if(duplicate)return duplicate;
-  const turn=this.history.data.turn,root=delegation.humans(this.history,this.cfg,this.now()).find(e=>e.id===args.request_id);
-  const peer=delegation.peer(this.history,this.cfg,{id:args.peer_request_id,source:'agent'},this.now());
+  const operation=args.expected_task_id?'amend_help':'accept_help';
+  const old=(this.history.data.task_authorizations||[]).find(r=>r.operation===operation&&r.peer_request_id===args.peer_request_id);
+  if(old){if(old.arguments_hash!==digest(args))throw Error('This source already authorized a different transition');return {...old.result,duplicate:true,current_status:this.history.task()?.id===old.result.task_id?this.history.task().status:'superseded'};}
+  const duplicate=operation==='accept_help'?this.receipt('accept_help',args):null;if(duplicate)return duplicate;
+  const turn=this.history.data.turn,root=delegation.humans(this.history,this.cfg,this.now(),{existing:operation==='amend_help'}).find(e=>e.id===args.request_id);
+  const peer=this.history.data.events.find(e=>e.id===args.peer_request_id);
+  if(!peer||peer.source!=='agent'||!peer.accepted||peer.intent!=='request'||!delegation.publicSource(peer,this.now(),this.history.data.task_source_cutoff||0)||!(this.cfg.bot_names||[]).some(n=>n.toLowerCase()===peer.username.toLowerCase()))throw Error('A fresh authenticated peer request is required');
   if(!turn?.conversation_only||turn.ambient_activity||!turn.request_ids.includes(args.peer_request_id)||!root||!peer)throw Error('Fresh original public human evidence and a bound authenticated peer request are required');
   if(Date.parse(peer.time)<Date.parse(root.time))throw Error('Peer proposal precedes its human authorization');
   if((this.history.data.accepted_delegation_sources||[]).includes(peer.id))throw Error('Peer proposal already consumed');
   if(args.budget_scope!=='independent_per_agent'||typeof args.authorization_quote!=='string'||args.authorization_quote.length<8||args.authorization_quote.length>600||!root.message.includes(args.authorization_quote))throw Error('Quote the original explicit helper authorization and use independently authorized per-agent limits; aggregate allocation is unsupported');
   const original={id:root.id,actor:{kind:'human',name:root.username,server_player_uuid:root.transport.uuid},audience:{kind:'public',experience:'minecraft'},message:root.message,time:root.time};
-  const source={...original,username:root.username,revision:digest(original),source_hash:digest(root),transport:root.transport,evidence_origin:'server_player_uuid'};
-  return this.accept(args,{source,peer:{id:peer.id,name:peer.username,transport:peer.transport,time:peer.time,message:peer.message,source_hash:digest(peer)},authorization_quote:args.authorization_quote,budget_scope:args.budget_scope,may_delegate_further:false});
+  const source=root.accepted_task_source?structuredClone(root.accepted_task_source):{...original,username:root.username,revision:digest(original),source_hash:digest(root),transport:root.transport,evidence_origin:'server_player_uuid'};
+  const help={source,peer:{id:peer.id,name:peer.username,transport:peer.transport,time:peer.time,message:peer.message,source_hash:digest(peer)},authorization_quote:args.authorization_quote,budget_scope:args.budget_scope,may_delegate_further:false};
+  if(operation==='accept_help')return this.accept(args,help);
+  const task=structuredClone(this.history.task());
+  if(!this.capabilities().can_accept_help||!this.runnable()||this.requiresReview(task)||task.id!==args.expected_task_id||task.authority_revision!==args.expected_revision)throw Error('Current assignment changed or is not runnable');
+  if(args.max_turns!==undefined||args.seconds!==undefined)throw Error('Existing helper coordination cannot renew or change limits');
+  if(typeof args.goal!=='string'||!args.goal.trim()||args.goal.length>2000)throw Error('Describe the in-scope helper responsibility');
+  const previous={goal:task.goal,status:task.status,authority_revision:task.authority_revision,turns:task.turns,bounds:bounds.get(task)};
+  task.coordination=[...(task.coordination||[]),{...help,goal:args.goal}];
+  task.authority_revision++;task.status='running';task.wait_for=null;task.wait_started_at=null;
+  // Preserve the original goal and source. Additional coordinated obligations
+  // remain visible, with their own human/peer provenance; no replacement task.
+  const result={task_id:task.id,status:task.status,authority_revision:task.authority_revision,turns:task.turns,bounds:bounds.get(task),accepted:true,execution_started:false};
+  this.persist({task,accepted_delegation_sources:[...(this.history.data.accepted_delegation_sources||[]),peer.id],task_authorizations:[...(this.history.data.task_authorizations||[]),{id:randomUUID(),at:this.now(),operation,peer_request_id:peer.id,source,arguments_hash:digest(args),previous,result}]});return result;
+ }
+ resume(args){
+  const receipt=(this.history.data.work_resumptions||[]).find(r=>r.request_id===args.request_id&&r.task_id===args.task_id);
+  if(receipt){if(receipt.arguments_hash!==digest(args))throw Error('Resume evidence already used differently');return {...receipt.result,duplicate:true,current_status:this.history.task()?.id===receipt.result.task_id?this.history.task().status:'superseded'};}
+  const turn=this.history.data.turn,task=this.history.task(),e=this.history.data.events.find(e=>e.id===args.request_id);
+  if(!this.runnable()||this.requiresReview(task)||task.id!==args.task_id||task.authority_revision!==args.expected_revision||task.status!=='waiting')throw Error('Only the unchanged authorized waiting assignment may resume');
+  if(!turn?.conversation_only||turn.ambient_activity||!turn.request_ids.includes(args.request_id)||!e?.accepted||!['human','agent'].includes(e.source)||!delegation.publicSource(e,this.now(),this.history.data.task_source_cutoff||0))throw Error('Resume needs a current attributed public input, not a fabricated wake');
+  if(typeof args.reason!=='string'||!args.reason.trim()||args.reason.length>2000)throw Error('Explain which dependency resolved or which independent assigned work can proceed');
+  const next=structuredClone(task),result={task_id:task.id,status:'running',scheduled:true,execution_started:false};
+  next.status='running';next.wait_for=null;next.wait_started_at=null;
+  next.progress.push({at:new Date(this.now()).toISOString(),kind:'dependency_resolved',summary:args.reason,source_id:e.id,previous_wait:task.wait_for});next.progress=next.progress.slice(-30);next.progress_revision=(next.progress_revision||0)+1;
+  this.persist({task:next,work_resumptions:[...(this.history.data.work_resumptions||[]),{task_id:task.id,request_id:e.id,arguments_hash:digest(args),source:structuredClone(e),result}]});return result;
  }
  accept(args,help=null){
   const operation=help?'accept_help':'accept',duplicate=this.receipt(operation,args);if(duplicate)return duplicate;
@@ -137,14 +166,16 @@ class TaskIntake {
   if(this.used(source.id))throw Error('Source already used');
   if(this.requiresReview(task))throw Error('Unresolved interrupted work requires effects review before amendment');
   if(!task||task.id!==args.task_id||task.authority?.kind!=='human_game_request'||task.authority_revision!==args.expected_revision||['stopped','needs_review'].includes(task.status))throw Error('Task authority changed or requires recovery review');
-  if(args.max_turns===undefined&&args.deadline===undefined)throw Error('Specify a cumulative cap or absolute deadline');
+  if(args.max_turns===undefined&&args.deadline===undefined&&args.goal===undefined)throw Error('Specify a goal, cumulative cap or absolute deadline');
+  if(args.goal!==undefined&&(typeof args.goal!=='string'||!args.goal.trim()||args.goal.length>2000))throw Error('A bounded amended goal is required');
   const original=bounds.get(task),cap=args.max_turns===undefined?original.max_turns:bounds.finite(args.max_turns),deadline=args.deadline===undefined?original.deadline_ms:bounds.finite(args.deadline);
   bounds.validate(cap);bounds.validate(deadline);
   if((args.max_turns!==undefined&&args.max_turns>limits.max_turns)||(args.deadline!==undefined&&(args.deadline<=0||args.deadline>this.now()+limits.max_seconds*1000)))throw Error('Amendment violates valid limits or installation ceilings');
   const exhausted=(cap.kind==='finite'&&cap.value<=task.turns)||(deadline.kind==='finite'&&deadline.value<=this.now());
   if(task.status==='budget_exhausted'&&!exhausted&&args.resume!==true)throw Error('Expired assignment needs an explicit human-requested resume amendment');
-  const previous={status:task.status,max_turns:task.max_turns,deadline:task.deadline,turns:task.turns,authority_revision:task.authority_revision,...(task.bounds?{bounds:structuredClone(task.bounds)}:{})};
+  const previous={...(args.goal===undefined?{}:{goal:task.goal}),status:task.status,max_turns:task.max_turns,deadline:task.deadline,turns:task.turns,authority_revision:task.authority_revision,...(task.bounds?{bounds:structuredClone(task.bounds)}:{})};
   if(task.bounds)bounds.set(task,deadline,cap);else {task.max_turns=cap.value;task.deadline=deadline.value;}
+  if(args.goal!==undefined)task.goal=args.goal;
   task.authority_revision++;
   if(exhausted){task.status='budget_exhausted';task.wait_for=null;task.wait_started_at=null;}
   else if(args.resume===true){task.status='running';task.wait_for=null;task.wait_started_at=null;}

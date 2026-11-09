@@ -48,21 +48,11 @@ def minecraft_reply_lines(text, limit=8, width=230):
     return lines,truncated
 
 
-def declares_no_reply(text):
-    """Recognize an explicit no-reply final, not whether a conversation merits one.
-
-    Keep the vocabulary and boundary narrow: quoted examples, a mention later
-    in a useful answer, and ambiguous continuations remain ordinary speech.
-    """
-    return bool(re.match(r'\Ano (?:response|reply) (?:is )?(?:needed|necessary|required|warranted)'
-                         r'(?:[.!](?:\s|$)|\s*[-–—:](?:\s|$)|\s*\Z)',text.strip(),re.IGNORECASE))
-
-
-async def deliver_final_reply(text, revision, request, observe, *, sleep=asyncio.sleep, allow_silence=False):
-    # Only after prompt settlement, before packetization or any public send.
-    # This does not re-evaluate attention, consume sources or replay delivery.
-    if allow_silence and declares_no_reply(text):
-        observe('final_reply_withheld',reason='explicit_no_reply_final',sent_chunks=0)
+async def deliver_final_reply(text, revision, request, observe, *, sleep=asyncio.sleep, explicit_speech=False):
+    # Optional engagement publishes only intentional chat/tell tool calls. A
+    # settled final is not a second public message, regardless of its wording.
+    if explicit_speech:
+        observe('final_reply_withheld',reason='explicit_chat_delivery',sent_chunks=0)
         return
     lines,truncated=minecraft_reply_lines(text)
     sent=0
@@ -212,7 +202,7 @@ async def run(home):
         def permission_tools():
             status=control(cfg,'/status')
             if status.get('conversation_only'):
-                return (GAME_TOOLS if status.get('reply_work_allowed') else REPLY_TOOLS) | ({'task_accept','task_amend','task_accept_help'} if status.get('task_intake_enabled') and not status.get('ambient_activity') else set())
+                return (GAME_TOOLS if status.get('reply_work_allowed') else REPLY_TOOLS) | ({'task_accept','task_amend','task_accept_help','work_resume'} if status.get('task_intake_enabled') and not status.get('ambient_activity') else set())
             return GAME_TOOLS
         client.permission_tools=permission_tools
         if not client.info.get('agentCapabilities',{}).get('mcpCapabilities',{}).get('http'):
@@ -442,12 +432,8 @@ async def run(home):
                 if revision is None:
                     observe('final_reply_withheld',reason='public_context_not_exposed_or_incorporated')
                 else:
-                    # A peer/activity opportunity may finish silently. Preserve
-                    # direct human/work answers and any newly steered input.
-                    allow_silence=(bool(world.get('peer_proposal') or world.get('ambient_activity'))
-                        and awareness.cursor==awareness.initial_revision
-                        and (operator_awareness is None or operator_awareness.cursor==operator_awareness.initial_revision))
-                    await deliver_final_reply(text,revision,request,observe,allow_silence=allow_silence)
+                    await deliver_final_reply(text,revision,request,observe,
+                        explicit_speech=bool(world.get('peer_proposal') or world.get('ambient_activity')))
             observe('turn_completed',stop_reason=result['stop_reason'],disposition=disposition,
                     unsettled_tool_count=len(result.get('unsettled_tools',[])))
             if watches and not conversation_only and disposition=='complete':

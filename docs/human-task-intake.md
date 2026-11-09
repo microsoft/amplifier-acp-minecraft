@@ -30,7 +30,7 @@ leases and revokes unused sources older than the stop.
 
 This implements a bounded local subset of the shared
 [task-admission contract](https://github.com/microsoft/amplifier-constellation/blob/6c122d8c14f52f103484536d7005ac37163e17ef/contracts/task-admission.v1-candidate.md).
-It adds no ACP fields or host API. Delegation remains unavailable as described below.
+It adds no ACP fields or host API. Independent helper coordination is described below.
 
 ## Acceptance and amendments
 
@@ -71,6 +71,38 @@ not change limits, consume another turn or enqueue work. Different arguments usi
 an already consumed source are rejected. Persist failures do not leave new authority
 live in memory. No failed/unknown input is automatically replayed.
 
+An explicit human scope change can also supply `goal` to `task_amend`, with the
+same source/revision checks. Changing a goal alone does not change its limits or
+resume expired work. The previous goal and authorizing source stay in the receipt.
+
+## Continuing an existing assignment
+
+`work_resume` lets an admitted public human/peer reply record that a waiting
+assignment's dependency has resolved, or that independent assigned work can
+continue. It names the unchanged task/revision, the current input event and the
+agent's explanation. This schedules ordinary continuation after the reply;
+the reply still cannot perform physical effects. It adds no scope, allowance or
+consumed turn. Stop, expiry and unknown/interrupted effects remain binding.
+The same durable evidence returns the original receipt after a lost reply.
+
+With helper coordination enabled, `task_accept_help` can add an in-scope
+responsibility to a current active assignment using `expected_task_id` and
+`expected_revision`. Original goal, identity, spent work and limits remain;
+the new responsibility retains both human authorization and peer proposal.
+This path takes no `seconds` or `max_turns`. Locally verified public human
+instructions in the original accepted request or recorded during that same assignment remain usable for its
+coordination, including a human appointing a lead and asking it to use the crew.
+They cannot create a new assignment after expiry. New independent assignments
+still require fresh authority. The model interprets the human's scope; a peer
+cannot fabricate it or turn a coordination receipt into further delegation.
+
+`conversation(query=..., limit=...)` searches up to 2,000 retained public
+messages independently of the shorter physical-action journal. It also returns
+the accepted public assignment and coordinated responsibilities. It excludes
+whispers/private operator input and does not enqueue or authorize old requests.
+History from before installation or beyond retention can be missing; search
+results say so explicitly.
+
 ## Retained requests from before the feature
 
 Keep the exact original request as evidence instead of demanding repetition only
@@ -96,6 +128,12 @@ work export/import remains responsibility evidence, not a world execution grant.
 Newly accepted work may use explicit completion-bound defaults after local helper
 capability discovery. See [completion-bound tasks](completion-bound-tasks.md).
 Existing finite tasks and their consumed counts are never converted by a mode change.
+
+Optional peer/activity turns publish only explicit `chat`/`tell` tool calls;
+their final text is not automatically posted. This includes answers to human
+steering incorporated into such a turn. Direct human/work finals retain their
+existing delivery path. There is no prose classifier for deciding which
+sentences mean silence.
 
 Final, settled public replies prefer complete sentences and are packetized at
 sentence boundaries where they fit, falling back to word boundaries and then

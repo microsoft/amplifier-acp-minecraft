@@ -60,10 +60,10 @@ def main():
                              'tp FacingTester 1.5 81 1.5', 'clear FacingTester']:
                     r(text)
                 time.sleep(.4)
-                for item in ['furnace', 'blast_furnace', 'smoker', 'oak_stairs', 'stone_brick_stairs']:
-                    r(f'give FacingTester {item} 4'); time.sleep(.2)
+                for item in ['furnace', 'blast_furnace', 'smoker', 'oak_stairs', 'stone_brick_stairs', 'piston', 'sticky_piston']:
+                    r(f'give FacingTester {item} 6'); time.sleep(.2)
                     control(cfg, '/finish', {}); control(cfg, '/turn', {})
-                    for facing in ['north', 'south', 'east', 'west']:
+                    for facing in ['north', 'south', 'east', 'west'] + (['up', 'down'] if 'piston' in item else []):
                         r('setblock 2 81 1 air'); time.sleep(.15)
                         result = act('place', x=2, y=81, z=1, item=item, support_face='up', facing=facing)
                         assert result['verified'] and result['properties']['facing'] == facing, result
@@ -71,6 +71,24 @@ def main():
                         assert 'Test passed' in confirmation, confirmation
                         report['checks'].append({'item': item, 'facing': facing, 'result': result,
                                                  'independent_server_confirmation': confirmation})
+                for name in ['stone_button','lever']:
+                    control(cfg, '/finish', {}); control(cfg, '/turn', {})
+                    r(f'setblock 2 81 1 {name}[face=floor,powered=false]'); time.sleep(.2)
+                    inspected=act('inspect',x=2,y=81,z=1)
+                    arguments={'x':2,'y':81,'z':1,'operation_id':'fixture-'+name,'block_revision':inspected['block_revision'],'operation':'press' if name=='stone_button' else 'set'}
+                    if name=='lever': arguments['powered']=True
+                    result=act('activate_control',**arguments)
+                    confirmation=r(f'execute if block 2 81 1 {name}[powered=true]')
+                    assert result['verified'] and 'Test passed' in confirmation,(result,confirmation)
+                    report['checks'].append({'control':name,'result':result,'independent_server_confirmation':confirmation})
+                    if name=='stone_button':
+                        time.sleep(1.5)
+                        assert act('activate_control',**arguments)['duplicate']
+                        assert 'Test passed' in r('execute if block 2 81 1 stone_button[powered=false]')
+                    else:
+                        arguments.update(operation_id='fixture-lever-off',powered=False,block_revision=act('inspect',x=2,y=81,z=1)['block_revision'])
+                        assert act('activate_control',**arguments)['powered'] is False
+                        assert 'Test passed' in r('execute if block 2 81 1 lever[powered=false]')
                 report['passed'] = True
             finally:
                 args.out.write_text(json.dumps(report, indent=2) + '\n')

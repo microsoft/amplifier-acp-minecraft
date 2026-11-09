@@ -19,6 +19,20 @@ function fixture(configOverride={},walkingOverride=null,bridgeOverride=null){
   let status,text;await handle(req,{writeHead:x=>status=x,end:x=>text=x});assert.equal(status,code,text);return text?JSON.parse(text):null;
  },advance(ms){current+=ms;for(const t of [...timers])if(t.at<=current){timers.delete(t);t.fn();}},close(){fs.rmSync(home,{recursive:true,force:true});}};
 }
+test('actual peer reply can schedule existing work and deliberately speak, but cannot execute effects until next work turn',async()=>{
+ const f=fixture({incoming_chat_only:true,human_engagement:{enabled:true},agent_dialogue:true,bot_names:['Lead'],human_task_intake:{enabled:true,delegation:{enabled:true}}});try{
+  const h=f.history;Object.assign(h.data.task,{status:'waiting',authority:{kind:'human_game_request'},authority_revision:1,wait_for:'Lead installs glass',started_at:new Date(Date.now()-10000).toISOString()});
+  const e=h.record({kind:'chat',source:'agent',username:'Lead',message:'Finish the signs; glass is installed',accepted:true,intent:'request',provenance:'minecraft_public_chat',time:new Date().toISOString(),transport:{kind:'server_player_uuid',username:'Lead',uuid:'00000000-0000-0000-0000-000000000001'}});
+  h.data.inbox.push({id:e.id,source:'agent',username:'Lead',message:e.message});h.save();
+  const before=structuredClone(h.task());await f.request('/turn',{conversation_only:true,message_ids:[e.id]});
+  const sent=[];f.bot.chat=x=>sent.push(x);f.bot.players.Lead={username:'Lead'};
+  await f.operate('tell',{player:'Lead',intent:'update',text:'Continuing the signs',conversation_revision:e.id});assert.deepEqual(sent,['@Lead [FYI] Continuing the signs']);
+  const result=await f.operate('work_resume',{task_id:before.id,expected_revision:1,request_id:e.id,reason:'The dependency is satisfied; finish the assigned signs.'});assert.equal(result.execution_started,false);
+  assert.equal(h.task().status,'running');assert.equal(h.task().turns,before.turns);assert.equal(h.task().deadline,before.deadline);
+  await assert.rejects(()=>f.operate('place',{x:1,y:64,z:0,item:'stone'}),/Conversation-only/);
+  await f.request('/finish',{});await f.request('/turn',{continuation:true,renewable_lease:true});assert.equal(h.task().turns,before.turns+1);
+ }finally{f.close();}
+});
 test('actual body renews same turn without budget changes; authenticates control, denies stale replay and Stop',async()=>{
  const f=fixture();try{
   const start=await f.request('/turn',{renewable_lease:true,continuation:true});const r={lease_id:start.action_lease.lease_id,task_id:'accepted'};
