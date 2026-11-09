@@ -259,7 +259,9 @@ test('actual body allows human-requested movement under unchanged assignment, th
   const e=f.history.record({kind:'chat',source:'human',username:'Visitor',message:'Go stand by it',accepted:true,provenance:'minecraft_public_chat',time:new Date().toISOString(),transport:{kind:'server_player_uuid',username:'Visitor',uuid:'verified-human'}});
   f.history.data.inbox.push({id:e.id,source:'human',username:'Visitor',message:e.message});f.history.save();
   await f.request('/turn',{conversation_only:true,message_ids:[e.id]});
-  assert.equal((await f.request('/status')).reply_work_allowed,true);assert.equal(f.history.task().turns,120);
+  const current=await f.request('/status');assert.equal(current.reply_work_allowed,true);
+  assert.equal(current.task_capabilities.blocked_reason,null);assert.equal(current.task_capabilities.mode,'human_requests');
+  assert.equal(current.task_capabilities.reply_work_allowed,true);assert.equal(f.history.task().turns,120);
   const r=await f.operate('move',{x:1,y:64,z:0,mode:'walk_only'});assert.equal(r.reached,true);assert.equal(moved,1);
   assert.equal(f.history.task().turns,121);const status=await f.request('/status');assert.equal(status.conversation_only,false);assert.equal(status.action_lease.renewable,true);
   await f.operate('work_report',{status:'running',summary:'Reached the requested spot; the existing assignment remains.'});await f.request('/finish',{});
@@ -327,7 +329,9 @@ test('task-optional actual body moves without a task and continues reported work
  let effects=0;const f=fixture(optionalConfig,{move:async(bot,p)=>{effects++;bot.entity.position=p;return {reached:true};}});try{
   const {Vec3}=realRequire('vec3');f.bot.entity.position=new Vec3(0,64,0);f.history.data.task=null;f.history.save();
   const e=incoming(f);await f.request('/turn',{conversation_only:true,message_ids:[e.id]});
-  assert.equal((await f.request('/status')).reply_work_allowed,true);
+  const current=await f.request('/status');assert.equal(current.reply_work_allowed,true);
+  assert.equal(current.task_capabilities.blocked_reason,null);assert.equal(current.task_capabilities.mode,'task_optional');
+  assert.equal(current.task_capabilities.reply_work_allowed,true);
   await f.operate('move',{x:1,y:64,z:0,mode:'walk_only'});
   assert.equal(effects,1);assert.equal(f.history.data.task,null);assert.equal(f.history.data.turn.activity,true);
   const lease=(await f.request('/status')).action_lease;assert.equal(lease.task_id,null);assert.equal(lease.renewable,true);
