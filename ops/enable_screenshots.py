@@ -13,13 +13,15 @@ p.add_argument('--app',type=Path,default=Path(__file__).resolve().parents[1],hel
 a=p.parse_args();config=json.loads(a.config.read_text());directory=a.directory.expanduser().resolve()
 if not a.node:p.error('Node executable is required')
 app=a.app.resolve(strict=True);node=a.node.resolve(strict=True)
+browser=a.browser_path or (config.get('screenshots') or {}).get('browser_path')
+browser=Path(browser).expanduser().resolve(strict=True) if browser else None
 command=[str(node),str(app/'screenshot-browser.cjs'),'prepare']
-if a.browser_path:command+=['--browser-path',str(a.browser_path.expanduser().resolve(strict=True))]
+if browser:command+=['--browser-path',str(browser)]
 # Fail before writing config if browser installation, launch or graphics fail.
 subprocess.run(command,cwd=app,check=True,timeout=360)
 directory.mkdir(parents=True,exist_ok=True,mode=0o700)
 config['screenshots']={'enabled':True,'directory':str(directory)}
-if a.browser_path:config['screenshots']['browser_path']=str(a.browser_path.expanduser().resolve(strict=True))
+if browser:config['screenshots']['browser_path']=str(browser)
 tmp=a.config.with_name(a.config.name+'.new');fd=os.open(tmp,os.O_WRONLY|os.O_CREAT|os.O_EXCL,0o600)
 with os.fdopen(fd,'w') as out:json.dump(config,out,indent=2);out.write('\n')
 os.replace(tmp,a.config)
