@@ -180,3 +180,12 @@ test('operator resume retains original bounds, revision and interrupted-task ref
   }finally{f.close();}
  }
 });
+
+test('scoped installation input retains caller-asserted human and original audience in durable task source',()=>{
+ const f=fixture();try{
+  const inputs=require('../installation-inputs.cjs'),caller={id:'fixture-voice',label:'Fixture voice',token:'v'.repeat(40)},source={version:1,request_id:'2cb10552-052d-44c2-a54b-8c00ae106693',call_id:'call1',intent_id:'intent1',revision:'1',occurred_at:new Date().toISOString(),actor:{id:'external-person',label:'Fixture human'},audience:{kind:'private',experience:'voice',id:'audience1'}};
+  const queued=inputs.enqueue(f.h,caller,{text:'Original request',source});f.h.data.turn={conversation_only:true,request_ids:[queued.receipt.request_id],actions:[],may_mutate:false};
+  f.intake.accept({request_id:queued.receipt.request_id,goal:'Requested work'});const saved=f.h.task().authority.source;
+  assert.equal(saved.actor.name,'Fixture human');assert.equal(saved.actor.identity_asserted_by,caller.id);assert.equal(saved.actor.server_player_uuid,null);assert.deepEqual(saved.audience,source.audience);assert.deepEqual(saved.installation_source,{caller:{id:caller.id,label:caller.label},...source});assert.equal(saved.message,'Original request');assert.equal(saved.transport.kind,'authenticated_operator_control');
+ }finally{f.close();}
+});

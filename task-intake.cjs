@@ -89,7 +89,9 @@ class TaskIntake {
   if(!e||e.kind!=='chat'||e.source!=='human'||e.accepted!==true||e.whisper||(!operator&&e.provenance!=='minecraft_public_chat')||!Number.isFinite(at)||at>this.now()+5000||at<=(data.task_source_cutoff||0))throw Error('A public human source is required');
   if(!review&&(!turn.request_ids.includes(id)||at<=this.now()-600000||(!operator&&(e.transport?.kind!=='server_player_uuid'||e.transport?.username!==e.username||!e.transport.uuid))))throw Error('Source must be fresh, bound to this turn and attributed by the game transport; historical sources require explicit operator review');
   const actor={kind:'human',name:e.username,server_player_uuid:e.transport?.uuid||null},audience=operator?{kind:'private',experience:'installation_control'}:{kind:'public',experience:'minecraft'};
-  const original={id:e.id,actor,audience,message:e.message,time:e.time};
+  const attributed=operator&&e.installation_source;
+  if(attributed){actor.name=attributed.actor.label;actor.external_id=attributed.actor.id;actor.identity_asserted_by=attributed.caller.id;Object.assign(audience,attributed.audience);}
+  const original={id:e.id,actor,audience,message:e.message,time:e.time,...(attributed?{installation_source:structuredClone(attributed)}:{})};
   return {...original,username:e.username,revision:digest(original),source_hash:digest(e),transport:e.transport||null,evidence_origin:review?'authenticated_operator_review':operator?'authenticated_operator_control':'server_player_uuid'};
  }
  receipt(operation,args){

@@ -493,3 +493,18 @@ test('actual private input outcome route records task-optional queue, admission,
   await f.request('/input-outcomes?ids=not-an-id',undefined,400);await f.request('/input-outcomes',{ids:[id]},404);
  }finally{f.close();}
 });
+
+test('scoped installation token reaches only idempotent original input and exact private outcome boundary',async()=>{
+ const caller={id:'fixture-voice',label:'Fixture voice',token:'v'.repeat(40)},f=fixture('BuilderOne',false,{installation_callers:[caller]});
+ const body={text:'Original human words',source:{version:1,request_id:'87ca622b-3360-4694-a8c6-f0ebd4c522e7',call_id:'call1',intent_id:'intent1',revision:'1',occurred_at:new Date().toISOString(),actor:{id:'fixture-user',label:'Fixture user'},audience:{kind:'private',experience:'companion',id:'fixture-audience'}}};
+ try{
+  const baseline=JSON.stringify(f.history.task());const caps=await f.request('/source-capabilities',undefined,200,caller.token);assert.equal(caps.version,1);assert.equal(caps.outcomes.method,'POST');
+  const first=await f.request('/task',body,200,caller.token),again=await f.request('/task',body,200,caller.token);assert.equal(first.request_id,again.request_id);assert.equal(again.duplicate,true);assert.equal(f.inbox.length,1);
+  const read=await f.request('/source-outcomes',{version:1,requests:[{request_id:first.request_id,source:body.source}]},200,caller.token);assert.equal(read.outcomes[0].delivery,'queued');assert.equal(read.outcomes[0].source.actor.id,'fixture-user');
+  for(const route of ['/action','/stop','/inbox/drain','/mcp'])await f.request(route,{},403,caller.token);
+  for(const route of ['/state','/operator-inputs','/input-outcomes?ids='+first.request_id])await f.request(route,undefined,403,caller.token);
+  await f.request('/task',body,400);assert.equal(f.inbox.length,1);assert.equal(JSON.stringify(f.history.task()),baseline);
+  const legacy=await f.request('/task',{text:'Legacy owner instruction'});assert.ok(legacy.request_id);assert.equal(f.inbox.length,2);
+  const operator=await f.request('/operator-inputs');const e=operator.messages.find(e=>e.id===first.request_id);assert.equal(e.text,body.text);assert.equal(e.installation_source.call_id,'call1');
+ }finally{f.close();}
+});
