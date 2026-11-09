@@ -60,7 +60,7 @@ def main():
                              'tp FacingTester 1.5 81 1.5', 'clear FacingTester']:
                     r(text)
                 time.sleep(.4)
-                for item in ['furnace', 'blast_furnace', 'smoker', 'oak_stairs', 'stone_brick_stairs', 'piston', 'sticky_piston']:
+                for item in ['furnace', 'blast_furnace', 'smoker', 'repeater', 'comparator', 'oak_stairs', 'stone_brick_stairs', 'piston', 'sticky_piston']:
                     r(f'give FacingTester {item} 6'); time.sleep(.2)
                     control(cfg, '/finish', {}); control(cfg, '/turn', {})
                     for facing in ['north', 'south', 'east', 'west'] + (['up', 'down'] if 'piston' in item else []):

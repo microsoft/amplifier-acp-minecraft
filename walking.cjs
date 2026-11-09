@@ -1,7 +1,7 @@
 // Strict level walking is intentionally separate from the general pathfinder:
 // one cardinal cell at a time, without its jump/shortcut post-processing.
 const {Vec3}=require('vec3');
-const {cell,FeetGoal}=require('./spatial.cjs');
+const {cell,FeetGoal,targetStance}=require('./spatial.cjs');
 const sleep=ms=>new Promise(r=>setTimeout(r,ms));
 const key=p=>`${p.x},${p.z}`;
 function walkable(bot,p){
@@ -12,7 +12,8 @@ function walkable(bot,p){
 }
 function plan(bot,target,range=0,{maxNodes=4096,radius=64,startPosition=null}={}){
  const plannedFrom=(startPosition||bot.entity.position).clone(),start=plannedFrom.floored(),goal=new FeetGoal(target.x,target.y,target.z,range);
- const result=(status,path=[],examined=0)=>({mode:'walk_only',reachable:status==='success',status,current_feet:bot.entity.position.clone(),planned_from:plannedFrom,hypothetical_start:startPosition!==null,target,range,exact_feet_y:true,
+ const target_stance=targetStance(bot,target);
+ const result=(status,path=[],examined=0)=>({mode:'walk_only',reachable:status==='success',status,current_feet:bot.entity.position.clone(),planned_from:plannedFrom,hypothetical_start:startPosition!==null,target,range,target_stance,exact_feet_y:true,
   steps:path.map(p=>({x:p.x,y:p.y,z:p.z})),examined,
   constraints:'Level cardinal walking on full footing; no jumping, climbing, swimming, digging or diagonal shortcuts.',
   coverage:'Loaded terrain, bounded search. Rechecked during movement; planning is not arrival.'});
@@ -21,6 +22,7 @@ function plan(bot,target,range=0,{maxNodes=4096,radius=64,startPosition=null}={}
  if(plannedFrom.y>start.y+.125)return result('non_level_start');
  if(target.y!==start.y)return result('different_elevation');
  if(!walkable(bot,start))return result('unsafe_start');
+ if(range===0&&target_stance.exact_target_obstructed)return result('target_obstructed');
  const queue=[start],parents=new Map([[key(start),null]]),seen=new Set([key(start)]);
  let cursor=0,bounded=false,unknown=false;
  while(cursor<queue.length&&cursor<maxNodes){

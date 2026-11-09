@@ -196,6 +196,15 @@ async function speech(name,a){
   operation.status='submitted';operation.result={sent:chunks.join(' '),operation_id:operation.id,packet_count:chunks.length,transport_submitted:true,recipient_delivery_verified:false,...(name==='tell'?{intent:a.intent,requests_reply:a.intent==='request'}:{})};history.save();return operation.result;
  }catch(error){operation.status='incomplete';for(const packet of operation.packets)if(packet.status==='unsent')packet.status='cancelled';history.save();throw error;}
 }
+function validatePlacementFacing(item,facing){
+    const furnaceFacing=['furnace','blast_furnace','smoker','repeater','comparator'].includes(item),stairsFacing=item.endsWith('_stairs'),pistonFacing=['piston','sticky_piston'].includes(item);
+    if(facing){
+      if(!item.endsWith('_bed')&&!/_sign$/.test(item)&&!furnaceFacing&&!stairsFacing&&!pistonFacing)throw Error('Explicit facing is supported for beds, ordinary signs, stairs, pistons, furnaces, blast furnaces, smokers, repeaters and comparators only');
+      if(['up','down'].includes(facing)&&!pistonFacing)throw Error('Vertical facing is supported only for pistons');
+      if(item.includes('hanging_sign'))throw Error('Explicit facing for hanging signs is not supported');
+    }
+    return {furnaceFacing,stairsFacing,pistonFacing};
+}
 async function operate(name,a={},sequenceId=null){
   if(!ready)throw Error('Player is not connected');
   if(['chat','tell'].includes(name)&&history.data.turn){history.data.turn.explicit_speech=true;history.save();}
@@ -283,6 +292,7 @@ async function operate(name,a={},sequenceId=null){
   if(transfer||['chat','tell'].includes(name))conversation.guard(a.conversation_revision);
   if(name==='container'&&transfer&&!a.contents_revision)throw Error('Inspect this container first and supply its contents_revision. No transfer attempted.');
   try{retryGuard.check(bot,name,a);}catch(e){record('action_retry_blocked',{action:name,arguments:a,...e.details});throw e;}
+  if(name==='place')validatePlacementFacing(a.item,a.facing);
   if(++actions>24&&cfg.human_engagement?.enabled!==true)throw Error('This turn reached its 24-action budget; save progress with work_report');
   busy=true;activeAction=name;const epoch=generation;const actionId=crypto.randomUUID();history.actionStarted(actionId);record('action_started',{action_id:actionId,action:name,arguments:a});let unfinished;
   const check=()=>{if(epoch!==generation||Date.now()>turnUntil)throw Error('Action cancelled');};
@@ -290,11 +300,8 @@ async function operate(name,a={},sequenceId=null){
   async function place(p,item,supportFace,facing){
     check();const target=bot.blockAt(p);if(!target||!['air','cave_air','short_grass','tall_grass','snow'].includes(target.name))throw Error('Target is not empty');
     const directions={north:[0,-1],south:[0,1],east:[1,0],west:[-1,0]};
-    const furnaceFacing=['furnace','blast_furnace','smoker'].includes(item),stairsFacing=item.endsWith('_stairs'),pistonFacing=['piston','sticky_piston'].includes(item);
+    const {furnaceFacing,stairsFacing,pistonFacing}=validatePlacementFacing(item,facing);
     if(facing){
-      if(!item.endsWith('_bed')&&!/_sign$/.test(item)&&!furnaceFacing&&!stairsFacing&&!pistonFacing)throw Error('Explicit facing is supported for beds, ordinary signs, stairs, pistons, furnaces, blast furnaces and smokers only');
-      if(['up','down'].includes(facing)&&!pistonFacing)throw Error('Vertical facing is supported only for pistons');
-      if(item.includes('hanging_sign'))throw Error('Explicit facing for hanging signs is not supported');
       if(item.endsWith('_bed')){
        const [dx,dz]=directions[facing],head=p.offset(dx,0,dz);
        if(!['air','cave_air'].includes(bot.blockAt(head)?.name))throw Error('Bed head space is not empty; choose a two-block footprint');
@@ -462,7 +469,7 @@ const definitions={
   follow:['Follow a visible player by name OR a moving animal by entity_id and uuid from entities. Bounded duration, no digging. Rechecks identity and reports actual proximity; useful for approaching sheep that move between observations.',{player:z.string().optional(),entity_id:z.number().int().optional(),uuid:z.string().uuid().optional(),seconds:z.number().int().min(1).max(30).default(10)}],
   gather:['Mine only explicitly selected targets, in order, up to count. First use find/map/inspect and conversation to select resource blocks, not player builds: type alone cannot prove natural origin. Targets must be unique and within 24 blocks at the start. Never searches for replacements; changed/unsafe targets stop the batch. May walk to safe footing and drops. Returns exact removed coordinates and inventory deltas; inspect partial/unconfirmed results before retrying.',{block:z.string(),count:z.number().int().min(1).max(8).default(1),targets:z.array(z.object(xyz)).min(1).max(8)}],
   craft:['Craft recipe executions using your inventory and a nearby table when needed. Counts are recipe executions.',{item:z.string(),count:z.number().int().min(1).max(8).default(1)}],
-  place:['Place an inventory block from nearby safe footing, outside the target cell for solid blocks. Do not move into the block location merely to place it. support_face is the outward normal from support toward target (north=-z, east=+x). Optional facing supports ordinary signs (text front), beds (foot toward head), stairs (uphill direction), furnace/blast_furnace/smoker (front), and pistons (extension direction, including up/down). It is verified against server block properties; a mismatch requires inspection, not blind replay. For standing signs choose support_face=up; horizontal support produces a wall sign. Write text afterward with write_sign. Beds need two empty supported cells. Stair half/shape follow the clicked support and surroundings; inspect the returned properties.',{...xyz,item:z.string(),support_face,facing:z.enum(['north','south','east','west','up','down']).optional()}],
+  place:['Place an inventory block from nearby safe footing, outside the target cell for solid blocks. Do not move into the block location merely to place it. support_face is the outward normal from support toward target (north=-z, east=+x). Optional facing supports ordinary signs (text front), beds (foot toward head), stairs (uphill direction), furnace/blast_furnace/smoker (front), repeater/comparator (server facing property), and pistons (extension direction, including up/down). It is verified against server block properties; a mismatch requires inspection, not blind replay. For standing signs choose support_face=up; horizontal support produces a wall sign. Write text afterward with write_sign. Beds need two empty supported cells. Stair half/shape follow the clicked support and surroundings; inspect the returned properties.',{...xyz,item:z.string(),support_face,facing:z.enum(['north','south','east','west','up','down']).optional()}],
   build:['Place a small explicit list of blocks from inventory; stops and reports partial progress on failure.',{item:z.string(),support_face,blocks:z.array(z.object(xyz)).min(1).max(24)}],
   give:['Read conversation first; pass its revision as conversation_revision and reconsider any changed plan before giving. Hand over inventory items to a stationary visible player 1.8–2.5 blocks away on the same level. Never walks or chases. Observes pickup packets and server inventory; unconfirmed means inspect drops, not retry. Meet and establish readiness first.',{conversation_revision:revision,player:z.string(),item:z.string(),count:z.number().int().min(1).max(64)}],
   cancel_movement:['Cancel only the current move/follow route; keep the existing task and turn allowance. Wait for that action to settle and inspect position before choosing another route. Does not cancel crafting, transfers or construction; no replay or budget renewal.',{}],
@@ -606,6 +613,7 @@ const server=http.createServer(async(req,res)=>{
     }
     else if(req.method==='POST'&&req.url==='/finish'){const a=await json(req);if(ready)history.checkpoint({position:bot.entity.position.clone(),health:bot.health,recent_actions:receipts.slice(-8)});history.finish(!!a.error||busy,!!a.budget_limited&&!busy);stop();result={stopped:true};}
     else if(req.method==='POST'&&req.url==='/wake'){if(!workAllowed())throw Error('Current mode/task cannot wake construction');const a=await json(req);if(a.generation!==generation||Date.now()<turnUntil)throw Error('Observation superseded or turn already active');result=history.wake(a.task_id);record('attention_wake',{task_id:a.task_id});}
+    else if(req.method==='POST'&&req.url==='/activity/review-no-effect'){const a=await json(req);if(!ready||busy||Date.now()<turnUntil||a.generation!==generation)throw Error('Activity review superseded or player not idle');result=activityPolicy.reviewNoEffect(history,cfg,a);record('operator_activity_review',result);}
     else if(req.method==='POST'&&req.url==='/resume-reviewed'){const a=await json(req);if(!ready||busy||Date.now()<turnUntil||a.generation!==generation)throw Error('Recovery review superseded or player not idle');result=history.resumeReviewed(a);record('operator_recovery',{task_id:result.id,reason:a.reason});}
     else if(req.method==='POST'&&req.url==='/stop'){stop();inbox.length=0;history.data.participation_pending=[];history.data.participation_proposals={};activityParticipation.clear();history.stop({activity:activityPolicy.enabled(cfg)});taskIntake.revokeSources();history.save();result={stopped:true};}
     else if(req.method==='POST'&&req.url==='/task-source/review'){

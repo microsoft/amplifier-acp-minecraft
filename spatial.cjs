@@ -37,14 +37,30 @@ function cell(bot,p){
  return floor.boundingBox==='block'?'.':'o';
 }
 function supported(bot,p){return cell(bot,p)==='.';}
+// Loaded facts only. A full cube proves an exact feet/head cell is blocked;
+// partial shapes, climbable blocks and unknown geometry remain planner decisions.
+function targetStance(bot,p){
+ const sample=(position)=>{
+  const b=bot.blockAt(position);if(!b)return {position,name:null,geometry:'unloaded'};
+  const shapes=b.shapes;
+  const full=Array.isArray(shapes)&&shapes.some(s=>s.length===6&&s[0]===0&&s[1]===0&&s[2]===0&&s[3]===1&&s[4]===1&&s[5]===1);
+  return {position,name:b.name,geometry:full?'full_block':Array.isArray(shapes)?shapes.length?'partial':'empty':'unknown'};
+ };
+ const feet=sample(p),head=sample(p.offset(0,1,0)),support=sample(p.offset(0,-1,0));
+ return {feet,head,support,exact_target_obstructed:[feet,head].some(b=>b.geometry==='full_block'),
+  meaning:'Target coordinates are feet, not the supporting block. Partial or unloaded geometry is not proof of clearance; no alternative destination is selected.'};
+}
+
 function footing(p,positions){return positions.some(v=>p.x>=Math.floor(v.x-.299)&&p.x<=Math.floor(v.x+.299)&&p.z>=Math.floor(v.z-.299)&&p.z<=Math.floor(v.z+.299)&&Math.floor(v.y-.001)===p.y);}
 class FeetGoal extends goals.GoalNear {
  isEnd(n){return n.y===this.y&&((n.x-this.x)**2+(n.z-this.z)**2)<=this.rangeSq;}
 }
 function route(bot,p,range=0){
+ const target_stance=targetStance(bot,p);
+ if(range===0&&target_stance.exact_target_obstructed)return {reachable:false,status:'target_obstructed',target:p,range,exact_feet_y:true,steps:[],target_stance,coverage:'Loaded exact destination is obstructed; no path search or movement performed'};
  const goal=new FeetGoal(p.x,p.y,p.z,range);
  const r=bot.pathfinder.getPathTo(bot.pathfinder.movements,goal,150);normalizePassages(bot,r);
- return {reachable:r.status==='success',status:r.status,target:p,range,exact_feet_y:true,steps:(r.path||[]).map(n=>({x:n.x,y:n.y,z:n.z})).slice(0,64),coverage:'Loaded terrain only; a planned path is not proof of arrival'};
+ return {reachable:r.status==='success',status:r.status,target:p,range,target_stance,exact_feet_y:true,steps:(r.path||[]).map(n=>({x:n.x,y:n.y,z:n.z})).slice(0,64),coverage:'Loaded terrain only; a planned path is not proof of arrival'};
 }
 // Pathfinder's post-processing targets the top of collision shapes, including
 // the thin edge of an open door. Keep the waypoint in its clear lower passage.
@@ -117,4 +133,4 @@ async function gotoWithProgress(bot,goal,{stallMs=8000,pollMs=500}={}){
   })]);finished=true;
  }finally{clearInterval(timer);if(!finished){bot.pathfinder.setGoal(null);bot.clearControlStates();}}
 }
-module.exports={alignPlayerCollision,survey,openPassage,SpatialMovements,cell,supported,footing,FeetGoal,route,localMap,digGuard,harvestTool,gotoWithProgress,placementSupport,normalizePassages};
+module.exports={alignPlayerCollision,survey,openPassage,SpatialMovements,cell,targetStance,supported,footing,FeetGoal,route,localMap,digGuard,harvestTool,gotoWithProgress,placementSupport,normalizePassages};

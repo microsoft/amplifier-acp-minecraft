@@ -68,3 +68,21 @@ test('site survey distinguishes canopy from ground and marks unloaded columns',(
  const unknown=survey({...bot,blockAt:()=>null},8).samples;
  assert.ok(unknown.every(s=>s.unknown&&s.ground===null));
 });
+
+test('exact full-block target reports stance without searching; horizontal range still searches',()=>{
+ const {route}=require('../spatial.cjs');let searches=0;
+ const solid={name:'grass_block',boundingBox:'block',shapes:[[0,0,0,1,1,1]]};
+ const bot=world({'2,1,0':solid});bot.pathfinder={movements:{},getPathTo(){searches++;return {status:'success',path:[]};}};
+ const r=route(bot,new Vec3(2,1,0));assert.equal(r.status,'target_obstructed');assert.equal(r.target_stance.feet.name,'grass_block');assert.equal(searches,0);
+ assert.equal(route(bot,new Vec3(2,1,0),1).status,'success');assert.equal(searches,1);
+});
+test('head obstruction is exact; partial, unknown and unloaded targets are not declared full obstructions',()=>{
+ const {route}=require('../spatial.cjs');let searches=0;
+ const bot=world({});bot.pathfinder={movements:{},getPathTo(){searches++;return {status:'partial',path:[]};}};
+ const p=new Vec3(0,1,0);bot.blockAt=q=>q.y===2?{name:'stone',shapes:[[0,0,0,1,1,1]]}:{name:'air',shapes:[]};
+ assert.equal(route(bot,p).status,'target_obstructed');assert.equal(searches,0);
+ for(const b of [null,{name:'unknown'},{name:'oak_door',shapes:[[0,0,0,.1875,1,1]]},{name:'ladder',shapes:[]}]){
+  bot.blockAt=()=>b;assert.equal(route(bot,p).status,'partial');
+ }
+ assert.equal(searches,4);
+});
