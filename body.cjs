@@ -25,6 +25,7 @@ const lease=new (require('./action-lease.cjs').ActionLease)({now:()=>Date.now()}
 let leaseTimer;
 const presence=require('./presence.cjs');
 const inputOutcomes=require('./input-outcomes.cjs');
+const installationInputs=require('./installation-inputs.cjs');
 const {isPublicChatEvent}=require('./public-chat.cjs');
 const {Participation,ParticipationRejection}=require('./participation.cjs');
 const mineflayer = require('mineflayer');
@@ -35,6 +36,7 @@ const { StreamableHTTPServerTransport } = require('@modelcontextprotocol/sdk/ser
 const { z } = require('zod');
 const { addressed, conversationRouter, peerIntent } = require('./routing.cjs');
 const cfg = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
+const installationCallers=installationInputs.callers(cfg);
 const updateAdmission=require('./update-admission.cjs');
 const requireAdmission=()=>updateAdmission.requireOpen(path.dirname(process.argv[2]));
 if(!require('./connection-state.cjs').transportAllowed(path.dirname(process.argv[2]))){console.log('Saved Minecraft connection is disconnected.');process.exit(0);}
@@ -493,12 +495,21 @@ const presenceHandler=presence.createHandler({token:cfg.presence_token,snapshot,
 const server=http.createServer(async(req,res)=>{
   if(req.url==='/presence/mcp')return presenceHandler(req,res);
   const auth=req.headers.authorization||'';const contextRequest=req.url==='/context/v1/query';
-  const secret=contextRequest?cfg.context_token:cfg.token;
+  const caller=installationInputs.authenticate(installationCallers,auth);
+  if(caller&&!installationInputs.allowed(req.method,req.url)){res.writeHead(403);return res.end();}
+  const secret=caller?caller.token:contextRequest?cfg.context_token:cfg.token;
   if(!secret){res.writeHead(403);return res.end();}
   const expected=`Bearer ${secret}`;
-  if(auth.length!==expected.length||!crypto.timingSafeEqual(Buffer.from(auth),Buffer.from(expected))){res.writeHead(401);return res.end();}
+  if(Buffer.byteLength(auth)!==Buffer.byteLength(expected)||!crypto.timingSafeEqual(Buffer.from(auth),Buffer.from(expected))){res.writeHead(401);return res.end();}
   if(req.headers.origin){res.writeHead(403);return res.end();}
   try{
+    if(caller){
+      let value;
+      if(req.url==='/source-capabilities')value=installationInputs.capability;
+      else if(req.url==='/source-outcomes')value=installationInputs.query(history,caller,await json(req));
+      else {const accepted=installationInputs.enqueue(history,caller,await json(req),{seq:++sequence});value=accepted.receipt;if(accepted.event){lastHumanAt=Date.now();events.push(accepted.event);if(events.length>200)events.shift();console.log(JSON.stringify(accepted.event));}}
+      res.writeHead(200,{'Content-Type':'application/json'});return res.end(JSON.stringify(value));
+    }
     if(contextRequest){
       if(req.method!=='POST'){res.writeHead(405);return res.end();}
       const result=history.query(await json(req),cfg,{connected:ready,busy,turn_active:Date.now()<turnUntil,position:ready?bot.entity.position:null});
@@ -510,7 +521,8 @@ const server=http.createServer(async(req,res)=>{
       res.on('close',()=>{t.close();m.close();});await m.connect(t);return await t.handleRequest(req,res,await json(req));
     }
     let result;
-    if(req.method==='GET'&&req.url==='/state')result=snapshot();
+    if(req.method==='GET'&&req.url==='/source-capabilities')result=installationInputs.capability;
+    else if(req.method==='GET'&&req.url==='/state')result=snapshot();
     else if(req.method==='GET'&&req.url==='/installation-state')result={version:1,ready,busy,turn_active:Date.now()<turnUntil,
       task:history.task(),action_lease:lease.view(history.task()),action_sequence:actionSequence.status(),
       human_engagement:require('./human-activity.cjs').updateEngagement(history,humanActivity.snapshot()),
@@ -521,7 +533,7 @@ const server=http.createServer(async(req,res)=>{
     else if(req.method==='GET'&&req.url==='/operator-inputs'){
       // Authenticated local control is never inserted into public conversation/context.
       const all=history.data.events.filter(e=>e.kind==='chat'&&e.source==='human'&&e.accepted&&e.provenance==='operator_control'&&e.transport?.kind==='authenticated_operator_control');
-      result={revision:all.at(-1)?.id||'empty',messages:all.slice(-16).map(e=>({id:e.id,time:e.time,author:'Operator',source:'human',text:e.message})),
+      result={revision:all.at(-1)?.id||'empty',messages:all.slice(-16).map(e=>({id:e.id,time:e.time,author:e.username,source:'human',text:e.message,...(e.installation_source?{installation_source:e.installation_source}:{})})),
        older_messages_omitted:all.length>16,turn_active:Date.now()<turnUntil,generation,scope:'Private authenticated installation control; not public player speech.'};
     }
     else if(req.method==='GET'&&req.url==='/watch-context')result=watchContext();
@@ -541,7 +553,7 @@ const server=http.createServer(async(req,res)=>{
       else result={action:'hold'};
     }
     else if(req.method==='GET'&&(req.url==='/input-outcomes'||req.url.startsWith('/input-outcomes?')))result=inputOutcomes.query(history.data,inputOutcomes.requestIds(req.url));
-    else if(req.method==='GET'&&req.url==='/status')result={input_outcomes:inputOutcomes.CAPABILITY,ready,busy,turn_active:Date.now()<turnUntil,incoming_chat_only:cfg.incoming_chat_only===true,conversation_only:history.data.turn?.conversation_only===true,reply_work_allowed:replyWorkAllowed(),explicit_speech:history.data.turn?.explicit_speech===true,ordinary_activity:history.data.turn?.activity===true,ambient_activity:history.data.turn?.ambient_activity===true,peer_proposal:history.data.turn?.peer_proposal===true,task_intake_enabled:taskIntake.capabilities().task_intake_enabled,task_capabilities:taskIntake.capabilities(),task:history.task(),action_lease:lease.view(history.task()),action_sequence:actionSequence.status()};
+    else if(req.method==='GET'&&req.url==='/status')result={input_outcomes:inputOutcomes.CAPABILITY,installation_inputs:installationInputs.capability,ready,busy,turn_active:Date.now()<turnUntil,incoming_chat_only:cfg.incoming_chat_only===true,conversation_only:history.data.turn?.conversation_only===true,reply_work_allowed:replyWorkAllowed(),explicit_speech:history.data.turn?.explicit_speech===true,ordinary_activity:history.data.turn?.activity===true,ambient_activity:history.data.turn?.ambient_activity===true,peer_proposal:history.data.turn?.peer_proposal===true,task_intake_enabled:taskIntake.capabilities().task_intake_enabled,task_capabilities:taskIntake.capabilities(),task:history.task(),action_lease:lease.view(history.task()),action_sequence:actionSequence.status()};
     else if(req.method==='GET'&&req.url==='/inbox/peek')result=(cfg.human_engagement?.enabled===true&&inbox.some(m=>m.source==='human'&&!m.attention_offer)?inbox.filter(m=>m.source==='human'&&!m.attention_offer):inbox).slice(0,8);
     else if(req.method==='POST'&&req.url==='/inbox/retire-expired'){
       if(busy||Date.now()<turnUntil||history.data.turn)result={retired:0,reason:'turn_active'};
@@ -621,7 +633,7 @@ const server=http.createServer(async(req,res)=>{
       result=taskIntake.reviewSource(await json(req));record('task_source_reviewed',{source_id:result.source.id,valid_until:result.valid_until});
     }
     else if(req.method==='POST'&&req.url==='/task'){
-      const a=await json(req);if(typeof a.text!=='string'||!a.text.trim()||a.text.length>12000||inbox.length>=8)throw Error('Task must contain 1–12000 characters and the queue must have space');
+      const a=await json(req);if(a.source!==undefined)throw Error('Structured source requires its dedicated installation caller credential');if(typeof a.text!=='string'||!a.text.trim()||a.text.length>12000||inbox.length>=8)throw Error('Task must contain 1–12000 characters and the queue must have space');
       const reviewers=a.reviewers||[];if(!Array.isArray(reviewers)||reviewers.length>8||reviewers.some(n=>typeof n!=='string'||!(cfg.bot_names||[]).includes(n)||n===cfg.username))throw Error('Reviewers must be configured peers other than this player');
       lastHumanAt=Date.now();const e=record('chat',{username:'Operator',message:a.text,provenance:'operator_control',transport:{kind:'authenticated_operator_control'},source:'human',accepted:true,whisper:false,reviewers:[...new Set(reviewers)]});inbox.push({id:e.id,username:'Operator',message:a.text,source:'human'});history.save();result={queued:true,request_id:e.id};}
     else if(req.method==='POST'&&req.url==='/action'){const a=await json(req);if(!definitions[a.name])throw Error('Unknown action');const args=z.object(definitions[a.name][1]).strict().parse(a.arguments||{});result=await operate(a.name,args);}
