@@ -392,6 +392,13 @@ test('long addressed speech is packetized once and interrupted packets are never
   const pending=f.operate('tell',args);const rejected=assert.rejects(()=>pending,/interrupted/);await new Promise(setImmediate);f.advance(800);await new Promise(setImmediate);await f.request('/stop',{});
   for(let i=0;i<3;i++){f.advance(800);await new Promise(setImmediate);}await rejected;
   assert.ok(sent.length>=1&&sent.length<5);assert.ok(sent.every(p=>p.startsWith('@Lead [FYI] ')&&p.length<=240));
-  assert.equal(f.history.data.last_turn.speech_operations[0].status,'incomplete');assert.ok(f.history.data.last_turn.actions.some(a=>a.status==='pending'));
+  assert.equal(f.history.data.last_conversation_turn.speech_operations[0].status,'incomplete');assert.ok(f.history.data.last_conversation_turn.actions.some(a=>a.status==='pending'));
+ }finally{f.close();}
+});
+test('stopping a later reply cannot erase an unresolved ordinary operation',async()=>{
+ const f=fixture(optionalConfig);try{
+  f.history.data.task=null;f.history.data.last_turn={activity:true,task_id:null,interrupted:true,actions:[{id:'unknown',status:'pending'}]};f.history.save();
+  const before=JSON.stringify(f.history.data.last_turn),e=incoming(f);await f.request('/turn',{conversation_only:true,message_ids:[e.id]});await f.request('/stop',{});
+  assert.equal(JSON.stringify(f.history.data.last_turn),before);
  }finally{f.close();}
 });
