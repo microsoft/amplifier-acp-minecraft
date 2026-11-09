@@ -52,6 +52,7 @@ specialist references. Agents that cannot discover repository skills can read
 | Safe source, engine and helper updates | [Installation-owned updates](INSTALLATION-UPDATES-DESIGN.md) |
 | Temporarily disconnect and reconnect saved players | [Saved connection controls](docs/saved-connections.md) |
 | Create recognizable skins | [Agent-skin skill](skills/minecraft-agent-skins/SKILL.md) |
+| Inspect queued input delivery without inferring fulfillment | [Private input outcomes](docs/input-outcomes.md) |
 | Let agents take real screenshots | [Screenshot setup](docs/screenshots.md) |
 | Configure tools, recovery, context and lifecycle | [Adapter reference](docs/adapter-reference.md) |
 | Understand ACP compatibility and the official SDK | [Python SDK boundary](docs/python-sdk.md) |

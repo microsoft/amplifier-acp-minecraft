@@ -24,6 +24,7 @@ const {boundedAction}=require('./action-deadline.cjs');
 const lease=new (require('./action-lease.cjs').ActionLease)({now:()=>Date.now()});
 let leaseTimer;
 const presence=require('./presence.cjs');
+const inputOutcomes=require('./input-outcomes.cjs');
 const {isPublicChatEvent}=require('./public-chat.cjs');
 const {Participation,ParticipationRejection}=require('./participation.cjs');
 const mineflayer = require('mineflayer');
@@ -532,7 +533,8 @@ const server=http.createServer(async(req,res)=>{
       else if(!activityPolicy.enabled(cfg)&&history.budgetCheckpoint()){record('budget_checkpoint',{task_id:history.task().id});result={action:'checkpoint'};}
       else result={action:'hold'};
     }
-    else if(req.method==='GET'&&req.url==='/status')result={ready,busy,turn_active:Date.now()<turnUntil,incoming_chat_only:cfg.incoming_chat_only===true,conversation_only:history.data.turn?.conversation_only===true,reply_work_allowed:replyWorkAllowed(),explicit_speech:history.data.turn?.explicit_speech===true,ordinary_activity:history.data.turn?.activity===true,ambient_activity:history.data.turn?.ambient_activity===true,peer_proposal:history.data.turn?.peer_proposal===true,task_intake_enabled:taskIntake.capabilities().task_intake_enabled,task_capabilities:taskIntake.capabilities(),task:history.task(),action_lease:lease.view(history.task()),action_sequence:actionSequence.status()};
+    else if(req.method==='GET'&&(req.url==='/input-outcomes'||req.url.startsWith('/input-outcomes?')))result=inputOutcomes.query(history.data,inputOutcomes.requestIds(req.url));
+    else if(req.method==='GET'&&req.url==='/status')result={input_outcomes:inputOutcomes.CAPABILITY,ready,busy,turn_active:Date.now()<turnUntil,incoming_chat_only:cfg.incoming_chat_only===true,conversation_only:history.data.turn?.conversation_only===true,reply_work_allowed:replyWorkAllowed(),explicit_speech:history.data.turn?.explicit_speech===true,ordinary_activity:history.data.turn?.activity===true,ambient_activity:history.data.turn?.ambient_activity===true,peer_proposal:history.data.turn?.peer_proposal===true,task_intake_enabled:taskIntake.capabilities().task_intake_enabled,task_capabilities:taskIntake.capabilities(),task:history.task(),action_lease:lease.view(history.task()),action_sequence:actionSequence.status()};
     else if(req.method==='GET'&&req.url==='/inbox/peek')result=(cfg.human_engagement?.enabled===true&&inbox.some(m=>m.source==='human'&&!m.attention_offer)?inbox.filter(m=>m.source==='human'&&!m.attention_offer):inbox).slice(0,8);
     else if(req.method==='POST'&&req.url==='/inbox/retire-expired'){
       if(busy||Date.now()<turnUntil||history.data.turn)result={retired:0,reason:'turn_active'};
@@ -567,7 +569,7 @@ const server=http.createServer(async(req,res)=>{
       if(!Array.isArray(ids)||ids.length>8||new Set(ids).size!==ids.length||ids.some(id=>!inbox.some(m=>m.id===id)))throw Error('Queued request changed before turn start');
       if(a.conversation_only!==true&&ids.some(id=>{const m=inbox.find(m=>m.id===id);return m?.attention_offer||['agent','activity'].includes(m?.source);}))throw Error('Optional deliveries require a separate conversation turn');
       if(a.conversation_only===true){
-       replyAdmission.start(ids,inbox);replyWork.bind(history,cfg,workAllowed()&&!taskIntake.requiresReview(history.task()));stop();turnUntil=Date.now()+240000;
+       replyAdmission.start(ids,inbox);replyWork.bind(history,cfg,workAllowed()&&!taskIntake.requiresReview(history.task()));inputOutcomes.blocked(history.data,replyWorkAllowed()?null:taskIntake.capabilities().work_blocked_reason);history.save();stop();turnUntil=Date.now()+240000;
        leaseTimer=setTimeout(()=>{stop();record('conversation_window_expired');},240000);leaseTimer.unref?.();
        actions=0;replies=0;conversation.expose();result={active:true,conversation_only:true,action_lease:lease.view(history.task())};
       }else {

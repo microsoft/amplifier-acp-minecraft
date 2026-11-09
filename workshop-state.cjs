@@ -2,6 +2,7 @@
 const fs=require('node:fs');
 const crypto=require('node:crypto');
 const bounds=require('./task-bounds.cjs');
+const inputOutcomes=require('./input-outcomes.cjs');
 const {isPublicChatEvent}=require('./public-chat.cjs');
 const sharedActions=new Set(['chat','tell','move','follow','dig','place','build','gather','craft','give','shear','furnace','container','write_sign','set_open','activate_control']);
 const text=(value,limit)=>typeof value==='string'?value.slice(0,limit):undefined;
@@ -33,6 +34,7 @@ class WorkshopState {
   this.recover();
  }
  recover(){
+  inputOutcomes.settle(this.data,{interrupted:true,reason:'body_restarted'});
   if(this.data.turn?.conversation_only){this.data.last_conversation_turn={...this.data.turn,interrupted:true};this.data.turn=null;this.save();return;}
   if(this.data.turn){
    if(this.data.turn.task_id===this.data.task?.id&&['running','waiting','review'].includes(this.data.task?.status))this.data.task.status='needs_review';
@@ -42,6 +44,7 @@ class WorkshopState {
  save(){fs.writeFileSync(this.file+'.tmp',JSON.stringify(this.data),{mode:0o600});fs.renameSync(this.file+'.tmp',this.file);}
  record(event){
   const saved={...event,id:crypto.randomUUID()};this.data.events.push(saved);
+  inputOutcomes.response(this.data,saved);
   // Keep public conversation independent of high-volume physical receipts.
   // This is retrieval evidence, never an input queue or a replayable grant.
   const publicEvents=new Map([...(this.data.public_conversation_history||[]),...this.data.events.filter(isPublicChatEvent)].map(e=>[e.id,e]));
@@ -75,7 +78,7 @@ class WorkshopState {
    if(bounds.turnsLow(task)){task.status='budget_exhausted';this.save();throw Error('Task turn budget exhausted');}
    task.turns++;
   }
-  this.data.turn={...(activity?{activity:true}:{}),started_at:new Date().toISOString(),task_id:task?.id||null,progress_revision:task?.progress_revision||0,actions:[],request_ids:requestIds,may_mutate:!peerOnly||['running','waiting'].includes(task?.status)};this.save();
+  this.data.turn={...(activity?{activity:true}:{}),started_at:new Date().toISOString(),task_id:task?.id||null,progress_revision:task?.progress_revision||0,actions:[],request_ids:requestIds,may_mutate:!peerOnly||['running','waiting'].includes(task?.status)};inputOutcomes.admit(this.data);this.save();
  }
  actionStarted(id){if(this.data.turn){this.data.turn.actions.push({id,status:'pending'});this.save();}}
  actionSettled(id,success){const a=this.data.turn?.actions?.find(a=>a.id===id);if(a){a.status=success?'succeeded':'uncertain';this.save();}}
@@ -140,7 +143,7 @@ class WorkshopState {
  }
  checkpoint(observation){if(this.data.turn&&!this.data.turn.conversation_only&&!this.data.turn.activity&&this.data.turn.task_id===this.data.task?.id&&this.data.task){this.data.task.last_observed={at:new Date().toISOString(),...observation};this.save();}}
  finish(error=false,budgetLimited=false){
-  if(this.data.turn?.conversation_only){this.data.last_conversation_turn={...this.data.turn,interrupted:!!error};this.data.turn=null;this.save();return;}
+  if(this.data.turn?.conversation_only){inputOutcomes.settle(this.data,{interrupted:!!error,reason:error?'turn_interrupted':budgetLimited?'planner_turn_limited':null});this.data.last_conversation_turn={...this.data.turn,interrupted:!!error};this.data.turn=null;this.save();return;}
   const turn=this.data.turn,task=turn?.activity?null:this.task();
   if(error&&turn&&['waiting','review'].includes(task?.status))task.status='needs_review';
   if(task?.status==='running'){
@@ -164,6 +167,7 @@ class WorkshopState {
    }
    else if(bounds.turnsLow(task))task.status='budget_exhausted';
   }
+  inputOutcomes.settle(this.data,{interrupted:!!error,reason:error?'turn_interrupted':budgetLimited?'planner_turn_limited':turn?.activity_report?.status==='blocked'?'activity_blocked':task?.status==='blocked'?'assignment_blocked':null});
   if(turn)this.data.last_turn={...turn,interrupted:!!error};
   this.data.turn=null;this.save();
  }
@@ -180,7 +184,7 @@ class WorkshopState {
   this.appendProgress(task,{at:new Date().toISOString(),kind:'operator_recovery',summary:reason,previous_status:task.status});
   task.status='running';task.wait_for=null;task.wait_started_at=null;this.save();return task;
  }
- stop({activity=false}={}){if(activity)this.data.activity_stop={at:Date.now()};if(this.data.turn)this.data[this.data.turn.conversation_only?'last_conversation_turn':'last_turn']={...this.data.turn,interrupted:!!this.data.turn.actions?.some(a=>a.status==='pending'||a.status==='uncertain')};if(['running','waiting','blocked','needs_review','review'].includes(this.data.task?.status))this.data.task.status='stopped';this.data.turn=null;this.save();}
+ stop({activity=false}={}){inputOutcomes.settle(this.data,{interrupted:true,reason:'explicit_stop'});if(activity)this.data.activity_stop={at:Date.now()};if(this.data.turn)this.data[this.data.turn.conversation_only?'last_conversation_turn':'last_turn']={...this.data.turn,interrupted:!!this.data.turn.actions?.some(a=>a.status==='pending'||a.status==='uncertain')};if(['running','waiting','blocked','needs_review','review'].includes(this.data.task?.status))this.data.task.status='stopped';this.data.turn=null;this.save();}
  query(q,cfg,live){
   const owner=q.access?.mode==='owner';
   if(!owner&&(q.access?.mode!=='grant'||!cfg.context_grant||q.access.grant!==cfg.context_grant))throw Error('Invalid conversation grant');

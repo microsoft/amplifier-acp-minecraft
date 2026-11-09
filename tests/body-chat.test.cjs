@@ -19,11 +19,11 @@ function fixture(name,semantic=false,extra={}){
  },module:{exports:{}},console:{log(){}},Buffer,
  process:{argv:['node','body.cjs',config],on(){},exit(){assert.fail('Unexpected process exit');}},setTimeout,clearTimeout});
  vm.runInContext(fs.readFileSync(path.join(root,'body.cjs'),'utf8')+'\nmodule.exports={history,inbox,operate,mcpServer,activityParticipation,readyFixture(){ready=true;},busyFixture(){ready=true;busy=true;},startFixtureTurn(){ready=true;turnUntil=Date.now()+240000;history.startTurn();}};',context,{filename:'body.cjs'});
- return {bot,...context.module.exports,task,home,async request(url,payload,expectedStatus=200){
+ return {bot,...context.module.exports,task,home,async request(url,payload,expectedStatus=200,token='fixture'){
   const req=Readable.from(payload===undefined?[]:[JSON.stringify(payload)]);
-  Object.assign(req,{url,method:payload===undefined?'GET':'POST',headers:{authorization:'Bearer fixture'}});
+  Object.assign(req,{url,method:payload===undefined?'GET':'POST',headers:{authorization:'Bearer '+token}});
   let code,body;await handle(req,{writeHead:c=>{code=c;},end:text=>{body=text;}});
-  assert.equal(code,expectedStatus,body);return JSON.parse(body);
+  assert.equal(code,expectedStatus,body);return body===undefined?null:JSON.parse(body);
  },close:()=>fs.rmSync(home,{recursive:true,force:true})};
 }
 test('every advertised game tool has a matching scoped ACP permission',async()=>{
@@ -474,5 +474,22 @@ test('installation observation reports fresh human engagement without a turn or 
   f.history.record({kind:'chat',source:'human',username:'Visitor',message:'Hello',time:new Date().toISOString(),provenance:'minecraft_public_chat',transport:{kind:'server_player_uuid',username:'Visitor',uuid:'00000000-0000-0000-0000-000000000001'}});
   assert.equal((await f.request('/installation-state')).human_engagement.active,true);
   assert.equal(f.history.data.turn,null);assert.equal(JSON.stringify(f.history.task()),before);
+ }finally{f.close();}
+});
+test('actual private input outcome route records task-optional queue, admission, speech and terminal without exposing public context',async()=>{
+ const f=fixture('BuilderOne',false,{human_engagement:{enabled:true,task_optional:true}});try{
+  const {Vec3}=realRequire('vec3');f.bot.entity={position:new Vec3(0,64,0)};f.bot.pathfinder={setGoal(){}};f.bot.clearControlStates=()=>{};f.bot.stopDigging=()=>{};f.bot.chat=()=>{};f.readyFixture();
+  const before=JSON.stringify(f.history.data.task),q=await f.request('/task',{text:'Private instruction only'}),id=q.request_id;
+  const capability=(await f.request('/status')).input_outcomes;assert.equal(capability.version,1);assert.equal(capability.path,'/input-outcomes');
+  const query=()=>f.request('/input-outcomes?ids='+id);
+  assert.equal((await query()).outcomes[0].delivery,'queued');
+  await f.request('/turn',{message_ids:[id],activity:true});assert.equal((await query()).outcomes[0].delivery,'admitted');
+  await f.operate('chat',{text:'A public observation.',conversation_revision:'empty'});
+  await f.request('/finish',{});const r=(await query()).outcomes[0];
+  assert.equal(r.delivery,'terminal');assert.equal(r.turn_task_id,null);assert.equal(r.responses[0].text,'A public observation.');assert.equal(r.completion,'not_established');
+  assert.equal(JSON.stringify(f.history.data.task),before);assert.ok(!JSON.stringify(r).includes('Private instruction only'));
+  const bytes=fs.readFileSync(path.join(f.home,'workshop.json'),'utf8');await query();assert.equal(fs.readFileSync(path.join(f.home,'workshop.json'),'utf8'),bytes);
+  await f.request('/input-outcomes?ids='+id,undefined,401,'public-presence-token');
+  await f.request('/input-outcomes?ids=not-an-id',undefined,400);await f.request('/input-outcomes',{ids:[id]},404);
  }finally{f.close();}
 });

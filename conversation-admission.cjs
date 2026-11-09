@@ -34,6 +34,7 @@ class ConversationAdmission {
   this.history.data.turn={started_at:new Date(this.now()).toISOString(),conversation_only:true,task_id:null,
    ambient_activity:selected.every(m=>m.source==='activity'),peer_proposal:selected.every(m=>m.source==='agent'),request_ids:[...ids],messages:selected,reply_recipient:selected[0].whisper?selected[0].username:null,actions:[],may_mutate:false};
   for(let i=inbox.length-1;i>=0;i--)if(ids.includes(inbox[i].id))inbox.splice(i,1);
+  require('./input-outcomes.cjs').admit(this.history.data);
   this.history.save();return this.history.data.turn;
  }
 }
