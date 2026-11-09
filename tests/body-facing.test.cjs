@@ -36,7 +36,7 @@ function fixture(item,properties={facing:'south'},actual=item,refusal=null){
 }
 const furnaceLook={north:[0,1],south:[0,-1],east:[-1,0],west:[1,0]};
 const stairsLook={north:[0,-1],south:[0,1],east:[1,0],west:[-1,0]};
-for(const item of ['furnace','blast_furnace','smoker','oak_stairs','stone_brick_stairs']){
+for(const item of ['furnace','blast_furnace','smoker','repeater','comparator','oak_stairs','stone_brick_stairs']){
  test(`${item} places and verifies each requested horizontal facing`,async()=>{
   for(const facing of ['north','south','east','west']){
    const f=fixture(item,{facing,lit:false});try{
@@ -52,7 +52,7 @@ for(const item of ['furnace','blast_furnace','smoker','oak_stairs','stone_brick_
  });
 }
 test('wrong or absent server facing is reported without repairing or repeating the effect',async()=>{
- for(const item of ['furnace','oak_stairs'])for(const properties of [{facing:'west'},{}]){
+ for(const item of ['furnace','oak_stairs','repeater','comparator'])for(const properties of [{facing:'west'},{}]){
   const f=fixture(item,properties);try{
    await assert.rejects(f.run('south'),/placed but.*facing.*inspect/i);assert.equal(f.observation().sends,1);
    assert.equal(f.history.data.events.filter(e=>e.kind==='action_result').length,0);

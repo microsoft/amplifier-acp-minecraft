@@ -406,3 +406,36 @@ test('stopping a later reply cannot erase an unresolved ordinary operation',asyn
   assert.equal(JSON.stringify(f.history.data.last_turn),before);
  }finally{f.close();}
 });
+
+test('unsupported placement facing rejects before action admission and does not strand optional activity',async()=>{
+ const f=fixture(optionalConfig);try{
+  const {Vec3}=realRequire('vec3');f.bot.entity.position=new Vec3(0,64,0);f.history.data.task=null;
+  await f.request('/turn',{activity:true,renewable_lease:true});
+  await assert.rejects(f.operate('place',{x:1,y:64,z:0,item:'stone',facing:'south',support_face:'up'}),/Explicit facing/);
+  assert.equal(f.history.data.turn.actions.length,0);assert.equal(f.history.data.events.filter(e=>e.kind==='action_started').length,0);
+  await f.operate('work_report',{status:'blocked',summary:'Unsupported orientation; inspect alternatives.'});await f.request('/finish',{});
+  assert.equal((await f.request('/status')).task_capabilities.activity_allowed,true);
+ }finally{f.close();}
+});
+test('owner no-effect review preserves uncertain receipt and task, refuses stale/active/pending/interrupted reviews',async()=>{
+ const f=fixture(optionalConfig);try{
+  const crypto=realRequire('node:crypto'),digest=v=>crypto.createHash('sha256').update(JSON.stringify(v)).digest('hex');
+  const priorTask=JSON.stringify(f.history.task());
+  f.history.data.last_turn={activity:true,task_id:null,started_at:'2026-11-09T10:42:57Z',interrupted:false,actions:[{id:'walk',status:'succeeded'},{id:'rejected',status:'uncertain'}]};f.history.save();
+  const status=await f.request('/status');assert.equal(status.task_capabilities.activity_allowed,false);
+  const args={generation:(await f.request('/conversation')).generation,expected_turn_sha256:digest(f.history.data.last_turn),action_id:'rejected',reason:'Exact source and action receipt show validation threw before any world operation.'};
+  await f.request('/activity/review-no-effect',args,401,'wrong');
+  await f.request('/activity/review-no-effect',{...args,expected_turn_sha256:'stale'},400);
+  for(const change of [{interrupted:true},{actions:[{id:'rejected',status:'pending'}]}]){
+   const original=structuredClone(f.history.data.last_turn);Object.assign(f.history.data.last_turn,change);
+   await f.request('/activity/review-no-effect',{...args,expected_turn_sha256:digest(f.history.data.last_turn)},400);f.history.data.last_turn=original;
+  }
+  f.history.data.turn={conversation_only:true};await f.request('/activity/review-no-effect',args,400);f.history.data.turn=null;
+  const result=await f.request('/activity/review-no-effect',args);assert.equal(result.activity_allowed,true);assert.equal(result.replayed,false);
+  assert.equal(f.history.data.last_turn.actions[1].status,'uncertain');assert.equal(f.history.data.last_turn.actions[1].review.outcome,'no_effect');
+  assert.equal(JSON.stringify(f.history.task()),priorTask);await f.request('/activity/review-no-effect',args,400);
+  const restored=new (realRequire('./workshop-state.cjs').WorkshopState)(path.join(f.home,'workshop.json'));
+  assert.equal(realRequire('./activity-policy.cjs').allowed(restored,optionalConfig),true);
+  restored.data.activity_stop={at:Date.now()};assert.equal(realRequire('./activity-policy.cjs').allowed(restored,optionalConfig),false);
+ }finally{f.close();}
+});

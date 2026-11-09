@@ -75,3 +75,9 @@ test('future stance planning checks its own footing but never changes actual sta
  assert.deepEqual(r.current_feet,original);assert.deepEqual(bot.entity.position,original);
  assert.equal(walking.plan(bot,new Vec3(4,1,0),0,{startPosition:new Vec3(2.5,1.5,.5)}).status,'non_level_start');
 });
+
+test('solid exact destination avoids exhaustive search without rejecting nearby range endpoints',()=>{
+ const bot=world(['..#']),r=walking.plan(bot,new Vec3(2,1,0));
+ assert.equal(r.status,'target_obstructed');assert.equal(r.examined,0);assert.equal(r.target_stance.feet.name,'stone');
+ assert.equal(walking.plan(bot,new Vec3(2,1,0),1).status,'success');
+});

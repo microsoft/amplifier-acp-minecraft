@@ -43,6 +43,32 @@ fresh, current transport-attributed human instruction explicitly resuming activi
 It does not reopen a task or clear uncertain effects. Unsettled/interrupted
 ordinary effects remain held for inspection; never replay them.
 
+### Reviewing a proven no-effect activity failure
+
+An unsupported `place.facing` argument is rejected before action admission, so
+it does not create an uncertain world-effect receipt. Repeater/comparator
+horizontal facing is supported and verified against the server's block properties;
+placement or orientation mismatches still require inspection and are not retried.
+
+For a historical failure, the authenticated owner control
+`POST /activity/review-no-effect` accepts `generation` (from `/conversation`),
+`expected_turn_sha256` (SHA-256 of JavaScript `JSON.stringify(last_turn)`),
+`action_id`, and a concrete evidence `reason`. This is not a planner tool. Review
+requires an idle, non-interrupted ordinary-activity turn with exactly one uncertain
+action and all other actions successful. Inspect the exact failed call and source
+before asserting no effects. Stale reviews, pending operations and interrupted
+turns refuse. The original uncertain receipt is retained with the dated no-effect
+review; tasks, Stop, prior input and accounting are unchanged. Read state after a
+lost response; do not repeat a failed game action or infer renewed work authority.
+
+### Route destination facts
+
+`plan_route` reports loaded feet/head/support geometry at its target. An exact
+full-block obstruction returns `target_obstructed` without searching or moving.
+Target Y is feet height, not floor height. A nonzero horizontal range still allows
+nearby endpoints; partial and unloaded shapes are reported without inventing
+clearance. The agent chooses any alternative and movement rechecks the world.
+
 ## Public speech
 
 `chat` and `tell` submit explicit public utterances (or the current private reply

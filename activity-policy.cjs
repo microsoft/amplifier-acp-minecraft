@@ -5,7 +5,7 @@ function reason(history,cfg){
  if(!enabled(cfg))return 'task_optional_disabled';
  if(history.data.activity_stop)return 'explicit_stop';
  const turn=history.data.last_turn;
- if(turn?.activity&&(turn.interrupted||turn.actions?.some(a=>a.status==='pending'||a.status==='uncertain')))return 'unresolved_activity_effects';
+ if(turn?.activity&&(turn.interrupted||turn.actions?.some(a=>a.status==='pending'||a.status==='uncertain'&&a.review?.outcome!=='no_effect')))return 'unresolved_activity_effects';
  // A separate activity cannot hide unsettled effects from an existing task.
  if(turn&&!turn.activity&&turn.interrupted&&turn.actions?.some(a=>a.status!=='succeeded'))return 'unresolved_task_effects';
  return null;
@@ -25,4 +25,16 @@ function resume(history,cfg,{request_id,reason:explanation}){
  delete history.data.activity_stop;history.save();
  return {resumed:true,task_changed:false,activity_allowed:allowed(history,cfg),blocked_reason:reason(history,cfg)};
 }
-module.exports={enabled,reason,allowed,canContinue,promote,resume};
+// Authenticated owner control only: exact settled turn, no replay, no task or
+// Stop amendment. Keep the original uncertain receipt alongside the review.
+function reviewNoEffect(history,cfg,{expected_turn_sha256,action_id,reason:explanation}){
+ const crypto=require('node:crypto'),turn=history.data.last_turn;
+ const digest=v=>crypto.createHash('sha256').update(JSON.stringify(v)).digest('hex');
+ if(!enabled(cfg)||history.data.turn||!turn?.activity||turn.interrupted||digest(turn)!==expected_turn_sha256)throw Error('Exact idle settled activity review required');
+ const action=turn.actions?.find(a=>a.id===action_id);
+ if(!action||action.status!=='uncertain'||action.review||turn.actions.some(a=>a!==action&&a.status!=='succeeded'))throw Error('Review requires one uncertain action with all other actions succeeded');
+ if(typeof explanation!=='string'||!explanation.trim()||explanation.length>2000)throw Error('Concrete no-effect evidence required');
+ action.review={outcome:'no_effect',reason:explanation,reviewed_at:new Date().toISOString(),original_turn_sha256:expected_turn_sha256};history.save();
+ return {action_id,review:action.review,task_changed:false,replayed:false,activity_allowed:allowed(history,cfg),blocked_reason:reason(history,cfg)};
+}
+module.exports={enabled,reason,allowed,canContinue,promote,resume,reviewNoEffect};
