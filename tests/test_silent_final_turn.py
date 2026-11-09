@@ -39,7 +39,7 @@ class SilentFinalTurn(unittest.IsolatedAsyncioTestCase):
             if path=='/conversation':return conversation
             if path=='/operator-inputs':return {'revision':'operator-original','messages':[]}
             if path=='/finish':raise asyncio.CancelledError()
-            if path in ('/recover','/inbox/retire-expired','/reply'):return {}
+            if path in ('/recover','/inbox/retire-expired','/reply','/action'):return {}
             raise AssertionError(path)
 
         class Client:
@@ -51,6 +51,9 @@ class SilentFinalTurn(unittest.IsolatedAsyncioTestCase):
             def transport_closed(self):return False
             async def close(self):pass
             async def prompt(self,*args,**kwargs):
+                if not human:
+                    outer.assertIn('including replies to new human steering',args[0])
+                    if useful or changed:control({},'/action',{'name':'chat','arguments':{'text':'The barrel is ready.'}})
                 return {'text':text,'final_text':text,'stop_reason':'end_turn','unsettled_tools':[]}
 
         class Awareness:
@@ -84,19 +87,19 @@ class SilentFinalTurn(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(next(e for e in events if e['kind']=='turn_completed')['disposition'],'complete')
         self.assertEqual([p for p in paths if p[0]=='/finish'],[('/finish',{'error':False,'budget_limited':False})])
         self.assertFalse(any(p in ('/wake','/turn/renew','/task') for p,_ in paths))
-        return [payload['text'] for path,payload in paths if path=='/reply'],events
+        return [payload['text'] if path=='/reply' else payload['arguments']['text'] for path,payload in paths if path in ('/reply','/action')],events
 
     async def test_silent_peer_finishes_normally_without_public_reply(self):
         replies,events=await self.exercise()
         self.assertEqual(replies,[])
-        self.assertTrue(any(e.get('reason')=='explicit_no_reply_final' for e in events))
+        self.assertTrue(any(e.get('reason')=='explicit_chat_delivery' for e in events))
 
     async def test_direct_human_and_fresh_steering_answers_remain_deliverable(self):
         for kwargs in ({'human':True},{'changed':'public'},{'changed':'operator'},{'useful':True}):
             with self.subTest(kwargs=kwargs):
                 replies,events=await self.exercise(**kwargs)
                 self.assertEqual(len(replies),1)
-                self.assertFalse(any(e.get('reason')=='explicit_no_reply_final' for e in events))
+                self.assertEqual(any(e.get('reason')=='explicit_chat_delivery' for e in events),not kwargs.get('human',False))
 
 
 if __name__=='__main__':unittest.main()

@@ -3,7 +3,7 @@ const fs=require('node:fs');
 const crypto=require('node:crypto');
 const bounds=require('./task-bounds.cjs');
 const {isPublicChatEvent}=require('./public-chat.cjs');
-const sharedActions=new Set(['chat','tell','move','follow','dig','place','build','gather','craft','give','shear','furnace','container','write_sign','set_open']);
+const sharedActions=new Set(['chat','tell','move','follow','dig','place','build','gather','craft','give','shear','furnace','container','write_sign','set_open','activate_control']);
 const text=(value,limit)=>typeof value==='string'?value.slice(0,limit):undefined;
 function sharedProgress(progress){return {at:text(progress?.at,64),summary:text(progress?.summary,2000)||''};}
 function sharedEvent(event){
@@ -42,6 +42,10 @@ class WorkshopState {
  save(){fs.writeFileSync(this.file+'.tmp',JSON.stringify(this.data),{mode:0o600});fs.renameSync(this.file+'.tmp',this.file);}
  record(event){
   const saved={...event,id:crypto.randomUUID()};this.data.events.push(saved);
+  // Keep public conversation independent of high-volume physical receipts.
+  // This is retrieval evidence, never an input queue or a replayable grant.
+  const publicEvents=new Map([...(this.data.public_conversation_history||[]),...this.data.events.filter(isPublicChatEvent)].map(e=>[e.id,e]));
+  this.data.public_conversation_history=[...publicEvents.values()].slice(-2000);
   // Pending input retains its original authority evidence independently of
   // the rolling observation journal, only for the existing input lifetime.
   const pinned=new Set([...(this.data.participation_pending||[]),...(this.data.inbox||[]).map(m=>m.id)]),recent=this.data.events.slice(-1000),ids=new Set(recent.map(e=>e.id)),now=Date.now();

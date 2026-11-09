@@ -945,3 +945,22 @@ sessions and authority. Installing requirements does not start game work.
 Human-priority participation and interruptible ordered plans are described in
 [Human-led play](../docs/human-led-play.md). Enable the installation policy explicitly;
 this does not renew existing assignments or change provider limits.
+
+## Mechanism interactions
+
+`place` supports piston/sticky-piston `facing` in all six directions and checks
+the server block state. A mismatch is an uncertain physical result to inspect,
+not a reason to place again blindly. Other oriented blocks keep their documented
+horizontal restrictions.
+
+`inspect` returns `block_revision`. Use it with `activate_control` to press a
+button once or set a lever's `powered` state explicitly. Each call has a unique
+`operation_id`; a settled duplicate returns its receipt without another press,
+including after restart. Uncertain outcomes refuse replay. Only nearby ordinary
+buttons/levers are supported. The result verifies the control's powered state,
+not a working door, pulse length or safe passage. Inspect the actual circuit
+and test traversal before reporting it complete.
+
+The optional `tests/facing_live.py` fixture validates oriented placement and
+controls against a separate loopback survival server. It must never target an
+existing player world. It uses no model calls.

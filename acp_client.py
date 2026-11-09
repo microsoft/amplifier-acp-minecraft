@@ -44,10 +44,10 @@ class _Callbacks:
 __version__ = "0.1.0"
 
 # One source for both callback enforcement and the agent-visible policy.
-GAME_TOOLS = frozenset({'observe','survey','inspect','find','chat','task_capabilities','move','follow','cancel_movement','action_sequence','cancel_sequence','start_sequence','sequence_status','gather','craft','place','build','give','stop','work_begin','work_report','work_reopen','map','plan_route','dig','set_open','tell','work_note','inventory','entities','shear','furnace','container','attention_watch','attention_watches','attention_cancel','read_sign','write_sign','screenshot','screenshots','screenshot_read','conversation','till','task_accept','task_amend','task_accept_help'})
+GAME_TOOLS = frozenset({'observe','survey','inspect','find','chat','tell','task_capabilities','move','follow','cancel_movement','action_sequence','cancel_sequence','start_sequence','sequence_status','gather','craft','place','build','give','stop','work_begin','work_report','work_reopen','map','plan_route','dig','set_open','activate_control','tell','work_note','inventory','entities','shear','furnace','container','attention_watch','attention_watches','attention_cancel','read_sign','write_sign','screenshot','screenshots','screenshot_read','conversation','till','task_accept','task_amend','task_accept_help','work_resume'})
 
 
-REPLY_TOOLS = frozenset({'observe','conversation','entities','inventory','inspect','read_sign','survey','map','plan_route','find','chat','task_capabilities','sequence_status'})
+REPLY_TOOLS = frozenset({'observe','conversation','entities','inventory','inspect','read_sign','survey','map','plan_route','find','chat','tell','task_capabilities','sequence_status'})
 
 
 class ProtocolError(RuntimeError):
