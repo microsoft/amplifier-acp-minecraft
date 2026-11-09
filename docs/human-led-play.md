@@ -269,3 +269,13 @@ ripe. The legacy `blocks` array remains available. Container obstruction errors
 include the actual raycast blocker and eye/target geometry, without moving or
 choosing a route for the agent. Exactly duplicated public text is shown once in
 the recent planner view; full owner evidence remains available.
+
+### Resuming a waiting responsibility from installation control
+
+`work_resume` accepts both current attributed public input and the existing
+fresh authenticated operator input delivered through `/task`. Operator evidence
+uses the same validation as task acceptance/amendment; it is not relabeled as a
+Minecraft player or made public. The unchanged waiting task ID, revision and
+remaining bounds must still match. Stop, expiry and interrupted-task review still
+refuse; duplicate acknowledgments return the saved result without another change.
+Resumption only schedules existing work and does not itself execute game effects.

@@ -135,7 +135,11 @@ class TaskIntake {
   if(receipt){if(receipt.arguments_hash!==digest(args))throw Error('Resume evidence already used differently');return {...receipt.result,duplicate:true,current_status:this.history.task()?.id===receipt.result.task_id?this.history.task().status:'superseded'};}
   const turn=this.history.data.turn,task=this.history.task(),e=this.history.data.events.find(e=>e.id===args.request_id);
   if(!this.runnable()||this.requiresReview(task)||task.id!==args.task_id||task.authority_revision!==args.expected_revision||task.status!=='waiting')throw Error('Only the unchanged authorized waiting assignment may resume');
-  if(!turn?.conversation_only||turn.ambient_activity||!turn.request_ids.includes(args.request_id)||!e?.accepted||!['human','agent'].includes(e.source)||!delegation.publicSource(e,this.now(),this.history.data.task_source_cutoff||0))throw Error('Resume needs a current attributed public input, not a fabricated wake');
+  const operator=e?.source==='human'&&e.provenance==='operator_control'&&e.transport?.kind==='authenticated_operator_control';
+  if(!turn?.conversation_only||turn.ambient_activity||!turn.request_ids.includes(args.request_id)||!e?.accepted||!['human','agent'].includes(e.source)||(!operator&&!delegation.publicSource(e,this.now(),this.history.data.task_source_cutoff||0)))throw Error('Resume needs a current attributed public or authenticated operator input, not a fabricated wake');
+  // Reuse acceptance/amendment validation; a private operator source is not
+  // player chat and must retain its original attribution, freshness and Stop fence.
+  if(operator)this.source(args.request_id);
   if(typeof args.reason!=='string'||!args.reason.trim()||args.reason.length>2000)throw Error('Explain which dependency resolved or which independent assigned work can proceed');
   const next=structuredClone(task),result={task_id:task.id,status:'running',scheduled:true,execution_started:false};
   next.status='running';next.wait_for=null;next.wait_started_at=null;

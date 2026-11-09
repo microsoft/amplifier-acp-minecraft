@@ -439,3 +439,17 @@ test('owner no-effect review preserves uncertain receipt and task, refuses stale
   restored.data.activity_stop={at:Date.now()};assert.equal(realRequire('./activity-policy.cjs').allowed(restored,optionalConfig),false);
  }finally{f.close();}
 });
+
+test('actual authenticated control input resumes waiting metadata and permits task-optional movement',async()=>{
+ let moves=0;const f=fixture(optionalConfig,{move:async()=>{moves++;return {reached:true};}});try{
+  const {Vec3}=realRequire('vec3');f.bot.entity.position=new Vec3(0,64,0);
+  Object.assign(f.history.task(),{status:'waiting',authority:{kind:'human_game_request'},authority_revision:1,wait_for:'adapter repair'});f.history.save();
+  const before=structuredClone(f.history.task()),queued=await f.request('/task',{text:'The repair is installed; continue existing work.'});
+  await f.request('/turn',{conversation_only:true,message_ids:[queued.request_id]});
+  const result=await f.operate('work_resume',{task_id:before.id,expected_revision:1,request_id:queued.request_id,reason:'The repair is installed; inspect the existing work.'});
+  assert.equal(result.scheduled,true);assert.equal(result.execution_started,false);assert.equal(moves,0);
+  assert.equal(f.history.task().turns,before.turns);assert.equal(f.history.task().deadline,before.deadline);
+  const source=f.history.data.work_resumptions[0].source;assert.equal(source.provenance,'operator_control');assert.equal(source.transport.kind,'authenticated_operator_control');assert.equal(source.transport.uuid,undefined);
+  await f.operate('move',{x:1,y:64,z:0,mode:'walk_only'});assert.equal(moves,1);assert.equal(f.history.data.turn.activity,true);assert.equal(f.history.task().id,before.id);assert.equal(f.history.task().turns,before.turns);
+ }finally{f.close();}
+});

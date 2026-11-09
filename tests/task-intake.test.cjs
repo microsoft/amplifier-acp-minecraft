@@ -146,3 +146,37 @@ test('stale or unbound operator controls and matching text on another transport 
  }
  const f=fixture();try{const e=f.human('Build','Operator',{provenance:'operator_control',transport:{kind:'authenticated_operator_control'}});f.h.data.turn.request_ids=[];assert.throws(()=>f.intake.accept({request_id:e.id,goal:'Build'}));}finally{f.close();}
 });
+
+test('authenticated operator can resume the same waiting task with durable source and lost-ack idempotence',()=>{
+ const f=fixture();try{
+  const initial=f.human();f.intake.accept({request_id:initial.id,goal:'shop'});
+  Object.assign(f.h.task(),{status:'waiting',turns:4,wait_for:'adapter repair',recovery_attempts:1,unknown_receipts:['retain']});
+  const before=structuredClone(f.h.task());
+  const e=f.human('Repair installed; continue existing work','Operator',{provenance:'operator_control',transport:{kind:'authenticated_operator_control'}});
+  const args={task_id:before.id,expected_revision:before.authority_revision,request_id:e.id,reason:'The reported adapter defect is repaired; inspect and continue existing work'};
+  const result=f.intake.resume(args);assert.equal(result.execution_started,false);assert.equal(result.status,'running');
+  for(const key of ['id','turns','max_turns','deadline','authority','authority_revision','recovery_attempts','unknown_receipts'])assert.deepEqual(f.h.task()[key],before[key]);
+  assert.deepEqual(f.h.data.work_resumptions[0].source,e);assert.equal(f.h.data.work_resumptions[0].source.transport.uuid,undefined);
+  const h=new WorkshopState(f.file),intake=new TaskIntake(h,f.cfg),unchanged=JSON.stringify(h.data);
+  assert.equal(intake.resume(args).duplicate,true);assert.equal(JSON.stringify(h.data),unchanged);
+  h.data.task.status='stopped';h.save();assert.equal(intake.resume(args).current_status,'stopped');assert.equal(h.task().status,'stopped');
+ }finally{f.close();}
+});
+test('operator resume does not accept forged, stale, future, private-player, unbound or Stop-fenced evidence',()=>{
+ const cases=[{transport:null},{source:'agent'},{whisper:true},{accepted:false},{time:new Date(Date.now()-700000).toISOString()},{time:new Date(Date.now()+60000).toISOString()},{unbound:true},{cutoff:true}];
+ for(const change of cases){const f=fixture();try{
+  const initial=f.human();f.intake.accept({request_id:initial.id,goal:'shop'});f.h.task().status='waiting';
+  const e=f.human('continue','Operator',{provenance:'operator_control',transport:{kind:'authenticated_operator_control'},...change});
+  if(change.unbound)f.h.data.turn.request_ids=[];if(change.cutoff)f.h.data.task_source_cutoff=Date.now()+1;
+  const before=JSON.stringify(f.h.data);assert.throws(()=>f.intake.resume({task_id:f.h.task().id,expected_revision:1,request_id:e.id,reason:'continue'}));assert.equal(JSON.stringify(f.h.data),before);
+ }finally{f.close();}}
+});
+test('operator resume retains original bounds, revision and interrupted-task refusal',()=>{
+ for(const change of [{deadline:1},{turns:12},{status:'stopped'},{status:'needs_review'},{authority_revision:2}]){
+  const f=fixture();try{
+   const initial=f.human();f.intake.accept({request_id:initial.id,goal:'shop'});Object.assign(f.h.task(),{status:'waiting'},change);
+   const e=f.human('continue','Operator',{provenance:'operator_control',transport:{kind:'authenticated_operator_control'}}),task_id=f.h.task().id,before=JSON.stringify(f.h.data);
+   assert.throws(()=>f.intake.resume({task_id,expected_revision:1,request_id:e.id,reason:'continue'}));assert.equal(JSON.stringify(f.h.data),before);
+  }finally{f.close();}
+ }
+});
