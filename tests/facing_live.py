@@ -23,6 +23,7 @@ from ops.rcon import command
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--node', required=True)
+    parser.add_argument('--redstone-only', action='store_true', help='Run only the item-to-wire placement regression')
     parser.add_argument('--properties', type=Path, required=True)
     parser.add_argument('--out', type=Path, required=True)
     parser.add_argument('--port', type=int, help='Optional loopback translation proxy')
@@ -60,7 +61,7 @@ def main():
                              'tp FacingTester 1.5 81 1.5', 'clear FacingTester']:
                     r(text)
                 time.sleep(.4)
-                for item in ['furnace', 'blast_furnace', 'smoker', 'repeater', 'comparator', 'oak_stairs', 'stone_brick_stairs', 'piston', 'sticky_piston']:
+                for item in ([] if args.redstone_only else ['furnace', 'blast_furnace', 'smoker', 'repeater', 'comparator', 'oak_stairs', 'stone_brick_stairs', 'piston', 'sticky_piston']):
                     r(f'give FacingTester {item} 6'); time.sleep(.2)
                     control(cfg, '/finish', {}); control(cfg, '/turn', {})
                     for facing in ['north', 'south', 'east', 'west'] + (['up', 'down'] if 'piston' in item else []):
@@ -71,7 +72,15 @@ def main():
                         assert 'Test passed' in confirmation, confirmation
                         report['checks'].append({'item': item, 'facing': facing, 'result': result,
                                                  'independent_server_confirmation': confirmation})
-                for name in ['stone_button','lever']:
+                control(cfg, '/finish', {}); control(cfg, '/turn', {})
+                r('setblock 2 81 1 air'); r('give FacingTester redstone 2'); time.sleep(.2)
+                result = act('place', x=2, y=81, z=1, item='redstone', support_face='up')
+                assert result['verified'] and result['actual'] == 'redstone_wire', result
+                confirmation = r('execute if block 2 81 1 minecraft:redstone_wire[power=0]')
+                assert 'Test passed' in confirmation, confirmation
+                report['checks'].append({'item': 'redstone', 'result': result,
+                                         'independent_server_confirmation': confirmation})
+                for name in ([] if args.redstone_only else ['stone_button','lever']):
                     control(cfg, '/finish', {}); control(cfg, '/turn', {})
                     r(f'setblock 2 81 1 {name}[face=floor,powered=false]'); time.sleep(.2)
                     inspected=act('inspect',x=2,y=81,z=1)
