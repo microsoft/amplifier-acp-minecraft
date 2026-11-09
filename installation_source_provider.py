@@ -173,6 +173,7 @@ class Provider:
             raise ContinuityError('Node 22 or newer required')
         run([self.c['node'],self.c['npm_cli'],'ci','--ignore-scripts','--no-audit','--no-fund'],cwd=app,env=environment,stderr=subprocess.STDOUT)
         run([self.c['node'],self.c['npm_cli'],'run','build:screenshots'],cwd=app,env=environment,stderr=subprocess.STDOUT)
+        self.screenshot_browser(app, prepare=True)
         run([self.c['python'],'-m','venv',str(venv)],stderr=subprocess.STDOUT)
         run([str(venv/'bin/python'),'-m','pip','install','--disable-pip-version-check','-r',str(app/'requirements.txt')],env=environment,stderr=subprocess.STDOUT)
         sdk = verify_sdk(venv,app)
@@ -187,8 +188,27 @@ class Provider:
         run([self.c['node'],'--test','tests/body-lease.test.cjs'],cwd=app,env=environment,stderr=subprocess.STDOUT)
         return sdk
 
+    def screenshot_policy(self):
+        config = read(self.home/'config.json') if (self.home/'config.json').exists() else {}
+        policy = config.get('screenshots') or {}
+        if policy.get('enabled') is not True:
+            return {'enabled':False}
+        browser = policy.get('browser_path')
+        if browser is not None and (not isinstance(browser,str) or not Path(browser).is_absolute()):
+            raise ContinuityError('Screenshot browser override must be an absolute owner path')
+        return {'enabled':True,'browser_path':browser}
+
+    def screenshot_browser(self, app, *, prepare=False):
+        policy = self.screenshot_policy()
+        if not policy['enabled']:
+            return
+        command = [self.c['node'],str(app/'screenshot-browser.cjs'),'prepare' if prepare else 'check']
+        if policy['browser_path']:
+            command += ['--browser-path',policy['browser_path']]
+        run(command,cwd=app,stderr=subprocess.STDOUT)
+
     def build_inputs(self):
-        return {'config_hash':digest(self.c), **{
+        return {'config_hash':digest(self.c),'screenshot_browser':self.screenshot_policy(), **{
             key+'_sha256':hashlib.sha256(Path(self.c[key]).read_bytes()).hexdigest()
             for key in ('python','node','npm_cli')}}
 
@@ -206,6 +226,7 @@ class Provider:
                         or any(fingerprint(stage/k) != manifest['fingerprints'][k] for k in self.paths)):
                     continue
                 verify_sdk(stage/'venv', stage/'app')
+                self.screenshot_browser(stage/'app', prepare=True)
             except (OSError, ValueError, KeyError, ContinuityError):
                 continue
             # Do not rewrite an immutable manifest referenced by a saved plan.
@@ -272,6 +293,10 @@ class Provider:
             if hashlib.sha256(Path(self.c['python']).read_bytes()).hexdigest() != manifest['python_sha256']:
                 raise ContinuityError('Staged interpreter dependency changed')
             verify_sdk(stage/'venv',stage/'app')
+            if 'screenshot_browser' in manifest.get('build_inputs',{}):
+                if manifest['build_inputs']['screenshot_browser'] != self.screenshot_policy():
+                    raise ContinuityError('Screenshot browser policy changed after staging')
+                self.screenshot_browser(stage/'app')
         return plan,stage,self.root/'provider-receipts'/(envelope['id']+'.json')
 
     def require_prepared(self, transaction, *, rollback=False):
