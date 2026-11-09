@@ -16,7 +16,7 @@ In that player's adapter checkout/application folder (Node 22 or newer):
 ```sh
 npm ci --ignore-scripts
 npm run build:screenshots
-npx playwright install chromium
+PLAYWRIGHT_SKIP_BROWSER_GC=1 npx playwright install chromium
 python3 ops/enable_screenshots.py \
   --config /path/to/player/config.json \
   --directory /path/to/agent/workspace/screenshots/minecraft
