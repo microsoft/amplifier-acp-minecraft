@@ -91,15 +91,17 @@ test('real chat listeners queue sentence-end addresses and keep expired work unc
   }
  }finally{one.close();two.close();}
 });
-test('automatic final reuses only an exact successful speech receipt from this turn',async()=>{
+test('explicit speech owns public delivery for the turn; further utterances use tools',async()=>{
  const f=fixture('BuilderOne');try{
   const sent=[];f.bot.chat=text=>sent.push(text);f.startFixtureTurn();
   const before=JSON.stringify(f.history.task());
   await f.operate('chat',{text:'Supplies checked.',conversation_revision:'empty'});
   const duplicate=await f.request('/reply',{text:'Supplies checked.',conversation_revision:'empty'});
-  assert.equal(duplicate.already_sent,true);assert.deepEqual(sent,['Supplies checked.']);
+  assert.equal(duplicate.sent,false);assert.equal(duplicate.reason,'explicit_speech_turn');assert.deepEqual(sent,['Supplies checked.']);
   assert.equal(f.history.data.events.filter(e=>e.kind==='chat_sent').length,1);
   await f.request('/reply',{text:'There are two sticks.',conversation_revision:'empty'});
+  assert.equal(sent.length,1);
+  await f.operate('chat',{text:'There are two sticks.',conversation_revision:'empty'});
   assert.equal(sent.length,2);assert.equal(JSON.stringify(f.history.task()),before);
   f.history.data.turn=null;f.startFixtureTurn();
   await f.request('/reply',{text:'Supplies checked.',conversation_revision:'empty'});
@@ -118,15 +120,17 @@ test('fresh conversation evidence and different recipients remain separate speec
   assert.deepEqual(sent,[[null,'Ready.'],[null,'Ready.'],['VisitorOne','Ready.']]);
  }finally{f.close();}
 });
-test('failed or partial tool speech cannot suppress a complete final response',async()=>{
+test('failed tool speech is not delivery and does not make a later final another public attempt',async()=>{
  const f=fixture('BuilderOne');try{
   const sent=[];f.startFixtureTurn();f.bot.chat=()=>{throw Error('send failed');};
   await assert.rejects(f.operate('chat',{text:'Ready.',conversation_revision:'empty'}),/send failed/);
   f.bot.chat=text=>sent.push(text);
-  await f.request('/reply',{text:'Ready.',conversation_revision:'empty'});
+  const final=await f.request('/reply',{text:'Ready.',conversation_revision:'empty'});
+  assert.equal(final.sent,false);assert.equal(f.history.data.events.filter(e=>e.kind==='chat_sent').length,0);
+  await assert.rejects(f.operate('chat',{text:'Ready.',conversation_revision:'empty'}),/unresolved or partial/);
   await f.operate('chat',{text:'Inspected the chest.',conversation_revision:'empty'});
   await f.request('/reply',{text:'Inspected the chest. There are two sticks.',conversation_revision:'empty'});
-  assert.deepEqual(sent,['Ready.','Inspected the chest.','Inspected the chest. There are two sticks.']);
+  assert.deepEqual(sent,['Inspected the chest.']);
  }finally{f.close();}
 });
 test('own messages, incidental peer mentions and FYI updates do not start exchanges',()=>{

@@ -35,7 +35,7 @@ class WorkshopState {
  recover(){
   if(this.data.turn?.conversation_only){this.data.last_conversation_turn={...this.data.turn,interrupted:true};this.data.turn=null;this.save();return;}
   if(this.data.turn){
-   if(['running','waiting','review'].includes(this.data.task?.status))this.data.task.status='needs_review';
+   if(this.data.turn.task_id===this.data.task?.id&&['running','waiting','review'].includes(this.data.task?.status))this.data.task.status='needs_review';
    this.data.last_turn={...this.data.turn,interrupted:true};this.data.turn=null;this.save();
   }
  }
@@ -66,8 +66,8 @@ class WorkshopState {
   if(this.data.task)this.data.task_history=[...(this.data.task_history||[]),this.data.task].slice(-10);
   this.data.task=task;if(this.data.turn)this.data.turn.task_id=task.id;this.save();return task;
  }
- startTurn({peerOnly=false,requestIds=[]}={}){
-  const task=this.task();
+ startTurn({peerOnly=false,requestIds=[],activity=false}={}){
+  const task=activity?null:this.task();
   if(task&&!bounds.valid(task))throw Error('Unknown assignment bounds require inspection');
   if(['running','waiting'].includes(task?.status)){
    if(bounds.timeLow(task,120000)){this.budgetCheckpoint();throw Error('Insufficient time for another useful turn; progress saved');}
@@ -75,7 +75,7 @@ class WorkshopState {
    if(bounds.turnsLow(task)){task.status='budget_exhausted';this.save();throw Error('Task turn budget exhausted');}
    task.turns++;
   }
-  this.data.turn={started_at:new Date().toISOString(),task_id:task?.id||null,progress_revision:task?.progress_revision||0,actions:[],request_ids:requestIds,may_mutate:!peerOnly||['running','waiting'].includes(task?.status)};this.save();
+  this.data.turn={...(activity?{activity:true}:{}),started_at:new Date().toISOString(),task_id:task?.id||null,progress_revision:task?.progress_revision||0,actions:[],request_ids:requestIds,may_mutate:!peerOnly||['running','waiting'].includes(task?.status)};this.save();
  }
  actionStarted(id){if(this.data.turn){this.data.turn.actions.push({id,status:'pending'});this.save();}}
  actionSettled(id,success){const a=this.data.turn?.actions?.find(a=>a.id===id);if(a){a.status=success?'succeeded':'uncertain';this.save();}}
@@ -104,6 +104,11 @@ class WorkshopState {
   task.progress_revision=(task.progress_revision||0)+1;
  }
  report({status,summary,wait_for}){
+  if(this.data.turn?.activity){
+   if(status==='waiting'&&(!wait_for||!wait_for.trim()))throw Error('Waiting requires a concrete observable wait_for condition');
+   this.data.turn.activity_report={status,summary,...(status==='waiting'?{wait_for}:{})};this.save();
+   return {id:null,status,progress:[{summary}],activity:true};
+  }
   const task=this.task();if(!task||task.status!=='running')throw Error('No running task');
   if(status==='waiting'&&(!wait_for||!wait_for.trim()))throw Error('Waiting requires a concrete observable wait_for condition');
   task.wait_for=status==='waiting'?wait_for:null;
@@ -133,10 +138,10 @@ class WorkshopState {
   else if(blocker_resolved&&task.status==='blocked')task.status='needs_review';
   this.save();return task;
  }
- checkpoint(observation){if(!this.data.turn?.conversation_only&&this.data.task){this.data.task.last_observed={at:new Date().toISOString(),...observation};this.save();}}
+ checkpoint(observation){if(this.data.turn&&!this.data.turn.conversation_only&&!this.data.turn.activity&&this.data.turn.task_id===this.data.task?.id&&this.data.task){this.data.task.last_observed={at:new Date().toISOString(),...observation};this.save();}}
  finish(error=false,budgetLimited=false){
   if(this.data.turn?.conversation_only){this.data.last_conversation_turn={...this.data.turn,interrupted:!!error};this.data.turn=null;this.save();return;}
-  const task=this.task(),turn=this.data.turn;
+  const turn=this.data.turn,task=turn?.activity?null:this.task();
   if(error&&turn&&['waiting','review'].includes(task?.status))task.status='needs_review';
   if(task?.status==='running'){
    if(error&&turn)task.status='needs_review';
@@ -175,7 +180,7 @@ class WorkshopState {
   this.appendProgress(task,{at:new Date().toISOString(),kind:'operator_recovery',summary:reason,previous_status:task.status});
   task.status='running';task.wait_for=null;task.wait_started_at=null;this.save();return task;
  }
- stop(){if(['running','waiting','blocked','needs_review','review'].includes(this.data.task?.status))this.data.task.status='stopped';this.data.turn=null;this.save();}
+ stop({activity=false}={}){if(activity)this.data.activity_stop={at:Date.now()};if(this.data.turn)this.data[this.data.turn.conversation_only?'last_conversation_turn':'last_turn']={...this.data.turn,interrupted:!!this.data.turn.actions?.some(a=>a.status==='pending'||a.status==='uncertain')};if(['running','waiting','blocked','needs_review','review'].includes(this.data.task?.status))this.data.task.status='stopped';this.data.turn=null;this.save();}
  query(q,cfg,live){
   const owner=q.access?.mode==='owner';
   if(!owner&&(q.access?.mode!=='grant'||!cfg.context_grant||q.access.grant!==cfg.context_grant))throw Error('Invalid conversation grant');

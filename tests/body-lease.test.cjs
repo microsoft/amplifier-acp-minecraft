@@ -316,3 +316,82 @@ test('optional attention cannot reserve a construction turn or poison an existin
   assert.equal(JSON.stringify(f.history.task()),task);assert.equal(f.history.data.last_conversation_turn.interrupted,true);
  }finally{f.close();}
 });
+
+const optionalConfig={incoming_chat_only:true,human_engagement:{enabled:true,task_optional:true},human_task_intake:{enabled:true},agent_dialogue:true,bot_names:['Lead']};
+function incoming(f,source='human',message='Please help inspect the path'){
+ const username=source==='human'?'Visitor':'Lead';
+ const e=f.history.record({kind:'chat',source,username,message,accepted:true,intent:'request',provenance:'minecraft_public_chat',time:new Date().toISOString(),transport:{kind:'server_player_uuid',username,uuid:'00000000-0000-0000-0000-000000000001'}});
+ f.history.data.inbox.push({id:e.id,source,username,message});f.history.save();return e;
+}
+test('task-optional actual body moves without a task and continues reported work without creating one',async()=>{
+ let effects=0;const f=fixture(optionalConfig,{move:async(bot,p)=>{effects++;bot.entity.position=p;return {reached:true};}});try{
+  const {Vec3}=realRequire('vec3');f.bot.entity.position=new Vec3(0,64,0);f.history.data.task=null;f.history.save();
+  const e=incoming(f);await f.request('/turn',{conversation_only:true,message_ids:[e.id]});
+  assert.equal((await f.request('/status')).reply_work_allowed,true);
+  await f.operate('move',{x:1,y:64,z:0,mode:'walk_only'});
+  assert.equal(effects,1);assert.equal(f.history.data.task,null);assert.equal(f.history.data.turn.activity,true);
+  const lease=(await f.request('/status')).action_lease;assert.equal(lease.task_id,null);assert.equal(lease.renewable,true);
+  await f.request('/turn/renew',{lease_id:lease.lease_id,task_id:null});
+  await f.operate('work_report',{status:'running',summary:'Path reached; inspect the adjacent landing next.'});await f.request('/finish',{});
+  assert.equal((await f.request('/status')).task_capabilities.activity_continuation,true);
+  await f.request('/turn',{activity:true,continuation:true,renewable_lease:true});
+  await f.operate('move',{x:2,y:64,z:0,mode:'walk_only'});await f.operate('work_report',{status:'review',summary:'Both landings checked.'});await f.request('/finish',{});
+  assert.equal(f.history.task(),null);assert.equal(effects,2);assert.equal((await f.request('/status')).task_capabilities.activity_continuation,false);
+  const restored=new (realRequire('./workshop-state.cjs').WorkshopState)(path.join(f.home,'workshop.json'));
+  assert.equal(restored.task(),null);assert.equal(restored.data.task_history,undefined);assert.equal(restored.data.last_turn.activity_report.status,'review');
+ }finally{f.close();}
+});
+test('blocked and expired task records do not block unrelated peer help or get rewritten',async()=>{
+ for(const status of ['blocked','budget_exhausted','stopped']){
+  const f=fixture(optionalConfig,{move:async()=>({reached:true})});try{
+   const {Vec3}=realRequire('vec3');f.bot.entity.position=new Vec3(0,64,0);f.history.data.task.status=status;
+   const before=JSON.stringify(f.history.task());await new Promise(r=>setTimeout(r,5));const e=incoming(f,'agent');await f.request('/turn',{conversation_only:true,message_ids:[e.id]});
+   await f.operate('move',{x:1,y:64,z:0,mode:'walk_only'});await f.operate('work_report',{status:'review',summary:'Unrelated public path inspected.'});await f.request('/finish',{});
+   assert.equal(JSON.stringify(f.history.task()),before);
+   await f.request('/turn',{continuation:true,renewable_lease:true},400);
+  }finally{f.close();}
+ }
+});
+test('task-free Stop is durable and peer input cannot lift it; explicit later human resumption does not renew task',async()=>{
+ const f=fixture(optionalConfig);try{
+  f.history.data.task=null;await f.request('/stop',{});
+  const saved=new (realRequire('./workshop-state.cjs').WorkshopState)(path.join(f.home,'workshop.json'));
+  assert.equal(realRequire('./activity-policy.cjs').allowed(saved,optionalConfig),false);
+  assert.equal(realRequire('./activity-policy.cjs').allowed(saved,{...optionalConfig,human_engagement:{enabled:false}}),false);
+  await f.request('/turn',{renewable_lease:true},400);
+  await new Promise(r=>setTimeout(r,5));const e=incoming(f,'agent');await f.request('/turn',{conversation_only:true,message_ids:[e.id]});
+  await assert.rejects(()=>f.operate('resume_activity',{request_id:e.id,reason:'Peer wants help'}),/fresh current human/);await f.request('/finish',{});
+  await new Promise(r=>setTimeout(r,5));const human=incoming(f,'human','Resume ordinary activity, please');await f.request('/turn',{conversation_only:true,message_ids:[human.id]});
+  assert.equal((await f.operate('resume_activity',{request_id:human.id,reason:'Human explicitly resumed ordinary activity.'})).resumed,true);
+  assert.equal(f.history.task(),null);assert.equal(f.history.data.activity_stop,undefined);
+ }finally{f.close();}
+});
+test('ordinary unknown effect survives restart and blocks continuation without replay',async()=>{
+ const f=fixture(optionalConfig);try{
+  f.history.data.task=null;await f.request('/turn',{renewable_lease:true});f.history.actionStarted('unknown');
+  f.history.recover();const before=JSON.stringify(f.history.data.last_turn);
+  assert.equal((await f.request('/status')).task_capabilities.activity_blocked_reason,'unresolved_activity_effects');
+  await f.request('/turn',{activity:true,continuation:true},400);assert.equal(JSON.stringify(f.history.data.last_turn),before);
+ }finally{f.close();}
+});
+test('explicit public speech suppresses a contradictory final even after failed tool validation',async()=>{
+ for(const failed of [false,true]){
+  const f=fixture(optionalConfig);try{
+   f.history.data.task=null;const e=incoming(f);await f.request('/turn',{conversation_only:true,message_ids:[e.id]});const sent=[];f.bot.chat=t=>sent.push(t);
+   if(failed)await assert.rejects(()=>f.operate('tell',{player:'Missing',text:'Attempted report',intent:'update',conversation_revision:e.id}),/connected player/);
+   else await f.operate('chat',{text:'The placement is verified.',conversation_revision:e.id});
+   const r=await f.request('/reply',{text:'The placement is still pending.',conversation_revision:e.id});assert.equal(r.sent,false);assert.equal(r.reason,'explicit_speech_turn');
+   assert.deepEqual(sent,failed?[]:['The placement is verified.']);assert.equal((await f.request('/status')).explicit_speech,true);
+  }finally{f.close();}
+ }
+});
+test('long addressed speech is packetized once and interrupted packets are never retried implicitly',async()=>{
+ const f=fixture(optionalConfig);try{
+  f.history.data.task=null;const e=incoming(f);await f.request('/turn',{conversation_only:true,message_ids:[e.id]});f.bot.players.Lead={};const sent=[];f.bot.chat=t=>sent.push(t);
+  const args={player:'Lead',intent:'update',text:'A complete useful sentence. '.repeat(30),conversation_revision:e.id};
+  const pending=f.operate('tell',args);const rejected=assert.rejects(()=>pending,/interrupted/);await new Promise(setImmediate);f.advance(800);await new Promise(setImmediate);await f.request('/stop',{});
+  for(let i=0;i<3;i++){f.advance(800);await new Promise(setImmediate);}await rejected;
+  assert.ok(sent.length>=1&&sent.length<5);assert.ok(sent.every(p=>p.startsWith('@Lead [FYI] ')&&p.length<=240));
+  assert.equal(f.history.data.last_turn.speech_operations[0].status,'incomplete');assert.ok(f.history.data.last_turn.actions.some(a=>a.status==='pending'));
+ }finally{f.close();}
+});

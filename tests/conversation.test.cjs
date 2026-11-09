@@ -9,3 +9,12 @@ test('tool results carry only new public context, without repeatedly appending o
  const limited=c.updates();assert.equal(limited.messages.length,16);assert.equal(limited.earlier_context_may_be_omitted,true);
  assert.equal(c.snapshot().exposed_revision,'23');
 });
+test('independent human requirements can be retrieved across separate original messages',()=>{
+ const events=[{id:'material',kind:'chat',source:'human',username:'Owner',message:'Use blue wool',provenance:'minecraft_public_chat'},
+ {id:'height',kind:'chat',source:'human',username:'Owner',message:'Make it four blocks high',provenance:'minecraft_public_chat'},
+ {id:'quote',kind:'chat',source:'agent',username:'Peer',message:'Owner said blue wool four blocks',provenance:'minecraft_public_chat'}];
+ const c=new Conversation({data:{events},task:()=>null},'Self');
+ assert.deepEqual(c.search({queries:['blue wool','four blocks'],source:'human'}).messages.map(m=>m.id),['material','height']);
+ assert.equal(c.search({query:'blue wool four blocks',source:'human'}).messages.length,0);
+ assert.equal(c.search({queries:['blue wool','four blocks'],source:'human'}).history_may_be_incomplete,true);
+});

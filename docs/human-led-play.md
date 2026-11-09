@@ -16,7 +16,48 @@ fallback. This is not a claim that every unaddressed human sentence is intended
 for every agent. The setting removes the three-second artificial continuation
 delay as well. All actual planner calls remain measured.
 
-## Human replies within an existing assignment
+## Task-optional activity
+
+Owners may explicitly set both `human_engagement.enabled: true` and
+`human_engagement.task_optional: true`. This permits ordinary survival activity
+within the installation's purpose and current human instructions: movement,
+inspection, gathering and helping do not need a task record or an acceptance call.
+Code updates alone do not enable this policy. Existing chat-only installations
+remain chat-only unless their owner opts in.
+
+A blocked design does not prohibit unrelated permitted help. Existing task IDs,
+explicit limits, consumed counts and closed commissions stay intact. Task-bound
+continuations still enforce those limits; ordinary activity must not be used to
+resume an expired or stopped commission. Tasks remain useful optional records
+for sustained responsibilities and explicit human constraints.
+
+Ordinary effects use the existing controller lease and action receipts with
+`task_id: null`; no hidden task is created. `work_report` records ordinary progress:
+`running` schedules useful follow-through, while `waiting`, `blocked` or `review`
+ends that continuation. It is not permission to act. New relevant input can lead
+to other permitted activity. Do not poll dependencies or invent busywork.
+
+Stop persists independently of task records. Neither a restart, ambient/peer
+input nor toggling policy clears it. `resume_activity` requires an original,
+fresh, current transport-attributed human instruction explicitly resuming activity.
+It does not reopen a task or clear uncertain effects. Unsettled/interrupted
+ordinary effects remain held for inspection; never replay them.
+
+## Public speech
+
+`chat` and `tell` submit explicit public utterances (or the current private reply
+for a whisper). Once either is attempted, the final assistant answer is not also
+broadcast. Additional public statements use another explicit speech call. A
+failed attempt remains failed/unknown, not delivered. Direct turns with no speech
+tool still support a final-only answer; peer/activity turns use explicit tools.
+
+A completed utterance may contain up to 4,000 characters. The adapter splits it
+at sentence/word boundaries into paced, addressed packets within the Java limit.
+Per-packet submission receipts preserve order. Stop/new conversation interrupts
+unsent packets; a partial or unknown submission is not automatically replayed.
+Submission is not proof every player received it.
+
+## Legacy task-required mode: human replies within an existing assignment
 
 With human-led play enabled, a fresh transport-attributed human reply can use
 world tools already authorized by the same running or waiting assignment.
