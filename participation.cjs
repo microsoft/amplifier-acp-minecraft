@@ -3,6 +3,7 @@
 const crypto=require('node:crypto');
 const {isPublicChatEvent}=require('./public-chat.cjs');
 const {publicSource}=require('./source-revision.cjs');
+const {messageEnvelope}=require('./watch-bridge.cjs');
 const REJECTIONS={
  source_changed:[409,'Conversation changed during participation assessment'],
  invalid_action:[400,'Invalid participation action'],
@@ -46,8 +47,11 @@ class Participation {
   const sourceKey=crypto.createHash('sha256').update(JSON.stringify([publicSource(trigger),trigger.transport])).digest('hex');
   const cached=data.participation_proposals?.[trigger.id];
   if(cached?.source_key===sourceKey)return structuredClone(cached);
-  const recent=data.events.filter(isPublicChatEvent).slice(-23);
-  const chat=[...recent.filter(e=>e.id!==trigger.id),trigger];
+  const publicEvents=data.events.filter(isPublicChatEvent);
+  const selected=new Set([...publicEvents.slice(-23).map(e=>e.id),trigger.id]);
+  // Retain recorded source order, including newer evidence after an old trigger.
+  // trigger_id identifies the evaluated source; list position does not.
+  const chat=publicEvents.filter(e=>selected.has(e.id));
   const names=[...new Set([this.cfg.username,...chat.map(e=>e.username||this.cfg.username),...players])].slice(0,64);
   const agents=new Set([this.cfg.username,...(this.cfg.bot_names||[])].map(name=>name.toLowerCase()));
   const participants=names.map(name=>{
@@ -63,7 +67,10 @@ class Participation {
   });
   const context={conversation_id:this.cfg.conversation_id||'minecraft:workshop',
    agent:participants.find(p=>p.id===this.cfg.username),participants,
-   messages:chat.map(e=>({id:e.id,sender:e.username||this.cfg.username,text:(e.message||e.sent||'').slice(0,700)})),
+   // Only the visible first-address convention is projected. The watch bridge's
+   // default request intent is not evidence of intent, authority or completion.
+   messages:chat.map(e=>({id:e.id,sender:e.username||this.cfg.username,text:(e.message||e.sent||'').slice(0,700),
+    recipients:messageEnvelope(this.cfg,e).recipients})),
    trigger_id:trigger.id,
    responsibilities:JSON.stringify({goal:data.task?.goal,status:data.task?.status,progress:data.task?.progress?.at(-1)?.summary}).slice(0,1500)};
   const ids=[trigger.id];
