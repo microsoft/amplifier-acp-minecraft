@@ -964,3 +964,17 @@ and test traversal before reporting it complete.
 The optional `tests/facing_live.py` fixture validates oriented placement and
 controls against a separate loopback survival server. It must never target an
 existing player world. It uses no model calls.
+
+## Interpreting saved assignment limits
+
+Public Minecraft status and conversation context include `task.limit_state`,
+computed at the response's `observed_at`. `deadline.elapsed` and `turns.reached`
+are separate: an expired assignment with 3 of 8 turns used has an elapsed
+deadline, not an exhausted turn allowance. The original deadline and counts
+remain in the task. Each limit identifies `finite`, `no_configured_bound`, or
+`unknown`; unknown results are null, never inferred as unlimited or exhausted.
+
+These are current limit facts, not the historical reason a status changed.
+`budget_exhausted` alone does not establish which limit was reached, physical
+completion, or whether independent task-optional activity is permitted. This
+projection does not modify, resume, or renew an assignment.

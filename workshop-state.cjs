@@ -195,6 +195,7 @@ class WorkshopState {
   const task=original?{...(owner?original:Object.fromEntries(
    ['id','goal','status','turns','max_turns','deadline','wait_for'].filter(k=>original[k]!==undefined).map(k=>[k,original[k]]))),
    ...(!owner&&original.bounds!==undefined?{bounds:bounds.valid(original)?bounds.get(original):{status:'unknown'}}:{}),
+   limit_state:bounds.limitState(original,Date.parse(observed_at)),
    progress:original.progress.slice(-8).map(p=>owner?p:sharedProgress(p))}:null;
   const coverage=owner?'Recent game chat and actual action receipts; task completion is agent-reported':
    'Recent public chat, task summaries and action receipt metadata; raw inputs/results are owner-local and task completion is agent-reported';
