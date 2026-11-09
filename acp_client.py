@@ -346,7 +346,7 @@ class Client:
         permission_text = (
             'Current adapter permission policy for this turn:\n' + json.dumps(permissions) + '\n'
             'An earlier adapter denial describes that earlier invocation, not a permanent restriction. '
-            'If this current policy explicitly covers an operation that is still needed for your accepted task, '
+            'If this current policy explicitly covers an operation that is still needed for your permitted activity, '
             'you may try it through the offered tool. Each invocation is checked again; a new denial or human Stop still applies. '
             'This snapshot does not prove the operation succeeded, resolve uncertain prior effects, '
             'grant access on another connection, or extend task scope/deadlines/budgets. '
