@@ -280,3 +280,15 @@ test('missing report never authorizes continuation after uncertain effects, erro
  assert.notEqual(s.task().status,'running',condition);
  }
 });
+
+test('shared context reports expired deadline separately from unspent turns without rewriting saved task',t=>{
+ const s=fixture(t);s.data.task={id:'historical',goal:'Shelter',status:'budget_exhausted',turns:3,max_turns:8,deadline:1794089047888,progress:[]};s.save();
+ const before=fs.readFileSync(s.file,'utf8');
+ for(const access of [{mode:'owner'},{mode:'grant',grant:'secret-grant'}]){
+  const result=s.query({operation:'read',access},cfg,{}),task=result.current.activity.task;
+  assert.equal(task.limit_state.deadline.elapsed,true);assert.equal(task.limit_state.turns.reached,false);
+  assert.equal(task.limit_state.turns.remaining,5);assert.equal(task.limit_state.observed_at,result.observed_at);
+  assert.equal(task.deadline,1794089047888);assert.equal(task.status,'budget_exhausted');
+ }
+ assert.equal(fs.readFileSync(s.file,'utf8'),before);
+});

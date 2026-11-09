@@ -9,16 +9,18 @@ const {isPublicChatEvent}=require('./public-chat.cjs');
 function status(snapshot, label) {
   const fields = ['username','ready','busy','turn_active','position','health','food','time','inventory','players'];
   const result = Object.fromEntries(fields.filter(k => snapshot[k] !== undefined).map(k => [k,snapshot[k]]));
+  const observed_at=new Date().toISOString();
   const t=snapshot.task;
   result.task=t?Object.fromEntries(['id','goal','status','turns','max_turns','deadline','wait_for']
     .filter(k=>t[k]!==undefined).map(k=>[k,t[k]])):null;
+  if(t)result.task.limit_state=bounds.limitState(t,Date.parse(observed_at));
   if(t?.bounds!==undefined)result.task.bounds=bounds.valid(t)?bounds.get(t):{status:'unknown'};
   // Reassessment entries contain observations and raw action receipts. Expose
   // only the agent's short report, even when a nested observation is present.
   if(t)result.task.progress=(t.progress||[]).slice(-8).map(entry=>({
     at:entry.at,summary:String(entry.summary||'').slice(0,2000)
   }));
-  return {world:label,observed_at:new Date().toISOString(),...result,
+  return {world:label,observed_at,...result,
     coverage:'Observed game state; progress and completion are agent reports. This connection is read-only.'};
 }
 function activity(snapshot, limit, label) {

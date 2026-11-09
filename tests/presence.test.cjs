@@ -49,7 +49,11 @@ test('real MCP boundary exposes only observation tools and cannot begin work',as
  const listing=await (await rpc('tools/list')).json();
  assert.deepEqual(listing.result.tools.map(x=>x.name).sort(),['minecraft_recent_activity','minecraft_status']);
  const read=await (await rpc('tools/call',{name:'minecraft_status',arguments:{}})).json();
- assert.equal(JSON.parse(read.result.content[0].text).task.id,'existing-task');
+ const projected=JSON.parse(read.result.content[0].text);
+ assert.equal(projected.task.id,'existing-task');
+ assert.equal(projected.task.limit_state.deadline.elapsed,true);
+ assert.equal(projected.task.limit_state.turns.reached,false);
+ assert.equal(projected.task.limit_state.observed_at,projected.observed_at);
  for(const name of ['work_begin','move','stop','task','minecraft_status;work_begin']){
    const denied=await (await rpc('tools/call',{name,arguments:{}})).json();
    assert.ok(denied.error||denied.result?.isError);

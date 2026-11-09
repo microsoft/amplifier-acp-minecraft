@@ -43,4 +43,18 @@ function publicRemaining(task,now=Date.now()){
  if(!valid(task))return {bound_status:'unknown',remaining_ms:null,remaining_turns:null};
  const r=remaining(task,now);return Object.fromEntries(Object.entries(r).map(([k,v])=>[k,v.kind==='finite'?v.value:null]));
 }
-module.exports={valid,finite,unbounded,validate,get,remaining,below,timeLow,turnsLow,within,clamp,set,publicRemaining};
+// Observation only: neither a recorded transition cause nor an execution grant.
+function limitState(task,now=Date.now()){
+ const result={observed_at:new Date(now).toISOString(),
+  deadline:{kind:'unknown',elapsed:null,remaining_ms:null},
+  turns:{kind:'unknown',reached:null,remaining:null},
+  meaning:'Current assignment limits only; not the recorded reason for status, proof of completion, or permission for other activity.'};
+ if(!valid(task))return result;
+ const b=get(task),r=remaining(task,now);
+ result.deadline={kind:b.deadline_ms.kind,elapsed:b.deadline_ms.kind==='finite'?b.deadline_ms.value<=now:false,
+  remaining_ms:r.remaining_ms.kind==='finite'?r.remaining_ms.value:null};
+ result.turns={kind:b.max_turns.kind,reached:b.max_turns.kind==='finite'?task.turns>=b.max_turns.value:false,
+  remaining:r.remaining_turns.kind==='finite'?r.remaining_turns.value:null};
+ return result;
+}
+module.exports={valid,finite,unbounded,validate,get,remaining,below,timeLow,turnsLow,within,clamp,set,publicRemaining,limitState};
