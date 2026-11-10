@@ -260,9 +260,9 @@ async function operate(name,a={},sequenceId=null){
     record(name==='work_resume'?'work_resumption':'task_authorization',{operation:name,...result});return result;
   }
   if(!REPLY_TOOLS.has(name)){
-    if(huddle&&require('./huddle.cjs').associatedWork(history,cfg.huddle.origin)){
-      const d=await huddle.descriptor();if(d.state==='stopped')throw Error('Associated coordination room is stopped; unrelated human conversation remains available');
-    }
+    // Descriptor observations occur at planner/supervision boundaries. A room
+    // outage must not gate valid world work; only an observed Stop applies here.
+    if(huddle?.current?.state==='stopped'&&require('./huddle.cjs').associatedWork(history,cfg.huddle.origin))throw Error('Associated coordination room is stopped; unrelated human conversation remains available');
     if(!workAllowed())throw Error('Conversation-only or unauthorized assignment: inspect task_capabilities before effects');
     if(history.data.turn?.conversation_only){
       if(Date.now()>=turnUntil||busy)throw Error('Reply action window ended or an operation is unsettled');

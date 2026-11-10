@@ -8,8 +8,8 @@ async function huddleFixture(t){
  const nativeHttp=require('node:http'),crypto=require('node:crypto'),sha=v=>crypto.createHash('sha256').update(v).digest('hex');
  const event={id:'original-public-human',time:'2026-11-10T12:00:00.000Z',kind:'chat',source:'human',accepted:true,username:'Human',message:'Check together',provenance:'minecraft_public_chat',transport:{kind:'server_player_uuid',uuid:'human-uuid',username:'Human'}};
  const origin={kind:'external',service:'minecraft',connection_id:'game',conversation_id:'public-game',request_id:'original',source_id:event.id,source_revision:require('../source-revision.cjs').publicSource(event).revision,occurred_at:Date.parse(event.time),actor:{id:'human-uuid',kind:'human'}};
- const state={room:'open',posts:0,saved:new Map()},caps={version:1,external_participants:true,read:true,post:true,post_status:true,outcomes:true,quiet_follow:true,max_text_bytes:6000,max_evidence_items:8,max_metadata_bytes:8000,max_page_items:100};let url;
- const server=nativeHttp.createServer(async(req,res)=>{res.setHeader('Content-Type','application/json');
+ const state={room:'open',posts:0,requests:0,unavailable:false,saved:new Map()},caps={version:1,external_participants:true,read:true,post:true,post_status:true,outcomes:true,quiet_follow:true,max_text_bytes:6000,max_evidence_items:8,max_metadata_bytes:8000,max_page_items:100};let url;
+ const server=nativeHttp.createServer(async(req,res)=>{state.requests++;res.setHeader('Content-Type','application/json');if(state.unavailable){res.statusCode=503;res.end('{}');return;}
   const descriptor={version:1,id:'room',conversation_id:'room',participant:{agent_id:'agent',connection_id:'game'},state:state.room,revision:1,origin,inspect_url:url+'/?conversation=room',capabilities:caps,participants:[{id:'agent'},{id:'peer'}],purpose:'Shared check'};
   if(req.method==='POST'){
    let raw='';for await(const c of req)raw+=c;const p=JSON.parse(raw);state.posts++;
@@ -547,4 +547,18 @@ test('scoped installation token reaches only idempotent original input and exact
   const legacy=await f.request('/task',{text:'Legacy owner instruction'});assert.ok(legacy.request_id);assert.equal(f.inbox.length,2);
   const operator=await f.request('/operator-inputs');const e=operator.messages.find(e=>e.id===first.request_id);assert.equal(e.text,body.text);assert.equal(e.installation_source.call_id,'call1');
  }finally{f.close();}
+});
+
+test('associated valid work does not consult an unavailable room for each action; observed Stop still blocks',async t=>{
+ const {f,state,event}=await huddleFixture(t);f.bot.pathfinder={setGoal(){}};f.bot.clearControlStates=()=>{};
+ Object.assign(f.history.data.task,{status:'running',deadline:Date.now()+600000,turns:1,authority:{source:{id:event.id}}});
+ f.startFixtureTurn();f.history.data.turn.task_id=f.history.data.task.id;f.history.data.turn.activity=false;
+ await f.request('/huddle/context');state.unavailable=true;const requests=state.requests;
+ await f.operate('work_report',{status:'running',summary:'Existing authorized work continues.'});
+ assert.equal(state.requests,requests);
+ await assert.rejects(f.operate('huddle',{operation:'post',request_id:'03000000-0000-4000-8000-000000000003',text:'Unavailable room'}));
+ assert.equal(state.posts,0);assert.equal(f.history.data.task.status,'running');
+ state.unavailable=false;state.room='stopped';await f.request('/huddle/context');state.unavailable=true;const afterStop=state.requests;
+ await assert.rejects(f.operate('work_report',{status:'running',summary:'Must not resume stopped work.'}),/stopped/);
+ assert.equal(state.requests,afterStop);assert.equal(f.history.data.task.status,'stopped');assert.equal(f.history.data.turn,null);
 });

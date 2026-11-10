@@ -30,7 +30,7 @@ function originFixture(){
  const {history}=fixture(),event={id:'human-source',time:'2026-11-10T12:00:00.000Z',kind:'chat',source:'human',accepted:true,username:'Human',message:'Please coordinate',provenance:'minecraft_public_chat',transport:{kind:'server_player_uuid',uuid:'human-uuid',username:'Human'}};
  history.data.events.push(event);
  const origin={kind:'external',service:'minecraft',connection_id:'game',conversation_id:'game-public',request_id:id,source_id:event.id,source_revision:publicSource(event).revision,occurred_at:Date.parse(event.time),actor:{id:'human-uuid',kind:'human'}};
- return {history,event,origin,enrollment:{...binding,origin:structuredClone(origin)}};
+ return {history,event,origin,enrollment:{...binding,conversation_id:origin.conversation_id,origin:structuredClone(origin)}};
 }
 test('return matches original public human source without completing, admitting or renewing work',()=>{
  const f=originFixture(),before=JSON.stringify(f.history.data),r=publicReturnSource(f.history,f.enrollment,f.origin);
@@ -45,4 +45,10 @@ test('viewer, peer, private, foreign, edited and missing sources cannot choose p
  for(const change of [{connection_id:'other'},{kind:'conversation'},{service:'companion'},{actor:{id:'viewer'}},{source_revision:'changed'},{occurred_at:'2026-11-10T13:00:00.000Z'}])assert.throws(()=>publicReturnSource(f.history,f.enrollment,{...f.origin,...change}));
  for(const change of [{source:'agent'},{whisper:true},{provenance:'operator_control'},{accepted:false},{message:'Changed'},{transport:{kind:'unverified'}}]){const g=originFixture();Object.assign(g.event,change);assert.throws(()=>publicReturnSource(g.history,g.enrollment,g.origin));}
  f.history.data.events=[];assert.throws(()=>publicReturnSource(f.history,f.enrollment,f.origin));
+});
+
+test('even an exact frozen origin cannot return to a different or missing enrolled conversation',()=>{
+ const f=originFixture(),before=JSON.stringify(f.history.data);
+ for(const conversation_id of ['other-world',undefined])assert.throws(()=>publicReturnSource(f.history,{...f.enrollment,conversation_id},f.origin),/destination/);
+ assert.equal(JSON.stringify(f.history.data),before);
 });

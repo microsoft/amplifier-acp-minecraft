@@ -71,7 +71,10 @@ A stopped room remains readable and closes new room posts. Existing task/source
 or activity-source association identifies affected work; merely reading a room
 does not bind an unrelated assignment to it. The controller checks room state at
 existing planner boundaries and during its existing active-prompt supervision.
-Associated work uses the normal cancellation and uncertain-effect handling.
+An observed Stop uses the normal cancellation and uncertain-effect handling for
+associated work. Game actions reuse that observed state rather than making a
+room request per action. Room outages prevent room sends, not otherwise valid
+world work; cancellation is not claimed before the Stop has been observed.
 Unrelated work and subsequent human conversation are not globally disabled.
 
 This first slice supports participants already doing authorized work in their

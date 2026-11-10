@@ -47,7 +47,7 @@ class HuddleJournal {
 function publicReturnSource(history,enrollment,origin){
  // Owner enrollment freezes the origin; room observers and peer-supplied source
  // metadata cannot replace it. Private or foreign origins have no public return.
- if(!enrollment?.origin||hash(enrollment.origin)!==hash(origin)||origin.kind!=='external'||origin.service!=='minecraft'||origin.connection_id!==enrollment.connection_id)throw Error('Outcome is not bound to this original Minecraft destination');
+ if(!enrollment?.origin||hash(enrollment.origin)!==hash(origin)||origin.kind!=='external'||origin.service!=='minecraft'||origin.connection_id!==enrollment.connection_id||origin.conversation_id!==enrollment.conversation_id)throw Error('Outcome is not bound to this original Minecraft destination');
  const event=history.data.events.find(e=>e.id===origin.source_id)||(history.data.public_conversation_history||[]).find(e=>e.id===origin.source_id),source=publicSource(event);
  if(!event||!source||!isPublicChatEvent(event)||event.source!=='human'||event.accepted!==true||event.provenance!=='minecraft_public_chat'||event.transport?.kind!=='server_player_uuid'||event.transport.username!==event.username||!event.transport.uuid||origin.actor?.kind!=='human'||origin.actor.id!==event.transport.uuid||source.revision!==origin.source_revision||source.occurredAt!==origin.occurred_at)throw Error('Original authenticated public human source is unavailable or changed');
  return {source_fact:source,actor:{id:event.transport.uuid,label:event.username},audience:'minecraft_public_chat',connection_id:enrollment.connection_id,request_id:origin.request_id};
