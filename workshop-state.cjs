@@ -143,7 +143,7 @@ class WorkshopState {
  }
  checkpoint(observation){if(this.data.turn&&!this.data.turn.conversation_only&&!this.data.turn.activity&&this.data.turn.task_id===this.data.task?.id&&this.data.task){this.data.task.last_observed={at:new Date().toISOString(),...observation};this.save();}}
  finish(error=false,budgetLimited=false){
-  if(this.data.turn?.conversation_only){inputOutcomes.settle(this.data,{interrupted:!!error,reason:error?'turn_interrupted':budgetLimited?'planner_turn_limited':null});this.data.last_conversation_turn={...this.data.turn,interrupted:!!error};this.data.turn=null;this.save();return;}
+  if(this.data.turn?.conversation_only){inputOutcomes.settle(this.data,{interrupted:!!error,reason:error?'turn_interrupted':budgetLimited?'planner_turn_limited':null});require('./speech.cjs').settleReplies(this.data,{error,budgetLimited});this.data.last_conversation_turn={...this.data.turn,interrupted:!!error};this.data.turn=null;this.save();return;}
   const turn=this.data.turn,task=turn?.activity?null:this.task();
   if(error&&turn&&['waiting','review'].includes(task?.status))task.status='needs_review';
   if(task?.status==='running'){
@@ -168,6 +168,7 @@ class WorkshopState {
    else if(bounds.turnsLow(task))task.status='budget_exhausted';
   }
   inputOutcomes.settle(this.data,{interrupted:!!error,reason:error?'turn_interrupted':budgetLimited?'planner_turn_limited':turn?.activity_report?.status==='blocked'?'activity_blocked':task?.status==='blocked'?'assignment_blocked':null});
+  require('./speech.cjs').settleReplies(this.data,{error,budgetLimited});
   if(turn)this.data.last_turn={...turn,interrupted:!!error};
   this.data.turn=null;this.save();
  }

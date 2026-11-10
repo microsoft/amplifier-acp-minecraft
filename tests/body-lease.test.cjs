@@ -2,6 +2,82 @@ const test=require('node:test'),assert=require('node:assert/strict');
 const fs=require('node:fs'),os=require('node:os'),path=require('node:path'),vm=require('node:vm');
 const {EventEmitter}=require('node:events'),{createRequire}=require('node:module'),{Readable}=require('node:stream');
 const root=path.resolve(__dirname,'..'),realRequire=createRequire(path.join(root,'body.cjs'));
+test('an exact exposed correction answered in the active turn needs no second conversation prompt',async()=>{
+ const f=fixture();try{
+  await f.request('/turn',{renewable_lease:true,continuation:true});
+  const h=f.history,e=h.record({kind:'chat',source:'human',username:'Visitor',message:'Correction: label it Recharge. What remains?',accepted:true,provenance:'minecraft_public_chat',time:new Date().toISOString()});
+  h.data.inbox.push({id:e.id,source:'human',username:e.username,message:e.message});h.save();
+  const source=(await f.operate('conversation')).messages.find(m=>m.id===e.id).source_fact;
+  const uuid='00000000-0000-0000-0000-000000000001';f.bot.players.Builder={uuid};
+  f.bot.chat=text=>{const packet={};f.bot.emit('message',packet,'chat',uuid,false);f.bot.emit('chat','Builder',text,null,packet);};
+  await f.operate('chat',{text:'The corrected label is Recharge; the return walk remains.',conversation_revision:e.id,reply_to:[source]});
+  assert.equal(h.data.inbox.length,1,'speech alone is not a successful terminal');
+  await f.request('/finish',{});
+  assert.equal(h.data.inbox.length,0,'do not ask another model to answer the same correction');
+  const outcome=(await f.request('/input-outcomes?ids='+e.id)).outcomes[0];
+  assert.equal(outcome.delivery,'terminal');assert.equal(outcome.completion,'not_established');
+  assert.equal(h.data.events.find(v=>v.id===e.id).message,e.message);
+ }finally{f.close();}
+});
+test('uncertain or unrelated responses never consume pending corrections',async()=>{
+ for(const mode of ['exposed_only','submitted_only','spoof_echo','failed_speech','interrupted','limited','edited_after_speech','attention_offer','unexposed','changed_revision']){
+  const f=fixture();try{
+   await f.request('/turn',{renewable_lease:true,continuation:true});
+   const h=f.history,e=h.record({kind:'chat',source:'human',username:'Visitor',message:'Correct the label',accepted:true,provenance:'minecraft_public_chat',time:new Date().toISOString()});
+   h.data.inbox.push({id:e.id,source:'human',username:e.username,message:e.message,...(mode==='attention_offer'?{attention_offer:{ticket:'owned-by-host'}}:{})});h.save();
+   let source=require('../source-revision.cjs').publicSource(e);
+   if(mode!=='unexposed')await f.operate('conversation');
+   if(mode==='changed_revision')source={...source,revision:'0'.repeat(64)};
+   const uuid='00000000-0000-0000-0000-000000000001';f.bot.players.Builder={uuid};
+   f.bot.chat=text=>{
+    if(mode==='failed_speech')throw Error('transport failed');
+    if(mode==='submitted_only')return;
+    const packet={};if(mode!=='spoof_echo')f.bot.emit('message',packet,'chat',uuid,false);
+    f.bot.emit('chat','Builder',text,null,packet);
+   };
+   const send=()=>f.operate('chat',{text:'I answered that correction.',conversation_revision:e.id,reply_to:[source]});
+   if(['attention_offer','unexposed','changed_revision','failed_speech'].includes(mode))await assert.rejects(send);
+   else if(mode!=='exposed_only')await send();
+   if(mode==='edited_after_speech')e.message='New distinct correction';
+   await f.request('/finish',{error:mode==='interrupted',budget_limited:mode==='limited'});
+   assert.equal(h.data.inbox.length,1,mode);
+   assert.ok(!(h.data.input_outcomes||[]).some(r=>r.request_id===e.id),mode);
+  }finally{f.close();}
+ }
+});
+test('reply settlement is atomic across lost finish response and restart, without consuming another human',async()=>{
+ const f=fixture();try{
+  await f.request('/turn',{renewable_lease:true,continuation:true});
+  const h=f.history,add=message=>{const e=h.record({kind:'chat',source:'human',username:'Visitor',message,accepted:true,provenance:'minecraft_public_chat',time:new Date().toISOString()});h.data.inbox.push({id:e.id,source:'human',username:e.username,message});h.save();return e;};
+  const one=add('Correct the label'),two=add('A separate question');
+  const snapshot=await f.operate('conversation'),source=snapshot.messages.find(m=>m.id===one.id).source_fact;
+  const uuid='00000000-0000-0000-0000-000000000001';f.bot.players.Builder={uuid};let sends=0;
+  f.bot.chat=text=>{sends++;const packet={};f.bot.emit('message',packet,'chat',uuid,false);f.bot.emit('chat','Builder',text,null,packet);};
+  const args={text:'The label is corrected.',conversation_revision:two.id,reply_to:[source]};
+  await f.operate('chat',args);await f.operate('chat',args);assert.equal(sends,1,'lost speech ack reuses exact receipt');
+  await f.request('/finish',{}); // Caller loses this response; durable state is authoritative.
+  const {WorkshopState}=require('../workshop-state.cjs'),restored=new WorkshopState(path.join(f.home,'workshop.json'));
+  assert.deepEqual(restored.data.inbox.map(m=>m.id),[two.id]);
+  assert.equal(restored.data.input_outcomes.filter(r=>r.request_id===one.id).length,1);
+  const saved=JSON.stringify(restored.data);restored.finish();
+  assert.equal(JSON.stringify(restored.data),saved,'duplicate finish does not create another response or effect');
+  assert.equal(sends,1);
+ }finally{f.close();}
+});
+test('restart before successful terminal preserves the pending input and confirmed speech evidence',async()=>{
+ const f=fixture();try{
+  await f.request('/turn',{renewable_lease:true,continuation:true});
+  const h=f.history,e=h.record({kind:'chat',source:'human',username:'Visitor',message:'Correct the label',accepted:true,provenance:'minecraft_public_chat',time:new Date().toISOString()});
+  h.data.inbox.push({id:e.id,source:'human',username:e.username,message:e.message});h.save();
+  const source=(await f.operate('conversation')).messages[0].source_fact,uuid='00000000-0000-0000-0000-000000000001';f.bot.players.Builder={uuid};
+  f.bot.chat=text=>{const packet={};f.bot.emit('message',packet,'chat',uuid,false);f.bot.emit('chat','Builder',text,null,packet);};
+  await f.operate('chat',{text:'The correction is understood.',conversation_revision:e.id,reply_to:[source]});
+  const {WorkshopState}=require('../workshop-state.cjs'),restored=new WorkshopState(path.join(f.home,'workshop.json'));
+  assert.equal(restored.data.inbox[0].id,e.id);assert.equal(restored.data.last_turn.interrupted,true);
+  assert.ok(restored.data.last_turn.speech_operations[0].packets[0].server_echo);
+  assert.ok(!(restored.data.input_outcomes||[]).some(r=>r.request_id===e.id));
+ }finally{f.close();}
+});
 function fixture(configOverride={},walkingOverride=null,bridgeOverride=null){
  const home=fs.mkdtempSync(path.join(os.tmpdir(),'body-lease-')),config=path.join(home,'config.json');
  fs.writeFileSync(config,JSON.stringify({username:'Builder',token:'fixture',...configOverride}));

@@ -378,6 +378,21 @@ silently dropping the end. Delivery stops if the public conversation changes;
 delivery counts describe what was sent, without logging the reply payload.
 A failed send does not create that record; it is not proof of remote delivery.
 
+When a new public human correction arrives during a turn, the agent can answer
+it through the existing `chat` or `tell` tool with optional `reply_to` entries.
+Each entry copies the exact `{id, revision, occurredAt}` from an exposed
+`source_fact`. Only a pending, direct public human input qualifies; private
+messages and host attention offers keep their existing delivery lifecycle.
+After every speech packet has a matching server-attributed self echo and the
+prompt terminates successfully with settled actions, the connector records a
+terminal response against that source and removes only its pending reply. This
+avoids another prompt solely to answer the same correction. It does not claim
+that a recipient read the response, that requested work is complete, or that new
+work is authorized. Mere observation, steering acknowledgment, partial speech,
+missing echoes, changed sources and interrupted turns leave the input pending.
+Original messages and speech evidence remain stored; a lost terminal reply or
+restart cannot create another response or replay effects.
+
 For a same-machine [Agent Instance](https://github.com/microsoft/amplifier-constellation-instance):
 
 ```sh
