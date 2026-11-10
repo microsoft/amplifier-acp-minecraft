@@ -48,6 +48,12 @@ test('uncertain public return is never resent and private source cannot become p
  assert.equal((await f.bridge.returnOutcome(id,'revision')).state,'unknown');assert.equal(f.sent.length,1);
  f.history.data.events[0].whisper=true;await assert.rejects(f.bridge.returnOutcome(id,'revision'),/source/);assert.equal(f.sent.length,1);
 });
+test('missing or stale public revision is a no-effect rejection, not an uncertain speech reservation',async()=>{
+ const f=fixture();await f.bridge.post({request_id:id,text:'Checked',kind:'outcome',outcome:{kind:'result'}});
+ await assert.rejects(f.bridge.returnOutcome(id),/conversation_revision/);assert.equal(f.bridge.journal.read(id).public_return,undefined);
+ f.bridge.validatePublic=()=>{throw Error('Conversation changed');};await assert.rejects(f.bridge.returnOutcome(id,'stale'),/Conversation changed/);assert.equal(f.bridge.journal.read(id).public_return,undefined);assert.equal(f.sent.length,0);
+ f.bridge.validatePublic=()=>{};await f.bridge.returnOutcome(id,'fresh');assert.equal(f.sent.length,1);
+});
 test('post metadata and byte bounds, target membership and actor spoof reject without transport',async()=>{
  for(const a of [{text:'😀'.repeat(1600)},{target_agent_ids:['absent']},{actor:{id:'human'}},{outcome:{kind:'result'}},{kind:'outcome',outcome:{kind:'result',evidence:[{label:'x',reference:'x'.repeat(1001)}]}}]){const f=fixture();await assert.rejects(f.bridge.post({request_id:id,text:'Check',...a}));assert.equal(f.posts,0);}
 });

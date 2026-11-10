@@ -23,9 +23,9 @@ function associatedWork(history,origin){
  return (!t.request_ids?.length&&d.last_turn?.activity_report?.status==='running'&&d.last_turn?.huddle_source_id===origin.source_id)||t.huddle_source_id===origin.source_id;
 }
 class Huddle {
- constructor(history,config,{transport,canPost=()=>false,sendPublic,onState=()=>{}}={}){
+ constructor(history,config,{transport,canPost=()=>false,sendPublic,validatePublic=()=>{},onState=()=>{}}={}){
   if(!config?.origin||!config.conversation_id)throw Error('Enroll an exact original huddle destination');
-  this.history=history;this.config=config;this.http=transport||new HuddleHttp(config);this.canPost=canPost;this.sendPublic=sendPublic;this.onState=onState;
+  this.history=history;this.config=config;this.http=transport||new HuddleHttp(config);this.canPost=canPost;this.sendPublic=sendPublic;this.validatePublic=validatePublic;this.onState=onState;
   this.journal=new HuddleJournal(history,{host:this.http.host,room_id:config.room_id,agent_id:config.agent_id,connection_id:config.connection_id});this.current=null;
  }
  summary(){return this.current?{id:this.current.id,purpose:this.current.purpose,state:this.current.state,revision:this.current.revision,inspect_url:this.current.inspect_url,
@@ -82,12 +82,16 @@ class Huddle {
   try{return this.receipt(await this.http.post(payload),record);}catch(error){throw Error('Huddle post outcome unknown; inspect its original request_id with status, never resend with a new ID');}
  }
  async returnOutcome(id,conversationRevision){
+  if(typeof conversationRevision!=='string'||!conversationRevision)throw Error('Read conversation and supply its current conversation_revision before public return; no speech attempted');
   const record=await this.status(id),d=this.current;
   if(record.state!=='saved'||record.payload.kind!=='outcome'||record.receipt.return?.delivery!=='domain_owned')throw Error('No saved domain-owned outcome to return');
   const original=publicReturnSource(this.history,this.config,record.receipt.origin);
   if(d.state!=='open'||!this.canPost()||!this.sendPublic)throw Error('Public return is stopped or unavailable');
   if(record.public_return)return {...record.public_return,duplicate:true};
   const text=record.payload.text+' '+d.inspect_url;if(text.length>4000)throw Error('Outcome plus inspection link exceeds game speech limit');
+  // Known no-effect preconditions must pass before reserving an uncertain send.
+  // The speech transport rechecks again before every packet.
+  this.validatePublic({conversation_revision:conversationRevision});
   // Persist unknown before the existing speech transport. Never retry after loss.
   const pending={...record,public_return:{state:'unknown',source:original,started_at:new Date().toISOString()}};this.journal.commit(id,pending);
   const result=await this.sendPublic({text,conversation_revision:conversationRevision,room_id:this.config.room_id,request_id:id});

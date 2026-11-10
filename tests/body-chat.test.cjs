@@ -28,6 +28,9 @@ test('actual body keeps huddle coordination quiet and public outcome uses origin
  const privateFinal=await f.request('/reply',{text:'Private coordination wrap-up',conversation_revision:'original-public-human'});assert.equal(privateFinal.sent,false);assert.deepEqual(sent,[]);
  const outcome='02000000-0000-4000-8000-000000000002';
  await f.operate('huddle',{operation:'post',request_id:outcome,text:'Checked.',kind:'outcome',outcome:{kind:'result',evidence:[]}});
+ await assert.rejects(f.operate('huddle',{operation:'return',request_id:outcome}),/conversation_revision/);
+ await assert.rejects(f.operate('huddle',{operation:'return',request_id:outcome,conversation_revision:'stale'}),/changed/);
+ assert.equal(sent.length,0);assert.ok(Object.values(f.history.data.huddle_operations).every(group=>!group[outcome].public_return));
  const revision=await f.request('/conversation');
  const result=await f.operate('huddle',{operation:'return',request_id:outcome,conversation_revision:revision.revision});assert.equal(result.transport_submitted,true);assert.equal(sent.length,1);
  await f.operate('huddle',{operation:'return',request_id:outcome,conversation_revision:revision.revision});assert.equal(sent.length,1);assert.equal(state.posts,2);
