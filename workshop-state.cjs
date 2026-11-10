@@ -191,6 +191,18 @@ class WorkshopState {
   const id=cfg.conversation_id||'minecraft:workshop';
   if(q.conversation_id&&q.conversation_id!==id)throw Error('Conversation is not available');
   const observed_at=new Date().toISOString();
+  if(q.operation==='list'){
+   // Discovery is not a detailed observation of every connected world. Keep
+   // canonical tasks untouched, including recorded status after a deadline.
+   const recorded=this.data.task;
+   const activity=Object.fromEntries(['connected','busy','turn_active'].map(k=>[k,typeof live[k]==='boolean'?live[k]:null]));
+   activity.task=recorded?{id:recorded.id,status:recorded.status,
+    limit_state:bounds.limitState(recorded,Date.parse(observed_at))}:null;
+   return {items:[{id,conversation_id:id,label:`Minecraft — ${cfg.username}`,surface:'minecraft',
+    updated_at:this.data.events.at(-1)?.time,observed_at,activity,
+    coverage:'Discovery/status only; task status is recorded, not proof of completion. Read this conversation for details and evidence under the same access rules.',
+    read:{operation:'read',conversation_id:id}}],complete:true,observed_at};
+  }
   const original=this.task();
   const task=original?{...(owner?original:Object.fromEntries(
    ['id','goal','status','turns','max_turns','deadline','wait_for'].filter(k=>original[k]!==undefined).map(k=>[k,original[k]]))),
@@ -201,7 +213,6 @@ class WorkshopState {
    'Recent public chat, task summaries and action receipt metadata; raw inputs/results are owner-local and task completion is agent-reported';
   const current={id,conversation_id:id,label:`Minecraft — ${cfg.username}`,surface:'minecraft',updated_at:this.data.events.at(-1)?.time,coverage,activity:{...live,task},observed_at};
   if(q.operation==='authorize')return {owner:false,conversation_id:id,actor_id:`minecraft:${cfg.username}`,surface:'minecraft',label:current.label,observed_at};
-  if(q.operation==='list')return {items:[current],complete:true,observed_at};
   const limit=Math.max(1,Math.min(40,Number(q.limit)||20));
   const events=owner?this.data.events:this.data.events.map(sharedEvent).filter(Boolean);
   const messages=events.slice(-limit).map(e=>({id:e.id,at:e.time,actor:e.username||cfg.username,
