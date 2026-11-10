@@ -37,7 +37,7 @@ function replySources(data,requested,conversation){
 // every recipient read the message. Ambiguous/absent echoes do not settle input.
 function confirmEcho(data,text,transport,username,at){
  if(transport?.kind!=='server_player_uuid'||transport.username!==username)return false;
- const candidates=(data.turn?.speech_operations||[]).flatMap(o=>o.reply_to?.length?o.packets:[])
+ const candidates=(data.turn?.speech_operations||[]).flatMap(o=>o.reply_to?.length||o.huddle_return?o.packets:[])
   .filter(p=>['submitting','submitted'].includes(p.status)&&p.text===text&&!p.server_echo);
  if(candidates.length!==1)return false;
  candidates[0].server_echo={at,transport:{...transport}};return true;

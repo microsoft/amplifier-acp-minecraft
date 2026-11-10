@@ -4,6 +4,46 @@ const fs=require('node:fs'),os=require('node:os'),path=require('node:path'),vm=r
 const {EventEmitter}=require('node:events'),{createRequire}=require('node:module');
 const {Readable}=require('node:stream');
 const root=path.resolve(__dirname,'..'),realRequire=createRequire(path.join(root,'body.cjs'));
+async function huddleFixture(t){
+ const nativeHttp=require('node:http'),crypto=require('node:crypto'),sha=v=>crypto.createHash('sha256').update(v).digest('hex');
+ const event={id:'original-public-human',time:'2026-11-10T12:00:00.000Z',kind:'chat',source:'human',accepted:true,username:'Human',message:'Check together',provenance:'minecraft_public_chat',transport:{kind:'server_player_uuid',uuid:'human-uuid',username:'Human'}};
+ const origin={kind:'external',service:'minecraft',connection_id:'game',conversation_id:'public-game',request_id:'original',source_id:event.id,source_revision:require('../source-revision.cjs').publicSource(event).revision,occurred_at:Date.parse(event.time),actor:{id:'human-uuid',kind:'human'}};
+ const state={room:'open',posts:0,requests:0,unavailable:false,saved:new Map()},caps={version:1,external_participants:true,read:true,post:true,post_status:true,outcomes:true,quiet_follow:true,max_text_bytes:6000,max_evidence_items:8,max_metadata_bytes:8000,max_page_items:100};let url;
+ const server=nativeHttp.createServer(async(req,res)=>{state.requests++;res.setHeader('Content-Type','application/json');if(state.unavailable){res.statusCode=503;res.end('{}');return;}
+  const descriptor={version:1,id:'room',conversation_id:'room',participant:{agent_id:'agent',connection_id:'game'},state:state.room,revision:1,origin,inspect_url:url+'/?conversation=room',capabilities:caps,participants:[{id:'agent'},{id:'peer'}],purpose:'Shared check'};
+  if(req.method==='POST'){
+   let raw='';for await(const c of req)raw+=c;const p=JSON.parse(raw);state.posts++;
+   const receipt={version:1,status:'saved',message_id:p.request_id,request_id:p.request_id,room_id:'room',sequence:1,kind:p.kind,created_at:1,agent_id:'agent',connection_id:'game',origin,return:p.kind==='outcome'?{state:'available',delivery:'domain_owned'}:{state:'not_requested'},revision:sha(JSON.stringify(p)),text_sha256:sha(p.text),source:p.source,outcome:p.outcome,target_agent_ids:p.target_agent_ids,inspect_url:descriptor.inspect_url};state.saved.set(p.request_id,receipt);res.end(JSON.stringify(receipt));
+  }else if(req.url.includes('/posts/')){res.end(JSON.stringify(state.saved.get(req.url.split('/').at(-1))));}
+  else if(req.url.includes('/messages'))res.end(JSON.stringify({version:1,items:[],next_cursor:0,has_more:false,coverage:{after:0,through:0,complete_through_cursor:true},state:state.room,revision:1}));
+  else res.end(JSON.stringify(descriptor));
+ });await new Promise(r=>server.listen(0,'127.0.0.1',r));url=`http://127.0.0.1:${server.address().port}`;t.after(()=>{server.closeAllConnections();server.close();});
+ const f=fixture('BuilderOne',false,{huddle:{url,room_id:'room',agent_id:'agent',connection_id:'game',conversation_id:'public-game',origin,token:'participant-secret-'.repeat(3)}});t.after(f.close);f.history.data.events.push(event);f.history.save();return {f,state,event};
+}
+test('actual body keeps huddle coordination quiet and public outcome uses original speech once',async t=>{
+ const {f,state}=await huddleFixture(t),sent=[];f.bot.chat=text=>sent.push(text);f.startFixtureTurn();
+ const before=JSON.stringify(f.history.task()),binding=fs.existsSync(path.join(f.home,'session.json'));
+ const id='01000000-0000-4000-8000-000000000001';
+ await f.operate('huddle',{operation:'read'});await f.operate('huddle',{operation:'post',request_id:id,text:'Meet in the work room.',kind:'message'});assert.deepEqual(sent,[]);
+ const privateFinal=await f.request('/reply',{text:'Private coordination wrap-up',conversation_revision:'original-public-human'});assert.equal(privateFinal.sent,false);assert.deepEqual(sent,[]);
+ const outcome='02000000-0000-4000-8000-000000000002';
+ await f.operate('huddle',{operation:'post',request_id:outcome,text:'Checked.',kind:'outcome',outcome:{kind:'result',evidence:[]}});
+ await assert.rejects(f.operate('huddle',{operation:'return',request_id:outcome}),/conversation_revision/);
+ await assert.rejects(f.operate('huddle',{operation:'return',request_id:outcome,conversation_revision:'stale'}),/changed/);
+ assert.equal(sent.length,0);assert.ok(Object.values(f.history.data.huddle_operations).every(group=>!group[outcome].public_return));
+ const revision=await f.request('/conversation');
+ const result=await f.operate('huddle',{operation:'return',request_id:outcome,conversation_revision:revision.revision});assert.equal(result.transport_submitted,true);assert.equal(sent.length,1);
+ await f.operate('huddle',{operation:'return',request_id:outcome,conversation_revision:revision.revision});assert.equal(sent.length,1);assert.equal(state.posts,2);
+ assert.equal(JSON.stringify(f.history.task()),before);assert.equal(fs.existsSync(path.join(f.home,'session.json')),binding);assert.equal(f.history.data.input_outcomes?.length||0,0);
+ assert.ok(f.history.data.turn.speech_operations[0].huddle_return);assert.equal(f.history.data.turn.speech_operations[0].reply_to,undefined);
+});
+test('actual body room Stop affects matching work only and preserves later human chat availability',async t=>{
+ const {f,state,event}=await huddleFixture(t);f.bot.pathfinder={setGoal(){}};f.bot.clearControlStates=()=>{};f.startFixtureTurn();state.room='stopped';
+ const before=JSON.stringify(f.history.data.task);await f.request('/huddle/context');assert.equal(JSON.stringify(f.history.data.task),before);assert.ok(f.history.data.turn);
+ f.history.data.task={...f.history.data.task,status:'running',authority:{source:{id:event.id}}};f.history.data.turn.task_id=f.history.data.task.id;f.history.data.turn.activity=false;
+ await f.request('/huddle/context');assert.equal(f.history.data.task.status,'stopped');assert.equal(f.history.data.turn,null);assert.equal(f.history.data.activity_stop,undefined);
+ f.bot.emit('chat','Human','Hello BuilderOne');assert.equal(f.inbox.at(-1).source,'human');assert.equal(f.history.data.task.status,'stopped');
+});
 function fixture(name,semantic=false,extra={}){
  const home=fs.mkdtempSync(path.join(os.tmpdir(),'body-chat-'));
  const config=path.join(home,'config.json');
@@ -507,4 +547,18 @@ test('scoped installation token reaches only idempotent original input and exact
   const legacy=await f.request('/task',{text:'Legacy owner instruction'});assert.ok(legacy.request_id);assert.equal(f.inbox.length,2);
   const operator=await f.request('/operator-inputs');const e=operator.messages.find(e=>e.id===first.request_id);assert.equal(e.text,body.text);assert.equal(e.installation_source.call_id,'call1');
  }finally{f.close();}
+});
+
+test('associated valid work does not consult an unavailable room for each action; observed Stop still blocks',async t=>{
+ const {f,state,event}=await huddleFixture(t);f.bot.pathfinder={setGoal(){}};f.bot.clearControlStates=()=>{};
+ Object.assign(f.history.data.task,{status:'running',deadline:Date.now()+600000,turns:1,authority:{source:{id:event.id}}});
+ f.startFixtureTurn();f.history.data.turn.task_id=f.history.data.task.id;f.history.data.turn.activity=false;
+ await f.request('/huddle/context');state.unavailable=true;const requests=state.requests;
+ await f.operate('work_report',{status:'running',summary:'Existing authorized work continues.'});
+ assert.equal(state.requests,requests);
+ await assert.rejects(f.operate('huddle',{operation:'post',request_id:'03000000-0000-4000-8000-000000000003',text:'Unavailable room'}));
+ assert.equal(state.posts,0);assert.equal(f.history.data.task.status,'running');
+ state.unavailable=false;state.room='stopped';await f.request('/huddle/context');state.unavailable=true;const afterStop=state.requests;
+ await assert.rejects(f.operate('work_report',{status:'running',summary:'Must not resume stopped work.'}),/stopped/);
+ assert.equal(state.requests,afterStop);assert.equal(f.history.data.task.status,'stopped');assert.equal(f.history.data.turn,null);
 });

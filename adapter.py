@@ -369,6 +369,11 @@ async def run(home):
                     observe('assessment_applied',application='advisory',task_id=state['task']['id'],fingerprint=assessment['fingerprint'])
             if watch_notifications:
                 observe('watch_applied',application='advisory',ids=[n['id'] for n in watch_notifications])
+            if cfg.get('huddle'):
+                try:
+                    await request('/huddle/context')
+                except Exception as error:
+                    observe('huddle_unavailable',category=type(error).__name__)
             world=await request('/observation')
             if not world.get('turn_active') or world.get('generation')!=state.get('generation'):
                 raise RuntimeError('Turn stopped before planner observation')
@@ -388,10 +393,17 @@ async def run(home):
             pending=asyncio.create_task(client.prompt(prompt,attention_offer=attention_offer,
                 snapshot_retained=retained_request(messages,world),snapshot_key=identity))
             last_renewed=time.monotonic()
+            last_huddle_checked=time.monotonic()
             try:
                 while not pending.done():
                     await asyncio.wait({pending},timeout=1)
                     if not pending.done():
+                        if cfg.get('huddle') and time.monotonic()-last_huddle_checked>=5:
+                            last_huddle_checked=time.monotonic()
+                            try:
+                                await request('/huddle/context')
+                            except Exception as error:
+                                observe('huddle_unavailable',category=type(error).__name__)
                         status=await request('/status')
                         if not status.get('turn_active'):
                             await client.cancel()

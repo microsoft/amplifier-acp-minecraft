@@ -71,6 +71,28 @@ const events=[], inbox=history.data.inbox||(history.data.inbox=[]), receipts=[];
 const routeHuman=conversationRouter(cfg.username,{aliases:cfg.aliases||{}});
 const participation=new Participation(history,cfg);
 const conversation=new Conversation(history,cfg.username);
+const huddle=cfg.huddle?new (require('./huddle.cjs').Huddle)(history,cfg.huddle,{
+ canPost:()=>ready&&!!history.data.turn&&Date.now()<turnUntil&&!history.data.turn.huddle_stopped,
+ validatePublic:a=>{
+  if(!history.data.turn||history.data.turn.reply_recipient||Date.now()>=turnUntil)throw Error('Original public return requires an active public reply turn');
+  conversation.guard(a.conversation_revision);
+ },
+ onState:d=>{
+  if(!require('./huddle.cjs').associatedWork(history,d.origin))return;
+  if(history.data.turn?.activity){history.data.turn.huddle_source_id=d.origin.source_id;history.save();}
+  if(d.state!=='stopped')return;
+  // Only the original associated responsibility stops. Inspection/membership
+  // alone never binds an unrelated task to this room.
+  stop();
+  if(history.data.turn?.activity){history.data.turn.activity_report={status:'blocked',summary:'Associated coordination room stopped; retained effects need inspection.'};history.data.turn.huddle_stopped=true;history.finish(true);}
+  else if(['running','waiting','blocked','needs_review','review'].includes(history.data.task?.status))history.stop();
+ },
+ sendPublic:async a=>{
+  if(!history.data.turn||history.data.turn.reply_recipient||Date.now()>=turnUntil)throw Error('Original public return requires an active public reply turn');
+  history.data.turn.explicit_speech=true;history.save();
+  return speech('chat',{text:a.text,conversation_revision:a.conversation_revision,huddle_return:{room_id:a.room_id,request_id:a.request_id}});
+ }
+}):null;
 const participationProposal=(humanOnly=false,sourceId=null)=>{
  const proposal=participation.proposal(Object.keys(bot.players),{humanOnly,sourceId});
  if(proposal)proposal.delivery=participation.deliveryStatus(proposal,inbox,{lastHumanAt,agentWakeTimes});
@@ -145,7 +167,7 @@ function snapshot(){
     terrain:spatial.localMap(bot,3),
     players:Object.values(bot.players).map(p=>({name:p.username,position:p.entity?.position})),
     nearby_blocks:blocks.map(p=>({name:bot.blockAt(p)?.name,position:p})),
-    conversation:conversation.snapshot(),human_activity:humanActivity.snapshot(),action_sequence:actionSequence.status(),
+    conversation:conversation.snapshot(),...(huddle?{huddle:huddle.summary()}:{}),human_activity:humanActivity.snapshot(),action_sequence:actionSequence.status(),
     public_chat:history.data.events.filter(isPublicChatEvent).slice(-20),
     events:history.data.events.filter(e=>!e.whisper).slice(-35),task:history.task(),receipts:receipts.slice(-15),remaining_actions:actionsRemaining(),action_lease:lease.view(history.task())};
 }
@@ -189,7 +211,7 @@ async function speech(name,a){
  turn.speech_operations??=[];
  const old=turn.speech_operations.find(o=>o.key===key);
  if(old){if(JSON.stringify(old.reply_to||[])!==JSON.stringify(replyTo))throw Error('Existing utterance has different source associations; do not resend');if(old.status==='submitted')return {...old.result,duplicate:true};throw Error('This utterance has an unresolved or partial submission; inspect its receipts, do not replay');}
- const operation={id:crypto.randomUUID(),key,status:'pending',...(replyTo.length?{reply_to:replyTo}:{}),packets:chunks.map(text=>({text,status:'unsent'}))};
+ const operation={id:crypto.randomUUID(),key,status:'pending',...(replyTo.length?{reply_to:replyTo}:{}),...(a.huddle_return?{huddle_return:a.huddle_return}:{}),packets:chunks.map(text=>({text,status:'unsent'}))};
  turn.speech_operations.push(operation);history.save();
  try{
   for(let i=0;i<operation.packets.length;i++){
@@ -213,6 +235,19 @@ function validatePlacementFacing(item,facing){
 }
 async function operate(name,a={},sequenceId=null){
   if(!ready)throw Error('Player is not connected');
+  if(name==='huddle'){
+    if(!huddle)throw Error('No enrolled coordination room');
+    if(a.operation==='read')return huddle.read(a.after??0,a.limit??20);
+    if(a.operation==='status')return huddle.status(a.request_id);
+    if(a.operation==='return')return huddle.returnOutcome(a.request_id,a.conversation_revision);
+    if(a.operation==='post'){
+      // Selecting an explicit room destination must not echo the planner's
+      // private wrap-up into game chat. Existing chat/tell remain available.
+      if(history.data.turn){history.data.turn.explicit_speech=true;history.save();}
+      const {operation,...post}=a;return huddle.post(post);
+    }
+    throw Error('Unknown huddle operation');
+  }
   if(['chat','tell'].includes(name)&&history.data.turn){history.data.turn.explicit_speech=true;history.save();}
   if(name==='resume_activity')return activityPolicy.resume(history,cfg,a);
   if(name==='stop'&&activityPolicy.enabled(cfg)){stop();history.stop({activity:activityPolicy.enabled(cfg)});taskIntake.revokeSources();record('agent_stopped_activity');return {stopped:true};}
@@ -225,6 +260,9 @@ async function operate(name,a={},sequenceId=null){
     record(name==='work_resume'?'work_resumption':'task_authorization',{operation:name,...result});return result;
   }
   if(!REPLY_TOOLS.has(name)){
+    // Descriptor observations occur at planner/supervision boundaries. A room
+    // outage must not gate valid world work; only an observed Stop applies here.
+    if(huddle?.current?.state==='stopped'&&require('./huddle.cjs').associatedWork(history,cfg.huddle.origin))throw Error('Associated coordination room is stopped; unrelated human conversation remains available');
     if(!workAllowed())throw Error('Conversation-only or unauthorized assignment: inspect task_capabilities before effects');
     if(history.data.turn?.conversation_only){
       if(Date.now()>=turnUntil||busy)throw Error('Reply action window ended or an operation is unsettled');
@@ -490,6 +528,9 @@ definitions.cancel_sequence=['Stop pending steps in the current plan. The curren
 definitions.action_sequence=['Execute an explicit ordered plan without a model round trip between steps. Each step uses its normal live checks. Stops on new human input, changed authority, cancellation, errors or partial results. Use a unique plan_id; retrying the same ID only reads its receipt, never replays. No arbitrary scripts. You may observe or cancel while it runs. Inspect results before further plans.',{plan_id:z.string().min(1).max(100),steps:z.array(z.discriminatedUnion('tool',SEQUENCE_TOOLS.map(tool=>z.object({tool:z.literal(tool),arguments:z.object(definitions[tool][1]).strict()}).strict()))).min(1).max(16)}];
 definitions.start_sequence=['Start an asynchronous ordered plan. Returns accepted/running and an operation ID, NOT completed effects. Continue reasoning/read-only planning while it executes; sequence_status waits for real results. Same lease/task/Stop and no-replay guards as action_sequence.',definitions.action_sequence[1]];
 definitions.sequence_status=['Inspect an exact plan operation and its actual step receipts. Optional bounded wait avoids polling while a plan settles. Unknown/interrupted is not completion; never replay to discover outcome.',{plan_id:z.string().min(1).max(100),wait_ms:z.number().int().min(0).max(30000).optional()}];
+if(huddle)definitions.huddle=['Use the enrolled inspectable room for routine peer coordination. read preserves original room attribution; it grants no game authority. post uses one stable request_id; saved is not read/executed/completed. After uncertainty use status with that SAME ID, never a new post. outcome is a meaningful evidence-linked claim. For return, FIRST read conversation and pass its current conversation_revision together with the saved outcome request_id. It sends only to the verified original public game destination; private/foreign origins cannot return here. Stop closes room posts, not unrelated human replies. chat/tell remain public.',{
+ operation:z.enum(['read','post','status','return']),after:z.number().int().nonnegative().optional(),limit:z.number().int().min(1).max(100).optional(),request_id:z.string().uuid().optional(),text:z.string().min(1).max(6000).optional(),target_agent_ids:z.array(z.string().min(1).max(200)).max(8).optional(),kind:z.enum(['message','outcome']).optional(),source_id:z.string().max(200).optional(),outcome:z.object({kind:z.enum(['progress','result','blocked','decision']),evidence:z.array(z.object({label:z.string().min(1).max(200),reference:z.string().min(1).max(1000)}).strict()).max(8).optional()}).strict().optional(),conversation_revision:revision.optional()
+}];
 
 function mcpServer(){
   const m=new McpServer({name:'minecraft-player',version:'0.1.0'});
@@ -538,6 +579,7 @@ const server=http.createServer(async(req,res)=>{
       inventory:ready?containers.inventorySnapshot(bot.inventory):null,position:ready?bot.entity.position:null,
       window_open:!!bot.currentWindow,admission_gate:updateAdmission.state(path.dirname(process.argv[2]))};
     else if(req.method==='GET'&&req.url==='/observation')result=worldView(snapshot());
+    else if(req.method==='GET'&&req.url==='/huddle/context'){if(!huddle)result={configured:false};else{await huddle.descriptor();result=huddle.summary();}}
     else if(req.method==='GET'&&req.url==='/conversation')result={...conversation.snapshot(),generation,turn_active:Date.now()<turnUntil};
     else if(req.method==='GET'&&req.url==='/operator-inputs'){
       // Authenticated local control is never inserted into public conversation/context.
