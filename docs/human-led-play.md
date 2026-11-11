@@ -61,6 +61,31 @@ turns refuse. The original uncertain receipt is retained with the dated no-effec
 review; tasks, Stop, prior input and accounting are unchanged. Read state after a
 lost response; do not repeat a failed game action or infer renewed work authority.
 
+For multiple terminal movement failures, owner-only
+`POST /activity/review-settled-moves` records a complete per-action review. It is
+not available to models, presence clients or installation callers. Supply:
+
+- `generation` from `/conversation`, a UUID `request_id`, and `expected_turn_sha256`.
+- `expected_position` and `expected_inventory_sha256` from the current
+  `/installation-state` position and full inventory snapshot.
+- `evidence_sha256`, the hash of the retained owner assessment, plus `reviews`
+  covering every uncertain action exactly. Each entry contains `action_id`,
+  `receipt_sha256` of the retained `action_failed` event, a concrete `reason`, and
+  `outcome`: `no_effect` for a proven pre-dispatch walk-only refusal, or
+  `settled_failed_movement` when the operation settled without verified arrival.
+
+Hashes of JSON values use SHA-256 of JavaScript `JSON.stringify(value)`. Inspect
+the original implementation, terminal tool receipts and current physical state;
+an error string or final position alone cannot prove no effects. The endpoint
+checks an idle, non-interrupted activity, matching start/failure receipts,
+unchanged position/inventory and complete coverage. Pending operations, timeouts,
+other action kinds, missing receipts and stale reviews refuse. It retains original
+uncertain statuses and adds the review atomically. A matching repeat returns the
+saved review; a changed request refuses. Stop, task bounds, accounting and input
+receipts are untouched. This permits future work under existing policy, never
+automatic continuation or replay of the reviewed request. Review does not prove
+the old task or requested round trip completed.
+
 ### Route destination facts
 
 `plan_route` reports loaded feet/head/support geometry at its target. An exact

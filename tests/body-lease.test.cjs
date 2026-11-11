@@ -550,6 +550,28 @@ test('owner no-effect review preserves uncertain receipt and task, refuses stale
  }finally{f.close();}
 });
 
+test('owner settled-movement review binds live idle state and cannot reopen the old continuation',async()=>{
+ let moves=0;const f=fixture({...optionalConfig,installation_callers:[{id:'voice',label:'Voice',token:'v'.repeat(40)}]},{move:async()=>{moves++;return {reached:true};}});try{
+  const digest=v=>realRequire('node:crypto').createHash('sha256').update(JSON.stringify(v)).digest('hex');
+  const {Vec3}=realRequire('vec3');f.bot.entity.position=new Vec3(0,64,0);f.bot.inventory={slots:[null],selectedItem:null};
+  f.history.data.last_turn={activity:true,task_id:null,interrupted:false,started_at:'2026-11-11T01:00:00Z',activity_report:{status:'running'},actions:[{id:'failed',status:'uncertain'}]};
+  for(const kind of ['action_started','action_failed'])f.history.record({kind,action:'move',action_id:'failed',time:'2026-11-11T01:00:01Z',arguments:{mode:'normal',x:1,y:64,z:0},...(kind==='action_failed'?{error:'arrival mismatch'}:{})});
+  const observation=await f.request('/installation-state');
+  const args={generation:(await f.request('/conversation')).generation,request_id:realRequire('node:crypto').randomUUID(),expected_turn_sha256:digest(f.history.data.last_turn),expected_position:observation.position,expected_inventory_sha256:digest(observation.inventory),evidence_sha256:'a'.repeat(64),reviews:[{action_id:'failed',receipt_sha256:digest(f.history.data.events.at(-1)),outcome:'settled_failed_movement',reason:'Owner verified the exact failure terminal and settled tools, current position and full inventory. Arrival was not established.'}]};
+  const task=JSON.stringify(f.history.data.task);
+  await f.request('/activity/review-settled-moves',args,401,'wrong');
+  await f.request('/activity/review-settled-moves',args,403,'v'.repeat(40));
+  await f.request('/activity/review-settled-moves',{...args,generation:args.generation+1},400);
+  f.bot.entity.position.x=1;await f.request('/activity/review-settled-moves',args,400);f.bot.entity.position.x=0;
+  f.bot.currentWindow={};await f.request('/activity/review-settled-moves',args,400);f.bot.currentWindow=null;
+  const result=await f.request('/activity/review-settled-moves',args);assert.equal(result.activity_allowed,true);assert.equal(moves,0);
+  assert.equal((await f.request('/activity/review-settled-moves',args)).duplicate,true);
+  await f.request('/turn',{activity:true,continuation:true},400);assert.equal(JSON.stringify(f.history.data.task),task);
+  const fresh=incoming(f);await f.request('/turn',{conversation_only:true,message_ids:[fresh.id]});
+  await f.operate('move',{x:2,y:64,z:0,mode:'walk_only'});assert.equal(moves,1);assert.equal(JSON.stringify(f.history.data.task),task);
+ }finally{f.close();}
+});
+
 test('actual authenticated control input resumes waiting metadata and permits task-optional movement',async()=>{
  let moves=0;const f=fixture(optionalConfig,{move:async()=>{moves++;return {reached:true};}});try{
   const {Vec3}=realRequire('vec3');f.bot.entity.position=new Vec3(0,64,0);
