@@ -212,15 +212,18 @@ function speak(text,{audience='reply'}={}){
  if(history.data.turn){const key=speechIdentity(result.sent);speechReceipts.set(key,result);}
  return result;
 }
+function validateSpeechTarget(name,a){
+ if(a.audience!==undefined&&!['reply','game'].includes(a.audience))throw Error('Unknown speech audience');
+ if(privateResponse(a)){
+  if(name==='tell'||a.reply_to!==undefined)throw Error('This reply belongs to the private installation caller, not a game player. Use chat or final text for the reply; select audience=game only for a requested game publication.');
+  return;
+ }
+ if(name==='tell'&&(a.player===bot.username||!bot.players[a.player]))throw Error('Choose another connected player by their exact name');
+}
 async function speech(name,a){
  const turn=history.data.turn,epoch=generation;
- if(a.audience!==undefined&&!['reply','game'].includes(a.audience))throw Error('Unknown speech audience');
- if(turn?.reply_route?.kind==='installation'&&a.audience!=='game'){
-  if(name==='tell'||a.reply_to!==undefined)throw Error('This reply belongs to the private installation caller, not a game player. Use chat or final text for the reply; select audience=game only for a requested game publication.');
-  return privateReply(a.text);
- }
+ if(privateResponse(a))return privateReply(a.text);
  const replyTo=require('./speech.cjs').replySources(history.data,a.reply_to,conversation);
- if(name==='tell'&&(a.player===bot.username||!bot.players[a.player]))throw Error('Choose another connected player by their exact name');
  const marker={request:'',update:'[FYI] ',ack:'[ACK] '}[a.intent]||'';
  const prefix=name==='tell'?'@'+a.player+' '+marker:'';
  const chunks=require('./speech.cjs').packets(a.text,prefix);
@@ -319,6 +322,10 @@ async function operate(name,a={},sequenceId=null){
   if(Date.now()>=turnUntil)throw Error('No active action lease; inspect current task authority. Do not replay prior actions.');
   if(name==='cancel_sequence')return actionSequence.cancel();
   if(['chat','tell'].includes(name)){
+    // Reject invalid destinations before journaling an attempted effect. Both
+    // ordinary speech and speech during a sequence use this synchronous path;
+    // failures after submission begins must still retain uncertain receipts.
+    validateSpeechTarget(name,a);
     const responding=require('./speech.cjs').replySources(history.data,a.reply_to,conversation);
     if(name==='tell'&&responding.some(source=>history.data.events.find(e=>e.id===source.id)?.username!==a.player))throw Error('Address the original human when associating a tell response');
   }

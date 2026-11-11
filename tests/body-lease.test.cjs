@@ -214,6 +214,10 @@ test('actual async plan returns accepted before physical completion; Stop preven
   const status=await f.request('/status');assert.equal(status.action_sequence.id,args.plan_id);
   const spoken=[];f.bot.chat=text=>spoken.push(text);f.bot.players.Peer={};
   const conversation=await f.request('/action',{name:'conversation'});
+  const priorActions=JSON.stringify(f.history.data.turn.actions);
+  await assert.rejects(f.operate('tell',{player:'Missing',intent:'update',text:'Not sent',conversation_revision:conversation.revision}),/connected player/);
+  assert.equal(JSON.stringify(f.history.data.turn.actions),priorActions,'invalid speech cannot contaminate an in-flight sequence');
+  assert.equal(spoken.length,0);
   await f.request('/action',{name:'chat',arguments:{text:'I am on my way.',conversation_revision:conversation.revision}});
   await f.request('/action',{name:'tell',arguments:{player:'Peer',intent:'update',text:'The first step is still running.',conversation_revision:conversation.revision}});
   assert.equal(spoken.length,2);assert.equal((await f.request('/status')).busy,true);assert.equal(effects,1);
@@ -396,6 +400,36 @@ test('optional attention cannot reserve a construction turn or poison an existin
 });
 
 const optionalConfig={incoming_chat_only:true,human_engagement:{enabled:true,task_optional:true},human_task_intake:{enabled:true},agent_dialogue:true,bot_names:['Lead']};
+test('rejected speech recipient does not poison settled activity or fresh work after reload',async()=>{
+ for(const player of ['Companion','Builder']){
+  let moves=0,sends=0;const f=fixture(optionalConfig,{move:async()=>{moves++;return {reached:true};}});try{
+   f.bot.chat=()=>{sends++;};
+   const e=incoming(f);await f.request('/turn',{conversation_only:true,message_ids:[e.id]});
+   await f.operate('move',{x:1,y:64,z:0,mode:'walk_only'});
+   const actions=JSON.stringify(f.history.data.turn.actions);
+   await assert.rejects(f.operate('tell',{player,text:'Back at the start.',intent:'update',conversation_revision:e.id}),/connected player/);
+   assert.equal(sends,0);assert.equal(JSON.stringify(f.history.data.turn.actions),actions,'validation refusal is not an uncertain attempted effect');
+   await f.request('/finish',{});
+   const {WorkshopState}=require('../workshop-state.cjs'),restored=new WorkshopState(path.join(f.home,'workshop.json'));
+   assert.equal(require('../activity-policy.cjs').reason(restored,optionalConfig),null);
+   const next=incoming(f);await f.request('/turn',{conversation_only:true,message_ids:[next.id]});
+   await f.operate('move',{x:2,y:64,z:0,mode:'walk_only'});assert.equal(moves,2);
+  }finally{f.close();}
+ }
+});
+test('speech transport failure still preserves uncertainty and blocks further activity',async()=>{
+ const f=fixture(optionalConfig,{move:async()=>({reached:true})});try{
+  const e=incoming(f);await f.request('/turn',{conversation_only:true,message_ids:[e.id]});
+  await f.operate('move',{x:1,y:64,z:0,mode:'walk_only'});
+  f.bot.players.Visitor={uuid:'00000000-0000-0000-0000-000000000001'};
+  f.bot.chat=()=>{throw Error('transport outcome unknown');};
+  await assert.rejects(f.operate('tell',{player:'Visitor',text:'Result',intent:'update',conversation_revision:e.id}),/transport outcome unknown/);
+  await f.request('/finish',{});
+  assert.equal(f.history.data.last_turn.actions.at(-1).status,'uncertain');
+  const {WorkshopState}=require('../workshop-state.cjs'),restored=new WorkshopState(path.join(f.home,'workshop.json'));
+  assert.equal(require('../activity-policy.cjs').reason(restored,optionalConfig),'unresolved_activity_effects');
+ }finally{f.close();}
+});
 function incoming(f,source='human',message='Please help inspect the path'){
  const username=source==='human'?'Visitor':'Lead';
  const e=f.history.record({kind:'chat',source,username,message,accepted:true,intent:'request',provenance:'minecraft_public_chat',time:new Date().toISOString(),transport:{kind:'server_player_uuid',username,uuid:'00000000-0000-0000-0000-000000000001'}});
