@@ -19,6 +19,35 @@ Use tell request for needed action/answers, update for new facts, ack sparingly.
 '''
 
 
+def working_world(messages, world):
+    """Reference only exact current installation-input text already above world.
+
+    All historical events and provenance remain; ambiguity retains the text.
+    This is a presentation copy, never a source admission or history mutation.
+    """
+    by_id = {}
+    for message in messages:
+        by_id.setdefault(message.get('id'), []).append(message)
+    events = []
+    for event in world.get('events', []):
+        matches = by_id.get(event.get('id'), [])
+        message = matches[0] if len(matches) == 1 else {}
+        source = message.get('installation_source')
+        if (event.get('kind') == 'chat' and source and
+                message.get('reply_scope') == 'installation:' + str(event.get('id')) and
+                event.get('provenance') == 'operator_control' and
+                event.get('installation_source') == source and
+                event.get('source') == message.get('source') == 'human' and
+                event.get('username') == message.get('username') and
+                isinstance(message.get('message'), str) and
+                event.get('message') == message['message']):
+            events.append({**{k: v for k, v in event.items() if k != 'message'},
+                           'admitted_message_id': event['id']})
+        else:
+            events.append(event)
+    return {**world, 'events': events} if 'events' in world else world
+
+
 def planner_prompt(messages, world, assessment=None, notifications=None):
     guidance=''
     optional=(world.get('task_capabilities') or {}).get('task_optional')
@@ -50,6 +79,7 @@ def planner_prompt(messages, world, assessment=None, notifications=None):
         end=instructions.index('\n\nBefore ending a work turn',start)
         instructions=instructions[:start]+instructions[end:]
         instructions=instructions.replace('only within the accepted task and its original limits','within installation permission and any explicitly bound task limits')
-    return instructions + guidance + json.dumps({'world': world,
+    return instructions + guidance + json.dumps({'messages': messages,
+                                     'world': working_world(messages, world),
                                      'agent_assessment': assessment,
-                                     'attention_notifications': notifications, 'messages': messages})
+                                     'attention_notifications': notifications})

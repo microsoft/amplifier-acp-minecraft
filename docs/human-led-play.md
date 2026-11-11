@@ -286,6 +286,15 @@ original human authorization; conversation never grants or renews it. Legacy
 installations retain their configured peer limits.
 
 `observe` includes server roster join/leave facts and the current online roster.
+The body's `world_ready` event records Mineflayer's readiness callback, which also
+fires on login/reconnection. Its `respawn: not_established` does not assert a new
+saved player, relocation or death/respawn. Historical `spawn` records keep their
+original IDs, times and payloads in full reads; the recent working view labels
+their legacy callback meaning. Read actual position and movement receipts for
+arrival claims. Current admitted messages appear before world history in the
+planner's facts. An exactly duplicated installation-input text may be referenced
+by `admitted_message_id`; its source, audience, timestamps and full records stay
+intact. Changed or ambiguous inputs retain their separate text.
 The initial roster on connection is not reported as a burst of new joins. These
 facts do not synthesize chat, automatically greet players or authorize work.
 Crop watches can use `environment:crops` with a path such as

@@ -118,7 +118,12 @@ function scheduleLease(){
  leaseTimer.unref?.();
 }
 new (require('./player-roster.cjs').PlayerRoster)(bot,[cfg.username,...(cfg.bot_names||[])],()=>ready,record);
-bot.on('spawn',()=>{ready=true;spatial.alignPlayerCollision(bot);const m=new spatial.SpatialMovements(bot);m.canDig=false;m.allow1by1towers=false;m.allowParkour=false;m.allowFreeMotion=false;m.scafoldingBlocks=[];m.maxDropDown=2; /* upstream measures to landing FLOOR: 2 permits a one-block feet descent */m.liquidCost=20;bot.pathfinder.setMovements(m);record('spawn',{position:bot.entity.position});});
+bot.on('spawn',()=>{ready=true;spatial.alignPlayerCollision(bot);const m=new spatial.SpatialMovements(bot);m.canDig=false;m.allow1by1towers=false;m.allowParkour=false;m.allowFreeMotion=false;m.scafoldingBlocks=[];m.maxDropDown=2; /* upstream measures to landing FLOOR: 2 permits a one-block feet descent */m.liquidCost=20;bot.pathfinder.setMovements(m);
+ // Mineflayer also emits this callback on initial login/reconnect. It does
+ // not establish a new saved player, relocation or death/respawn.
+ const {x,y,z}=bot.entity.position;
+ record('world_ready',{position:{x,y,z},source_event:'mineflayer_spawn',respawn:'not_established'});
+});
 bot.on('end',reason=>{ready=false;stop();record('disconnected',{reason});setTimeout(()=>process.exit(shuttingDown?0:1),1000);});
 bot.on('error',e=>record('connection_error',{message:e.message}));
 bot.on('kicked',reason=>record('kicked',{reason}));
