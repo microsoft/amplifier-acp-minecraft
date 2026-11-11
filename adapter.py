@@ -187,6 +187,8 @@ async def run(home):
     notice_path=home/'capacity-notice.json'
     budget_waiting=load_capacity_notice(notice_path)
     activity_attention=ConversationAttention(observe) if (cfg.get('human_engagement') or {}).get('activity_scope')=='conversation_only' else None
+    huddle_attention=ConversationAttention(observe) if cfg.get('huddles') else None
+    last_huddle_poll=0
     connection_failures=0
     last_continuation=None
     async def request(path,payload=None):
@@ -271,6 +273,10 @@ async def run(home):
             state=await request('/state')
             if not state.get('ready'):
                 await asyncio.sleep(2);continue
+            if huddle_attention and time.monotonic()-last_huddle_poll>=5:
+                last_huddle_poll=time.monotonic()
+                try:await request('/huddle/context')
+                except Exception as error:observe('huddle_unavailable',category=type(error).__name__)
             # Retire only elapsed peer/activity deliveries, retaining their
             # original source as undelivered evidence. Human input is untouched.
             if state.get('pending_messages',0)>0:
@@ -291,6 +297,13 @@ async def run(home):
             messages=[]
             if intake_enabled or not work_allowed or len(calls)>=30:
                 messages=await human_reply_messages(request,connect,conversation_attention)
+                conversation_only=bool(messages)
+            if not messages and huddle_attention:
+                if await request('/huddle/participation'):
+                    await huddle_attention.consider(request,await connect(),huddle=True)
+                admission=await request('/conversation/admission')
+                eligible=set(admission.get('eligible_ids',[]))
+                messages=[m for m in await request('/inbox/peek') if m.get('source')=='huddle' and m.get('id') in eligible][:1]
                 conversation_only=bool(messages)
             if not messages and activity_attention:
                 if await request('/activity/participation'):
@@ -369,7 +382,7 @@ async def run(home):
                     observe('assessment_applied',application='advisory',task_id=state['task']['id'],fingerprint=assessment['fingerprint'])
             if watch_notifications:
                 observe('watch_applied',application='advisory',ids=[n['id'] for n in watch_notifications])
-            if cfg.get('huddle'):
+            if cfg.get('huddle') or cfg.get('huddles'):
                 try:
                     await request('/huddle/context')
                 except Exception as error:
@@ -398,7 +411,7 @@ async def run(home):
                 while not pending.done():
                     await asyncio.wait({pending},timeout=1)
                     if not pending.done():
-                        if cfg.get('huddle') and time.monotonic()-last_huddle_checked>=5:
+                        if (cfg.get('huddle') or cfg.get('huddles')) and time.monotonic()-last_huddle_checked>=5:
                             last_huddle_checked=time.monotonic()
                             try:
                                 await request('/huddle/context')
