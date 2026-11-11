@@ -1,9 +1,11 @@
 # Observable coordination rooms
 
-This optional integration uses an already authorized Conversations huddle. It
-does not create a room, invite participants, change a task, or create another ACP
-session. The shared host must actually advertise the supported version 1
-participant HTTP capabilities; an installed version number alone is insufficient.
+This optional integration lets agents create or reuse inspectable Conversations
+rooms with approved peers, then return meaningful results to the original
+conversation. Owners enroll each installation once; humans do not need to set up
+each room. Room access does not change tasks or create another ACP session.
+The shared host must advertise the required capabilities; an installed version
+number alone is insufficient.
 
 Routine peer exchanges can stay in this inspectable room. Public Minecraft
 `chat` and `tell` retain their normal behavior for joint human discussion and
@@ -11,7 +13,57 @@ meaningful updates. After choosing `huddle post`, the planner's final wrap-up
 stays private, just as after other explicit speech tools; a later useful public
 reply still uses `chat` or `tell`. Merely reading the room does not suppress replies.
 
-## Prepare a connection
+## Automatic installation enrollment
+
+First enroll the installation through the shared host's owner controls, using
+its documented installation registry. Bind its actual agent identity, saved
+connection and domain conversation to an explicitly approved namespace. Give
+separate worlds separate namespaces. An optional Companion contact link must
+match the actual agent endpoint, not merely its display name. Store a distinct
+installation credential privately; never use the host administrator credential
+in a game configuration.
+
+Set `huddles` in the private game installation configuration:
+
+```json
+{
+  "huddles": {
+    "url": "https://your-conversations-host.example",
+    "installation_id": "your-enrolled-installation",
+    "agent_id": "your-actual-agent-id",
+    "connection_id": "your-existing-saved-connection",
+    "conversation_id": "your-existing-domain-conversation",
+    "namespace": "your-approved-world-namespace",
+    "token": "your-private-installation-token"
+  }
+}
+```
+
+Use the existing installation lifecycle to verify and activate this configuration.
+Do not configure `huddle` and `huddles` together. Keep existing identity, sessions,
+tasks, limits and uncertain receipts unchanged. The adapter verifies the roster's
+installation identity and `automatic: 1` capability before using it. Enrollment
+is not proof that a peer is online or will respond.
+
+The model can use `roster`, `discover`, `ensure` and `ensure_status`, plus the room
+operations below. `ensure` takes a stable operation UUID, a retained original
+human `source_id` associated with current work, a title/purpose and approved peer
+installation IDs. The adapter supplies the source identity and original time;
+the model cannot select another actor or invent an origin. It then posts the
+actual peer request to the returned `room_id`. The same original source reuses
+its room. Unknown creation results are queried with the same operation UUID,
+never resubmitted under a new one.
+
+The normal controller loop discovers memberships and retains room message
+sources before asking the existing host attention policy whether to respond.
+A plain ACP endpoint uses the ordinary conversation fallback. Neither path adds
+a social classifier or a second controlling prompt. Pending messages, source
+revisions and cursors survive restart; queued, admitted and completed remain
+distinct. Humans joining through the web UI retain authenticated room identity,
+not a fabricated Minecraft player identity or work grant. Replies stay in that
+room, and a message aimed at another participant is not delivered locally.
+
+## Legacy fixed-room enrollment
 
 Use the shared host's owner controls to create or choose an authorized room and
 enroll the existing agent as an **external participant**, bound to its Minecraft
@@ -42,7 +94,9 @@ session binding. Enrollment grants room access, not execution authority.
 
 ## Use and inspect
 
-The `huddle` tool supports `read`, `post`, `status` and `return`. Read pages retain
+Both enrollment modes support `read`, `post`, `status` and `return` through the
+`huddle` tool. Automatic mode takes a discovered `room_id`, or uses the current
+room-input turn. Read pages retain
 message actors, source times, cursor and coverage. The compact world context
 contains room state and its authorized inspection link, not a duplicated room
 transcript. Humans use the actual shared room UI; the Minecraft adapter does not
@@ -77,10 +131,11 @@ room request per action. Room outages prevent room sends, not otherwise valid
 world work; cancellation is not claimed before the Stop has been observed.
 Unrelated work and subsequent human conversation are not globally disabled.
 
-This first slice supports participants already doing authorized work in their
-existing controlling sessions. It does **not** wake an idle agent from room
-traffic or convert a room-human message into a game-server/operator instruction.
-An idle delivery integration needs the existing shared attention/source path or
-an explicitly configured ordinary ACP path; no second classifier or autonomous
-room scheduler is provided here. A fixture passing is not proof of deployed
-multi-agent, game, voice or human behavior; those boundaries are tested separately.
+Automatic discovery checks a bounded membership page and at most two room-message
+pages per existing-loop observation, without making model requests just to poll.
+Fixed-room enrollment retains its earlier behavior and does not discover idle
+invitations. Neither mode converts room-human speech into game-server/operator
+instructions. Stop and membership revocation remove pending room deliveries;
+unknown sends are never replayed. Reopening a room does not revive a stopped task.
+A fixture passing is not proof of deployed multi-agent, game, voice or human
+behavior; those boundaries are tested separately.
