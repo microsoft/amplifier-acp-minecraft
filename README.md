@@ -22,29 +22,26 @@ For example:
 
 The skill covers fresh installations, existing-server upgrades, Java/Bedrock/Xbox
 access, independent agent connections, behavior policies and idle updates. It
-uses the [server setup guide](docs/server-setup.md) and loads only the relevant
+uses the [installation requirements](docs/server-setup.md) and loads only the relevant
 specialist references. Agents that cannot discover repository skills can read
 `skills/minecraft-server-setup/SKILL.md` directly.
 
-## Know before installing
+## Direction and interfaces
 
-- **Runtime:** Node 22+, Python 3.12+, a compatible Java server and an authenticated
-  ACP engine supporting HTTP MCP. Each player gets its own private installation
-  and pinned official-SDK environment.
-- **Human access:** use authenticated human gateways. Keep any trusted/offline
-  agent route private. Xbox/Bedrock needs Geyser; 26.60 LAN discovery and gameplay
-  are separate checks. See [Xbox LAN setup](docs/xbox-lan.md).
-- **Authority:** installing a player or updating its code does not authorize
-  construction, renew work or replay an old request. Task-optional play, human task intake,
-  responsiveness policies, delegation and scheduled updates are explicit choices.
-- **Evidence:** an active service is not proof of a working saved session, actual
-  console login, or useful agent response. The guides distinguish these checks.
+Read the [Minecraft vision](docs/VISION.md) for the intended experience and the
+[service and interface map](docs/interfaces.md) for the authoritative definitions.
+Shared roles and interaction promises live in the linked Constellation agreements;
+Minecraft-specific tools, policies and connection behavior live here.
 
-## Guides and skills
+Before installing, read the [installation requirements](docs/server-setup.md).
+They cover engine/dependency compatibility, authenticated human access and private
+agent routes, explicit behavior policies, and separate transport and human checks.
+
+## Find the relevant reference
 
 | What you want | Start here |
 | --- | --- |
-| Set up or upgrade a server and its players | [Setup skill](skills/minecraft-server-setup/SKILL.md) · [Setup guide](docs/server-setup.md) |
+| Set up or upgrade a server and its players | [Setup skill](skills/minecraft-server-setup/SKILL.md) · [Installation requirements](docs/server-setup.md) |
 | Join from Xbox / Bedrock on LAN | [Gateway, discovery, authentication and verification](docs/xbox-lan.md) |
 | Responsive conversation and continuous action plans | [Human-led play](docs/human-led-play.md) |
 | Start/amend tasks naturally in chat | [Human task intake](docs/human-task-intake.md) |

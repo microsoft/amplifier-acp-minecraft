@@ -2,8 +2,11 @@
 
 ## Ownership and compatibility
 
-Use the official `agentclientprotocol/python-sdk` for ACP transport and protocol
-models. The package requirement pins upstream commit
+The shared [SDK policy](https://github.com/microsoft/amplifier-constellation/blob/main/contracts/protocol-sdk.v1-candidate.md)
+owns protocol ownership, exception approval and upstream reevaluation. This
+reference defines the adapter integration and its bounded wrappers. Production
+ACP transport and models use `agentclientprotocol/python-sdk`; the package pins
+upstream commit
 `9853d8b514d6340000bcbd01ec07808436db80cf`; this is not a local fork. At migration,
 the stable PyPI 0.12.1 package lacked typed compaction updates and capability
 negotiation used by this adapter. This upstream revision includes them, but still
@@ -49,9 +52,9 @@ Reevaluate these wrappers and the immutable dependency on every SDK upgrade and
 before each adapter release. Prefer a stable upstream release once it supplies the
 required typed features. Re-run replay, ordering, permission, output revision,
 concurrent extension, maintenance and cancellation tests. Remove the wrapper when
-upstream offers equivalent ordered delivery/error/drain hooks. A custom protocol
-replacement requires explicit vision-owner approval; this migration introduces
-none. Keep recorded gap evidence outside the publication checkout.
+upstream offers equivalent ordered delivery/error/drain hooks. Any replacement
+follows the shared SDK exception policy. Keep recorded gap evidence outside the
+publication checkout.
 
 ## Validation and deployment boundary
 

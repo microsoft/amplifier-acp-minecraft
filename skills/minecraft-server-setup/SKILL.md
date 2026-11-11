@@ -11,7 +11,7 @@ not assume the author's hosts, ports, accounts, model, systemd layout or policie
 
 ## Inspect before selecting a path
 
-Read [the setup guide](../../docs/server-setup.md). Determine whether the request
+Read [the installation requirements](../../docs/server-setup.md). Determine whether the request
 is for a new world, an existing world, a player connection, a gateway repair,
 behavior policy, or an update. Inventory the actual versions, service owners,
 listeners, routes, saved sessions and in-flight work before changing an existing
@@ -23,7 +23,7 @@ missing details. Proceed within the authorization already provided. Ask only for
 material choices, external account authorization or missing access; do not turn
 routine reversible staging into another approval flow.
 
-## Route to the needed guide
+## Route to the needed reference
 
 - Fresh server, adding a player, or an existing-host upgrade:
   [server setup](../../docs/server-setup.md).
@@ -42,40 +42,29 @@ routine reversible staging into another approval flow.
 - Appearance: [agent-skin skill](../minecraft-agent-skins/SKILL.md).
   Screenshots: [setup guide](../../docs/screenshots.md).
 
-## Operational invariants
+## Apply the installation boundary
 
-Each player owns its installation, control/MCP route, credentials, identity,
-session and authority. Preserve engine family and ordinary ACP fallback. Discover
-optional attention, steering, receipt, maintenance and helper capabilities from
-the installed implementation; a product name/version or another player's support
-is not evidence. Use the pinned official Python SDK for framing and correlation.
+Use the requirements in [staging and routes](../../docs/server-setup.md#3-stage-one-self-contained-player),
+[behavior choices](../../docs/server-setup.md#4-choose-behavior-explicitly),
+[layered verification](../../docs/server-setup.md#5-start-and-verify-in-layers) and
+[recovery](../../docs/server-setup.md#6-updates-recovery-and-handoff). They define
+what must survive and what the requested operation permits. This skill navigates
+those requirements; it does not add a second authority or lifecycle policy.
 
-Keep world/server/proxy, body/controller and Instance/runtime lifecycles separate.
-Restart only components needed for the requested change. An Xbox human-gateway
-repair normally needs no agent or world restart. Source changes need a settled
-body/controller cutover and continuity receipt. Use an enrolled update participant
-when available; preserve its original active/stopped/masked state.
-
-Never use setup or verification to renew expired work, convert prior limits,
-replay unknown input, replace a used session, seed supplies or build a test design
-in the family world. Disposable mechanical tests belong in a separate test world.
-Fresh installs may remain chat-only with no task and no saved session; do not send
-a synthetic model prompt just to create persistence. Existing installations verify
-their original saved session, not a replacement.
+For example, fixing Xbox discovery normally affects its human gateway, while a
+player source update uses that player's lifecycle participant. Choose the
+smallest relevant operation from the inspected topology, rather than restarting
+everything. A fresh no-start installation and a used connection have different
+session-verification paths; follow the applicable reference.
 
 ## Close with meaningful evidence
 
-Record selected source/artifact/dependency hashes, policy changes, service/route
-checks, original-session and authority continuity, and rollback information in
-private owner storage. Keep secrets, addresses, personal art and transcripts out
-of publication checkouts.
-
-Separate code/test success, installed capability, transport readiness and actual
-human behavior. A successful handshake does not prove a console authenticated;
-a receipt accepted does not prove incorporated/completed; an active controller
-is not a successful new turn. Finish all independent checks before asking for a
-real console join or fresh human request that only the user can supply.
+Use the evidence requirements in [verification](../../docs/server-setup.md#5-start-and-verify-in-layers)
+and [handoff](../../docs/server-setup.md#6-updates-recovery-and-handoff) to close the
+requested operation. Report what was actually checked and what still requires
+the person's console or account. Keep private installation material out of the
+publication checkout.
 
 When a setup failure teaches a reusable lesson, update the smallest relevant
-reference or tested helper. Keep machine-specific workarounds and evidence private;
-do not add speculative universal rules or duplicate the guide in the README.
+reference or tested helper. Keep examples illustrative and link to the governing
+requirement instead of adding another definition here or in the README.

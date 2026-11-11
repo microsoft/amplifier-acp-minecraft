@@ -1,9 +1,12 @@
-# Server and ACP player setup guide
+# Server and ACP player installation requirements
 
-Use this with the [server-setup skill](../skills/minecraft-server-setup/SKILL.md).
-The workflow applies to a new installation or an existing server; it does not
-require Constellation, a particular provider, a shared provisioning service, or a
-custom world mod. Read only the sections relevant to the requested operation.
+This reference owns Minecraft-specific setup, access and verification requirements
+for new installations and existing servers. The
+[server-setup skill](../skills/minecraft-server-setup/SKILL.md) navigates them;
+commands below illustrate their use. Shared installation ownership lives in the
+[family agreement](https://github.com/microsoft/amplifier-constellation/blob/main/contracts/family.v1-candidate.md#self-contained-installation-baseline).
+Plain ACP setup remains available without Instance, a particular model provider
+or a custom world mod. Read only the sections relevant to the requested operation.
 
 ## 1. Establish the actual installation
 
@@ -97,6 +100,9 @@ login. This is separate from the temporary Xbox LAN workaround.
 
 ## 3. Stage one self-contained player
 
+Minecraft clients, servers, licensed accounts and game assets are obtained separately;
+this repository does not distribute them.
+
 Requirements: **Node 22+**, **Python 3.12+**, a compatible Java server, and a separately
 authenticated ACP engine supporting HTTP MCP. Use reviewed repository source:
 
@@ -112,7 +118,7 @@ For production updates stage a separate source/dependency environment; don't
 replace dependencies beneath a running controller. See [installation updates](../INSTALLATION-UPDATES-DESIGN.md).
 The official SDK is pinned by immutable upstream commit in `requirements.txt`.
 Verify its installed distribution's `direct_url.json`, not `0.12.1` alone; consult
-[the SDK guide](python-sdk.md) for the exact supported revision and wrappers.
+[the SDK reference](python-sdk.md) for the exact supported revision and wrappers.
 
 Copy [config.example.json](../config.example.json) and
 [endpoint.example.json](../endpoint.example.json) into a private installation
@@ -181,6 +187,7 @@ bringing up real conversation without silently resuming construction.
 | Requested behavior | Policy/reference |
 | --- | --- |
 | Conversation only | Keep intake disabled; verify the effective advertised mode |
+| Ordinary survival activity without requiring a task record | Explicit `human_engagement.task_optional` with `human_engagement.enabled`; [task-optional policy](human-led-play.md#task-optional-activity) |
 | Natural human task acceptance/amendment | Explicit `human_task_intake.enabled`; [intake](human-task-intake.md) |
 | Direct human responsiveness and fewer artificial action pauses | Explicit `human_engagement.enabled`; [human-led play](human-led-play.md) |
 | Greetings/help from observed activity | Explicit `human_engagement.activity_scope: conversation_only`, negotiated host attention activity support; movement/interaction facts are not commands |
