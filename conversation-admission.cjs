@@ -8,6 +8,7 @@ class ConversationAdmission {
  peerRemaining(){const n=this.cfg.human_task_intake?.delegation?.reply_turns_per_hour??4;return Number.isInteger(n)&&n>0&&n<=12?Math.max(0,n-this.recent().filter(r=>r.kind==='peer_proposal').length):0;}
  eligible(message){
   const data=this.history.data,e=data.events.find(e=>e.id===message.id),at=Date.parse(e?.time);
+  if(message.source==='huddle')return this.huddleEligible?.(message)===true;
   if(message.source==='agent')return (!!delegation.conversation(this.history,this.cfg,message,this.now())||(this.peerRemaining()>0&&!!delegation.peer(this.history,this.cfg,message,this.now())))&&!(data.conversation_admissions||[]).some(r=>r.ids.includes(message.id));
   if(message.source==='activity')return this.cfg.human_engagement?.activity_scope==='conversation_only'&&this.cfg.human_engagement?.enabled===true&&data.task?.status!=='stopped'&&message.attention_offer?.ticket&&message.effect_scope==='conversation_only'&&(data.activity_deliveries||[]).some(r=>r.id===message.id&&r.revision===message.activity?.revision&&this.now()-r.at<120000)&&!(data.conversation_admissions||[]).some(r=>r.ids.includes(message.id));
   return message.source==='human'&&e?.source==='human'&&e.kind==='chat'&&e.accepted===true&&
@@ -21,7 +22,7 @@ class ConversationAdmission {
    (this.limit()!==null&&!this.status(inbox).remaining)||ids.some(id=>!inbox.some(m=>m.id===id&&this.eligible(m))))throw Error('No fresh human conversation admission available');
   const selected=inbox.filter(m=>ids.includes(m.id));
   const kinds=new Set(selected.map(m=>m.source));if(kinds.size!==1)throw Error('Human, activity and peer proposal admissions remain separate');
-  const audiences=new Set(selected.map(m=>m.whisper?'private:'+m.username:'public'));
+  const audiences=new Set(selected.map(m=>m.source==='huddle'?'huddle:'+m.room_id:m.whisper?'private:'+m.username:'public'));
   if(audiences.size!==1)throw Error('Reply audiences cannot be mixed');
   const offers=new Set(selected.map(m=>JSON.stringify(m.attention_offer||null)));
   if(offers.size!==1)throw Error('Distinct attention offers cannot share a reply turn');
@@ -34,6 +35,7 @@ class ConversationAdmission {
   this.history.data.turn={started_at:new Date(this.now()).toISOString(),conversation_only:true,task_id:null,
    ambient_activity:selected.every(m=>m.source==='activity'),peer_proposal:selected.every(m=>m.source==='agent'),request_ids:[...ids],messages:selected,reply_recipient:selected[0].whisper?selected[0].username:null,actions:[],may_mutate:false};
   for(let i=inbox.length-1;i>=0;i--)if(ids.includes(inbox[i].id))inbox.splice(i,1);
+  if(selected[0].source==='huddle'){this.history.data.turn.huddle_room_id=selected[0].room_id;this.history.data.turn.explicit_speech=true;}
   require('./input-outcomes.cjs').admit(this.history.data);
   this.history.save();return this.history.data.turn;
  }

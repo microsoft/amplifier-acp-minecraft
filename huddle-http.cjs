@@ -9,9 +9,12 @@ class HuddleHttp {
   this.host=host.origin;this.room=room_id;this.#token=token;this.fetch=fetch;this.timeoutMs=timeoutMs;this.maxBytes=maxBytes;
  }
  async request(suffix,{method='GET',body,notFound=false}={}){
+  return this.requestPath(`/api/v1/huddles/${encodeURIComponent(this.room)}${suffix}`,{method,body,notFound});
+ }
+ async requestPath(path,{method='GET',body,notFound=false}={}){
   const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),this.timeoutMs);
   try{
-   const response=await this.fetch(`${this.host}/api/v1/huddles/${encodeURIComponent(this.room)}${suffix}`,{method,redirect:'error',signal:controller.signal,
+   const response=await this.fetch(`${this.host}${path}`,{method,redirect:'error',signal:controller.signal,
     headers:{Authorization:`Bearer ${this.#token}`,Accept:'application/json',...(body?{'Content-Type':'application/json'}:{})},...(body?{body:JSON.stringify(body)}:{})});
    if(notFound&&response.status===404){await response.body?.cancel();return {found:false};}
    if(!response.ok){await response.body?.cancel();throw Error(`Huddle HTTP ${response.status}`);}
@@ -37,4 +40,17 @@ class HuddleHttp {
   return this.request(`/posts/${id}`,{notFound:true});
  }
 }
-module.exports={HuddleHttp};
+class HuddleInstallationHttp extends HuddleHttp {
+ constructor(config,options){super({...config,room_id:'installation'},options);}
+ roster(){return this.requestPath('/api/v1/huddles/roster');}
+ ensure(payload){return this.requestPath('/api/v1/huddles/ensure',{method:'POST',body:payload});}
+ ensureStatus(id){
+  if(!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id))throw Error('Original huddle operation UUID required');
+  return this.requestPath(`/api/v1/huddles/ensure/${id}`,{notFound:true});
+ }
+ discovery(after=0,limit=16){
+  if(!Number.isSafeInteger(after)||after<0||!Number.isInteger(limit)||limit<1||limit>50)throw Error('Use a valid discovery cursor and bounded page');
+  return this.requestPath(`/api/v1/huddles/discovery?after=${after}&limit=${limit}`);
+ }
+}
+module.exports={HuddleHttp,HuddleInstallationHttp};

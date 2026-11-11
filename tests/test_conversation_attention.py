@@ -13,6 +13,35 @@ class Client:
         self.calls.append((method,payload));return {'action':self.action,'id':'event','ticket':'ticket'}
 
 class Delivery(unittest.IsolatedAsyncioTestCase):
+    async def test_web_human_room_source_uses_host_attention_and_preserves_original_facts(self):
+        for enabled in (True, False):
+            client=Client(enabled=enabled);posts=[];logs=[]
+            client.info['_meta'][META]['humanMessages']={'version':1,'budgetPolicy':'independent_of_ambient'}
+            client.info['_meta']['io.github.bkrabach.agent-instance']={'inputContinuity':{'sourceDelivery':{
+                'version':1,'metadata':'com.microsoft.amplifier.source-delivery','receiptsMethod':'_amplifier/source_receipts'}}}
+            source={'id':'room-source','revision':'immutable-row-hash','occurredAt':1794310000123}
+            context={'conversation_id':'room','trigger_id':source['id'],
+                     'agent':{'id':'lead','name':'Lead','is_agent':True},
+                     'participants':[{'id':'human:member-17','name':'member-17','is_agent':False}],
+                     'messages':[{'id':source['id'],'sender':'human:member-17','text':'What did you find?','recipients':['lead']}]}
+            async def request(path,payload=None):
+                self.assertEqual(path,'/huddle/participation')
+                if payload is None:return {'signature':'room-signature','context':context,'sources':[source],
+                                          'occurred_at':source['occurredAt'],'delivery':{'eligible':True}}
+                posts.append(payload);return {'queued':True,'acp_admitted':False}
+            self.assertTrue(await ConversationAttention(lambda kind,**data:logs.append(data)).consider(request,client,huddle=True))
+            self.assertEqual(posts[0]['source_id'],source['id']);self.assertNotIn('human_only',posts[0])
+            self.assertFalse(logs[-1]['acp_admitted'])
+            if enabled:
+                self.assertEqual(len(client.calls),1);method,wire=client.calls[0];self.assertEqual(method,METHOD)
+                self.assertEqual(wire['occurredAt'],source['occurredAt'])
+                self.assertFalse(wire['context']['participants'][0]['is_agent'])
+                self.assertEqual(wire['context']['messages'][0]['revision'],source['revision'])
+                self.assertEqual(wire['context']['messages'][0]['occurred_at'],source['occurredAt'])
+                self.assertEqual(wire['context']['messages'][0]['recipients'],['lead'])
+            else:
+                self.assertEqual(client.calls,[]);self.assertNotIn('offer',posts[0])
+
     async def test_host_offer_is_not_reported_as_an_queued_acp_turn(self):
         for action in ('engage','hold'):
             client=Client(action);posts=[];logs=[]

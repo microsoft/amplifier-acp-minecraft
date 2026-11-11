@@ -4,21 +4,25 @@ const fs=require('node:fs'),os=require('node:os'),path=require('node:path'),vm=r
 const {EventEmitter}=require('node:events'),{createRequire}=require('node:module');
 const {Readable}=require('node:stream');
 const root=path.resolve(__dirname,'..'),realRequire=createRequire(path.join(root,'body.cjs'));
-async function huddleFixture(t){
+async function huddleFixture(t,automatic=false){
  const nativeHttp=require('node:http'),crypto=require('node:crypto'),sha=v=>crypto.createHash('sha256').update(v).digest('hex');
  const event={id:'original-public-human',time:'2026-11-10T12:00:00.000Z',kind:'chat',source:'human',accepted:true,username:'Human',message:'Check together',provenance:'minecraft_public_chat',transport:{kind:'server_player_uuid',uuid:'human-uuid',username:'Human'}};
  const origin={kind:'external',service:'minecraft',connection_id:'game',conversation_id:'public-game',request_id:'original',source_id:event.id,source_revision:require('../source-revision.cjs').publicSource(event).revision,occurred_at:Date.parse(event.time),actor:{id:'human-uuid',kind:'human'}};
- const state={room:'open',posts:0,requests:0,unavailable:false,saved:new Map()},caps={version:1,external_participants:true,read:true,post:true,post_status:true,outcomes:true,quiet_follow:true,max_text_bytes:6000,max_evidence_items:8,max_metadata_bytes:8000,max_page_items:100};let url;
+ const state={room:'open',posts:0,requests:0,unavailable:false,messages:[],saved:new Map()},caps={version:1,external_participants:true,read:true,post:true,post_status:true,outcomes:true,quiet_follow:true,max_text_bytes:6000,max_evidence_items:8,max_metadata_bytes:8000,max_page_items:100};let url;
  const server=nativeHttp.createServer(async(req,res)=>{state.requests++;res.setHeader('Content-Type','application/json');if(state.unavailable){res.statusCode=503;res.end('{}');return;}
-  const descriptor={version:1,id:'room',conversation_id:'room',participant:{agent_id:'agent',connection_id:'game'},state:state.room,revision:1,origin,inspect_url:url+'/?conversation=room',capabilities:caps,participants:[{id:'agent'},{id:'peer'}],purpose:'Shared check'};
+  const descriptor={version:1,id:'room',conversation_id:'room',participant:{agent_id:'agent',connection_id:'game'},state:state.room,revision:state.revision||1,origin:state.origin||origin,inspect_url:url+'/?conversation=room',capabilities:caps,participants:[{id:'agent'},{id:'peer'}],purpose:'Shared check'};
+  if(automatic&&req.url==='/api/v1/huddles/roster'){res.end(JSON.stringify({version:1,installation:{id:'installation',agent_id:'agent',connection_id:'game',conversation_id:'public-game',namespace:'world',service:'minecraft'},items:[{id:'peer-installation',agent_id:'peer',connection_id:'peer-game',conversation_id:'public-game',namespace:'world',enabled:true,availability:'unknown'}],capabilities:{automatic:1}}));return;}
+  if(automatic&&req.url.startsWith('/api/v1/huddles/discovery')){res.end(JSON.stringify({version:1,items:state.origin?[{...descriptor,membership:'active'}]:[],cursor:state.origin?1:0,has_more:false,coverage:'current_memberships'}));return;}
+  if(automatic&&req.url==='/api/v1/huddles/ensure'){let raw='';for await(const c of req)raw+=c;const p=JSON.parse(raw);state.origin=p.origin;res.end(JSON.stringify({...descriptor,origin:p.origin,request_id:p.request_id,status:'saved',reused:false,membership:'active'}));return;}
   if(req.method==='POST'){
    let raw='';for await(const c of req)raw+=c;const p=JSON.parse(raw);state.posts++;
-   const receipt={version:1,status:'saved',message_id:p.request_id,request_id:p.request_id,room_id:'room',sequence:1,kind:p.kind,created_at:1,agent_id:'agent',connection_id:'game',origin,return:p.kind==='outcome'?{state:'available',delivery:'domain_owned'}:{state:'not_requested'},revision:sha(JSON.stringify(p)),text_sha256:sha(p.text),source:p.source,outcome:p.outcome,target_agent_ids:p.target_agent_ids,inspect_url:descriptor.inspect_url};state.saved.set(p.request_id,receipt);res.end(JSON.stringify(receipt));
+   const receipt={version:1,status:'saved',message_id:p.request_id,request_id:p.request_id,room_id:'room',sequence:1,kind:p.kind,created_at:1,agent_id:'agent',connection_id:'game',origin:state.origin||origin,return:p.kind==='outcome'?{state:'available',delivery:'domain_owned'}:{state:'not_requested'},revision:sha(JSON.stringify(p)),text_sha256:sha(p.text),source:p.source,outcome:p.outcome,target_agent_ids:p.target_agent_ids,inspect_url:descriptor.inspect_url};state.saved.set(p.request_id,receipt);res.end(JSON.stringify(receipt));
   }else if(req.url.includes('/posts/')){res.end(JSON.stringify(state.saved.get(req.url.split('/').at(-1))));}
-  else if(req.url.includes('/messages'))res.end(JSON.stringify({version:1,items:[],next_cursor:0,has_more:false,coverage:{after:0,through:0,complete_through_cursor:true},state:state.room,revision:1}));
+  else if(req.url.includes('/messages')){const after=Number(new URL(req.url,url).searchParams.get('after')||0),items=state.messages.filter(m=>m.seq>after),through=items.at(-1)?.seq||after;res.end(JSON.stringify({version:1,items,next_cursor:through,has_more:false,coverage:{after,through,complete_through_cursor:true},state:state.room,revision:state.revision||1}));}
   else res.end(JSON.stringify(descriptor));
  });await new Promise(r=>server.listen(0,'127.0.0.1',r));url=`http://127.0.0.1:${server.address().port}`;t.after(()=>{server.closeAllConnections();server.close();});
- const f=fixture('BuilderOne',false,{huddle:{url,room_id:'room',agent_id:'agent',connection_id:'game',conversation_id:'public-game',origin,token:'participant-secret-'.repeat(3)}});t.after(f.close);f.history.data.events.push(event);f.history.save();return {f,state,event};
+ const enrollment={url,room_id:'room',agent_id:'agent',connection_id:'game',conversation_id:'public-game',origin,token:'participant-secret-'.repeat(3)};
+ const f=fixture('BuilderOne',false,automatic?{huddles:{...enrollment,installation_id:'installation',namespace:'world'},human_engagement:{enabled:true}}:{huddle:enrollment});t.after(f.close);f.history.data.events.push(event);f.history.save();return {f,state,event};
 }
 test('actual body keeps huddle coordination quiet and public outcome uses original speech once',async t=>{
  const {f,state}=await huddleFixture(t),sent=[];f.bot.chat=text=>sent.push(text);f.startFixtureTurn();
@@ -58,7 +62,7 @@ function fixture(name,semantic=false,extra={}){
   return realRequire(n);
  },module:{exports:{}},console:{log(){}},Buffer,
  process:{argv:['node','body.cjs',config],on(){},exit(){assert.fail('Unexpected process exit');}},setTimeout,clearTimeout});
- vm.runInContext(fs.readFileSync(path.join(root,'body.cjs'),'utf8')+'\nmodule.exports={history,inbox,operate,mcpServer,activityParticipation,readyFixture(){ready=true;},busyFixture(){ready=true;busy=true;},startFixtureTurn(){ready=true;turnUntil=Date.now()+240000;history.startTurn();}};',context,{filename:'body.cjs'});
+ vm.runInContext(fs.readFileSync(path.join(root,'body.cjs'),'utf8')+'\nmodule.exports={history,inbox,operate,mcpServer,activityParticipation,readyFixture(){ready=true;},busyFixture(){ready=true;busy=true;},endFixtureTurn(){turnUntil=0;history.data.turn=null;},startFixtureTurn(){ready=true;turnUntil=Date.now()+240000;history.startTurn();}};',context,{filename:'body.cjs'});
  return {bot,...context.module.exports,task,home,async request(url,payload,expectedStatus=200,token='fixture'){
   const req=Readable.from(payload===undefined?[]:[JSON.stringify(payload)]);
   Object.assign(req,{url,method:payload===undefined?'GET':'POST',headers:{authorization:'Bearer '+token}});
@@ -561,4 +565,19 @@ test('associated valid work does not consult an unavailable room for each action
  state.unavailable=false;state.room='stopped';await f.request('/huddle/context');state.unavailable=true;const afterStop=state.requests;
  await assert.rejects(f.operate('work_report',{status:'running',summary:'Must not resume stopped work.'}),/stopped/);
  assert.equal(state.requests,afterStop);assert.equal(f.history.data.task.status,'stopped');assert.equal(f.history.data.turn,null);
+});
+
+for(const webHuman of [false,true])test(`actual body automatic discovered idle ${webHuman?'web human':'peer'} input can receive a private room reply`,async t=>{
+ const {f,state,event}=await huddleFixture(t,true),sent=[];f.bot.chat=v=>sent.push(v);f.bot.pathfinder={setGoal(){}};f.bot.clearControlStates=()=>{};
+ const originalTask=JSON.stringify(f.history.data.task);f.startFixtureTurn();f.history.data.turn.request_ids=[event.id];
+ const created=await f.operate('huddle',{operation:'ensure',request_id:'04000000-0000-4000-8000-000000000004',source_id:event.id,title:'Compare',purpose:'Compare current observations',peer_installation_ids:['peer-installation']});assert.equal(created.state,'saved');assert.equal(sent.length,0);
+ f.endFixtureTurn();
+ state.messages.push({id:'05000000-0000-4000-8000-000000000005',seq:2,role:webHuman?'user':'assistant',actor:webHuman?'browser-member-17':'Peer',agent_id:webHuman?null:'peer',text:'What do you observe?',status:'complete',created_at:Date.now(),target_agent_ids:['agent'],source:null,kind:'message',outcome:null});
+ await f.request('/huddle/context');const proposal=await f.request('/huddle/participation');assert.equal(proposal.context.conversation_id,'room');assert.equal(proposal.context.participants[1].is_agent,!webHuman);assert.equal(proposal.occurred_at,state.messages[0].created_at);
+ await f.request('/huddle/participation',{signature:proposal.signature,source_id:proposal.ids[0],action:'engage'});assert.equal(f.inbox[0].source,'huddle');assert.equal(f.history.data.events.some(e=>e.message==='What do you observe?'),false);
+ const admission=await f.request('/conversation/admission');assert.deepEqual(admission.eligible_ids,proposal.ids);
+ await f.request('/turn',{conversation_only:true,message_ids:proposal.ids});assert.equal(f.history.data.turn.huddle_room_id,'room');assert.equal(f.history.data.turn.explicit_speech,true);
+ const receipt=await f.operate('huddle',{operation:'post',request_id:'06000000-0000-4000-8000-000000000006',text:'My observation is recorded here.',kind:'message'});assert.equal(receipt.state,'saved');assert.equal(receipt.receipt.status,'saved');assert.equal(state.posts,1);assert.deepEqual(sent,[]);
+ const final=await f.request('/reply',{text:'Room-only wrap-up',conversation_revision:event.id});assert.equal(final.sent,false);assert.deepEqual(sent,[]);
+ state.room='stopped';state.revision=2;await f.request('/huddle/context');assert.equal(f.history.data.turn,null);assert.equal(JSON.stringify(f.history.data.task),originalTask);
 });

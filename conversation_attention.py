@@ -54,14 +54,14 @@ class ConversationAttention:
         self.failures=0
         self.deferred=None
 
-    async def consider(self,request,client,*,human_only=False,activity=False):
+    async def consider(self,request,client,*,human_only=False,activity=False,huddle=False):
         # Fetch fresh source facts while backing off a known proposal, so a new
         # human message is not delayed by a previous rejection. Failed source
         # fetches themselves back off until local transport can recover.
         if self.retry_key is None and time.time()<self.retry_after:return False
         stage='source_fetch';key=None;evaluation_requested=False
         try:
-            proposal=await request('/activity/participation' if activity else '/participation?human_only=1' if human_only else '/participation')
+            proposal=await request('/huddle/participation' if huddle else '/activity/participation' if activity else '/participation?human_only=1' if human_only else '/participation')
             if not proposal:
                 self.retry_key=None;self.failures=0;self.retry_after=0;self.deferred=None
                 return False
@@ -112,7 +112,7 @@ class ConversationAttention:
             if human_only:payload['human_only']=True
             if supported and offer['action']=='engage':payload['offer']={'id':offer['id'],'ticket':offer['ticket']}
             stage='local_delivery'
-            result=await request('/activity/participation' if activity else '/participation',payload)
+            result=await request('/huddle/participation' if huddle else '/activity/participation' if activity else '/participation',payload)
             if not isinstance(result,dict) or result.get('queued') is not (offer['action']=='engage'):
                 # A malformed/lost reply is not proof of acceptance or rejection.
                 raise ValueError('Invalid delivery receipt')

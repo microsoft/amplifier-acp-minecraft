@@ -71,20 +71,22 @@ const events=[], inbox=history.data.inbox||(history.data.inbox=[]), receipts=[];
 const routeHuman=conversationRouter(cfg.username,{aliases:cfg.aliases||{}});
 const participation=new Participation(history,cfg);
 const conversation=new Conversation(history,cfg.username);
-const huddle=cfg.huddle?new (require('./huddle.cjs').Huddle)(history,cfg.huddle,{
+const huddleOptions={
  canPost:()=>ready&&!!history.data.turn&&Date.now()<turnUntil&&!history.data.turn.huddle_stopped,
  validatePublic:a=>{
   if(!history.data.turn||history.data.turn.reply_recipient||Date.now()>=turnUntil)throw Error('Original public return requires an active public reply turn');
   conversation.guard(a.conversation_revision);
  },
  onState:d=>{
-  if(!require('./huddle.cjs').associatedWork(history,d.origin))return;
-  if(history.data.turn?.activity){history.data.turn.huddle_source_id=d.origin.source_id;history.save();}
+  const associated=require('./huddle.cjs').associatedWork(history,d.origin),roomTurn=history.data.turn?.huddle_room_id===d.id;
+  if(!associated&&!roomTurn)return;
+  if(associated&&history.data.turn?.activity){history.data.turn.huddle_source_id=d.origin.source_id;history.save();}
   if(d.state!=='stopped')return;
   // Only the original associated responsibility stops. Inspection/membership
   // alone never binds an unrelated task to this room.
   stop();
-  if(history.data.turn?.activity){history.data.turn.activity_report={status:'blocked',summary:'Associated coordination room stopped; retained effects need inspection.'};history.data.turn.huddle_stopped=true;history.finish(true);}
+  if(roomTurn&&history.data.turn?.conversation_only){history.data.turn.huddle_stopped=true;history.finish(true);}
+  else if(history.data.turn?.activity){history.data.turn.activity_report={status:'blocked',summary:'Associated coordination room stopped; retained effects need inspection.'};history.data.turn.huddle_stopped=true;history.finish(true);}
   else if(['running','waiting','blocked','needs_review','review'].includes(history.data.task?.status))history.stop();
  },
  sendPublic:async a=>{
@@ -92,7 +94,10 @@ const huddle=cfg.huddle?new (require('./huddle.cjs').Huddle)(history,cfg.huddle,
   history.data.turn.explicit_speech=true;history.save();
   return speech('chat',{text:a.text,conversation_revision:a.conversation_revision,huddle_return:{room_id:a.room_id,request_id:a.request_id}});
  }
-}):null;
+};
+if(cfg.huddle&&cfg.huddles)throw Error('Choose fixed or automatic huddle enrollment, not both');
+const huddle=cfg.huddles?new (require('./automatic-huddles.cjs').AutomaticHuddles)(history,cfg.huddles,huddleOptions):cfg.huddle?new (require('./huddle.cjs').Huddle)(history,cfg.huddle,huddleOptions):null;
+replyAdmission.huddleEligible=m=>!!cfg.huddles&&huddle.eligible(m);
 const participationProposal=(humanOnly=false,sourceId=null)=>{
  const proposal=participation.proposal(Object.keys(bot.players),{humanOnly,sourceId});
  if(proposal)proposal.delivery=participation.deliveryStatus(proposal,inbox,{lastHumanAt,agentWakeTimes});
@@ -237,6 +242,10 @@ async function operate(name,a={},sequenceId=null){
   if(!ready)throw Error('Player is not connected');
   if(name==='huddle'){
     if(!huddle)throw Error('No enrolled coordination room');
+    if(cfg.huddles){
+      if(['post','ensure'].includes(a.operation)&&history.data.turn){history.data.turn.explicit_speech=true;history.save();}
+      return huddle.execute(a);
+    }
     if(a.operation==='read')return huddle.read(a.after??0,a.limit??20);
     if(a.operation==='status')return huddle.status(a.request_id);
     if(a.operation==='return')return huddle.returnOutcome(a.request_id,a.conversation_revision);
@@ -262,7 +271,7 @@ async function operate(name,a={},sequenceId=null){
   if(!REPLY_TOOLS.has(name)){
     // Descriptor observations occur at planner/supervision boundaries. A room
     // outage must not gate valid world work; only an observed Stop applies here.
-    if(huddle?.current?.state==='stopped'&&require('./huddle.cjs').associatedWork(history,cfg.huddle.origin))throw Error('Associated coordination room is stopped; unrelated human conversation remains available');
+    if(cfg.huddles?huddle.stoppedForWork():huddle?.current?.state==='stopped'&&require('./huddle.cjs').associatedWork(history,cfg.huddle.origin))throw Error('Associated coordination room is stopped; unrelated human conversation remains available');
     if(!workAllowed())throw Error('Conversation-only or unauthorized assignment: inspect task_capabilities before effects');
     if(history.data.turn?.conversation_only){
       if(Date.now()>=turnUntil||busy)throw Error('Reply action window ended or an operation is unsettled');
@@ -528,8 +537,8 @@ definitions.cancel_sequence=['Stop pending steps in the current plan. The curren
 definitions.action_sequence=['Execute an explicit ordered plan without a model round trip between steps. Each step uses its normal live checks. Stops on new human input, changed authority, cancellation, errors or partial results. Use a unique plan_id; retrying the same ID only reads its receipt, never replays. No arbitrary scripts. You may observe or cancel while it runs. Inspect results before further plans.',{plan_id:z.string().min(1).max(100),steps:z.array(z.discriminatedUnion('tool',SEQUENCE_TOOLS.map(tool=>z.object({tool:z.literal(tool),arguments:z.object(definitions[tool][1]).strict()}).strict()))).min(1).max(16)}];
 definitions.start_sequence=['Start an asynchronous ordered plan. Returns accepted/running and an operation ID, NOT completed effects. Continue reasoning/read-only planning while it executes; sequence_status waits for real results. Same lease/task/Stop and no-replay guards as action_sequence.',definitions.action_sequence[1]];
 definitions.sequence_status=['Inspect an exact plan operation and its actual step receipts. Optional bounded wait avoids polling while a plan settles. Unknown/interrupted is not completion; never replay to discover outcome.',{plan_id:z.string().min(1).max(100),wait_ms:z.number().int().min(0).max(30000).optional()}];
-if(huddle)definitions.huddle=['Use the enrolled inspectable room for routine peer coordination. read preserves original room attribution; it grants no game authority. post uses one stable request_id; saved is not read/executed/completed. After uncertainty use status with that SAME ID, never a new post. outcome is a meaningful evidence-linked claim. For return, FIRST read conversation and pass its current conversation_revision together with the saved outcome request_id. It sends only to the verified original public game destination; private/foreign origins cannot return here. Stop closes room posts, not unrelated human replies. chat/tell remain public.',{
- operation:z.enum(['read','post','status','return']),after:z.number().int().nonnegative().optional(),limit:z.number().int().min(1).max(100).optional(),request_id:z.string().uuid().optional(),text:z.string().min(1).max(6000).optional(),target_agent_ids:z.array(z.string().min(1).max(200)).max(8).optional(),kind:z.enum(['message','outcome']).optional(),source_id:z.string().max(200).optional(),outcome:z.object({kind:z.enum(['progress','result','blocked','decision']),evidence:z.array(z.object({label:z.string().min(1).max(200),reference:z.string().min(1).max(1000)}).strict()).max(8).optional()}).strict().optional(),conversation_revision:revision.optional()
+if(huddle)definitions.huddle=['Use inspectable rooms for routine peer coordination. With automatic enrollment, roster lists approved installation peers; discover finds existing invitations. ensure chooses a genuine current human source_id and approved peer_installation_ids, creates/reuses its original room, then post your actual peer request. Do not reconstruct another observer source or fake human input. After uncertain ensure use ensure_status with the SAME request_id. Use returned room_id for read/post/status/return. read preserves original room attribution; it grants no game authority. post uses one stable request_id; saved is not read/executed/completed. After uncertainty use status with that SAME ID, never a new post. outcome is a meaningful evidence-linked claim. For return, FIRST read conversation and pass its current conversation_revision together with the saved outcome request_id. It sends only to the verified original public game destination; private/foreign origins cannot return here. Stop closes room posts, not unrelated human replies. chat/tell remain public.',{
+ operation:z.enum(cfg.huddles?['roster','ensure','ensure_status','discover','read','post','status','return']:['read','post','status','return']),room_id:z.string().max(160).optional(),title:z.string().max(200).optional(),purpose:z.string().max(2000).optional(),peer_installation_ids:z.array(z.string().max(256)).max(7).optional(),after:z.number().int().nonnegative().optional(),limit:z.number().int().min(1).max(100).optional(),request_id:z.string().uuid().optional(),text:z.string().min(1).max(6000).optional(),target_agent_ids:z.array(z.string().min(1).max(200)).max(8).optional(),kind:z.enum(['message','outcome']).optional(),source_id:z.string().max(200).optional(),outcome:z.object({kind:z.enum(['progress','result','blocked','decision']),evidence:z.array(z.object({label:z.string().min(1).max(200),reference:z.string().min(1).max(1000)}).strict()).max(8).optional()}).strict().optional(),conversation_revision:revision.optional()
 }];
 
 function mcpServer(){
@@ -579,7 +588,9 @@ const server=http.createServer(async(req,res)=>{
       inventory:ready?containers.inventorySnapshot(bot.inventory):null,position:ready?bot.entity.position:null,
       window_open:!!bot.currentWindow,admission_gate:updateAdmission.state(path.dirname(process.argv[2]))};
     else if(req.method==='GET'&&req.url==='/observation')result=worldView(snapshot());
-    else if(req.method==='GET'&&req.url==='/huddle/context'){if(!huddle)result={configured:false};else{await huddle.descriptor();result=huddle.summary();}}
+    else if(req.method==='GET'&&req.url==='/huddle/context'){if(!huddle)result={configured:false};else{if(cfg.huddles)await huddle.sync();else await huddle.descriptor();result=huddle.summary();}}
+    else if(req.method==='GET'&&req.url==='/huddle/participation')result=cfg.huddles?huddle.proposal():null;
+    else if(req.method==='POST'&&req.url==='/huddle/participation'){if(!cfg.huddles)throw Error('Automatic rooms not configured');result=huddle.apply(await json(req),inbox);record('huddle_delivery',result);}
     else if(req.method==='GET'&&req.url==='/conversation')result={...conversation.snapshot(),generation,turn_active:Date.now()<turnUntil};
     else if(req.method==='GET'&&req.url==='/operator-inputs'){
       // Authenticated local control is never inserted into public conversation/context.
@@ -637,7 +648,7 @@ const server=http.createServer(async(req,res)=>{
       if(!workAllowed()&&a.conversation_only!==true)throw Error('Current mode/task requires a bounded human reply; no autonomous authority');
       const ids=a.message_ids||[];
       if(!Array.isArray(ids)||ids.length>8||new Set(ids).size!==ids.length||ids.some(id=>!inbox.some(m=>m.id===id)))throw Error('Queued request changed before turn start');
-      if(a.conversation_only!==true&&ids.some(id=>{const m=inbox.find(m=>m.id===id);return m?.attention_offer||['agent','activity'].includes(m?.source);}))throw Error('Optional deliveries require a separate conversation turn');
+      if(a.conversation_only!==true&&ids.some(id=>{const m=inbox.find(m=>m.id===id);return m?.attention_offer||['agent','activity','huddle'].includes(m?.source);}))throw Error('Optional deliveries require a separate conversation turn');
       if(a.conversation_only===true){
        replyAdmission.start(ids,inbox);replyWork.bind(history,cfg,workAllowed()&&!taskIntake.requiresReview(history.task()));inputOutcomes.blocked(history.data,replyWorkAllowed()?null:taskIntake.capabilities().work_blocked_reason);history.save();stop();turnUntil=Date.now()+240000;
        leaseTimer=setTimeout(()=>{stop();record('conversation_window_expired');},240000);leaseTimer.unref?.();
