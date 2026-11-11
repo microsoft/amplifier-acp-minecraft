@@ -5,13 +5,13 @@ function reason(history,cfg){
  if(!enabled(cfg))return 'task_optional_disabled';
  if(history.data.activity_stop)return 'explicit_stop';
  const turn=history.data.last_turn;
- if(turn?.activity&&(turn.interrupted||turn.actions?.some(a=>a.status==='pending'||a.status==='uncertain'&&a.review?.outcome!=='no_effect')))return 'unresolved_activity_effects';
+ if(turn?.activity&&(turn.interrupted||turn.actions?.some(a=>a.status==='pending'||a.status==='uncertain'&&a.review?.outcome!=='no_effect'&&!(turn.effect_review?.future_work_only&&a.review?.outcome==='settled_failed_movement'))))return 'unresolved_activity_effects';
  // A separate activity cannot hide unsettled effects from an existing task.
  if(turn&&!turn.activity&&turn.interrupted&&turn.actions?.some(a=>a.status!=='succeeded'))return 'unresolved_task_effects';
  return null;
 }
 function allowed(history,cfg){return reason(history,cfg)===null;}
-function canContinue(history,cfg){return allowed(history,cfg)&&history.data.last_turn?.activity===true&&history.data.last_turn?.activity_report?.status==='running';}
+function canContinue(history,cfg){return allowed(history,cfg)&&!history.data.last_turn?.effect_review?.future_work_only&&history.data.last_turn?.activity===true&&history.data.last_turn?.activity_report?.status==='running';}
 function promote(history,cfg){
  if(!allowed(history,cfg)||!history.data.turn?.conversation_only)throw Error('Ordinary activity is stopped or has unresolved effects');
  history.data.turn={...history.data.turn,conversation_only:false,activity:true,task_id:null,may_mutate:true};history.save();
