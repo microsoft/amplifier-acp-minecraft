@@ -4,7 +4,7 @@ This reference owns Minecraft-specific setup, access and verification requiremen
 for new installations and existing servers. The
 [server-setup skill](../skills/minecraft-server-setup/SKILL.md) navigates them;
 commands below illustrate their use. Shared installation ownership lives in the
-[family agreement](https://github.com/microsoft/amplifier-constellation/blob/main/contracts/family.v1-candidate.md#self-contained-installation-baseline).
+[installation agreement](https://github.com/microsoft/amplifier-constellation/blob/main/contracts/installations.md).
 Plain ACP setup remains available without Instance, a particular model provider
 or a custom world mod. Read only the sections relevant to the requested operation.
 

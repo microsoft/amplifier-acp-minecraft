@@ -2,7 +2,7 @@
 
 ## Ownership and compatibility
 
-The shared [SDK policy](https://github.com/microsoft/amplifier-constellation/blob/main/contracts/protocol-sdk.v1-candidate.md)
+The shared [engine compatibility agreement](https://github.com/microsoft/amplifier-constellation/blob/main/contracts/engine-compatibility.md)
 owns protocol ownership, exception approval and upstream reevaluation. This
 reference defines the adapter integration and its bounded wrappers. Production
 ACP transport and models use `agentclientprotocol/python-sdk`; the package pins

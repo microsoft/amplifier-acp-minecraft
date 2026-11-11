@@ -29,7 +29,7 @@ Legacy work mode (`incoming_chat_only: false`) retains its existing behavior. St
 leases and revokes unused sources older than the stop.
 
 This implements a bounded local subset of the shared
-[task-admission contract](https://github.com/microsoft/amplifier-constellation/blob/6c122d8c14f52f103484536d7005ac37163e17ef/contracts/task-admission.v1-candidate.md).
+[work-authority agreement](https://github.com/microsoft/amplifier-constellation/blob/main/contracts/work-authority.md).
 It adds no ACP fields or host API. Independent helper coordination is described below.
 
 ## Acceptance and amendments
