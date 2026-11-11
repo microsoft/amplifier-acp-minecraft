@@ -7,7 +7,7 @@ const {z} = require('zod');
 const {isPublicChatEvent}=require('./public-chat.cjs');
 
 function status(snapshot, label) {
-  const fields = ['username','ready','busy','turn_active','position','health','food','time','inventory','players'];
+  const fields = ['username','ready','busy','turn_active','position','feet_block','health','food','time','inventory','players'];
   const result = Object.fromEntries(fields.filter(k => snapshot[k] !== undefined).map(k => [k,snapshot[k]]));
   const observed_at=new Date().toISOString();
   const t=snapshot.task;
@@ -44,7 +44,7 @@ function createHandler({token,snapshot,label='Minecraft',screenshots,onError=()=
       require('./screenshots.cjs').registerTools(server,screenshots,'minecraft_');
       const reply=value=>({content:[{type:'text',text:JSON.stringify(value)}]});
       server.registerTool('minecraft_status',{
-        description:'See this same agent in its connected Minecraft world: current position, inventory, other players and bounded task progress. Does not wake a planner or change the world.',
+        description:'See this same agent in its connected Minecraft world: current raw position and feet block, inventory, other players and bounded task progress. Does not wake a planner or change the world.',
         inputSchema:{},annotations:{readOnlyHint:true,destructiveHint:false}
       },async()=>reply(status(snapshot(),label)));
       server.registerTool('minecraft_recent_activity',{
