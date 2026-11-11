@@ -44,13 +44,13 @@ function bodyFixture(){
  const initial={task:task(),turn:null,events:[]};fs.writeFileSync(file,JSON.stringify(initial));fs.writeFileSync(cfg,JSON.stringify({username:'Builder',token:'fixture'}));
  const {Vec3}=realRequire('vec3'),bot=new EventEmitter();
  Object.assign(bot,{username:'Builder',entity:{position:new Vec3(1,64,2)},players:{},health:20,food:20,time:{timeOfDay:6000},
-  loadPlugin(){},inventory:{items:()=>[{name:'stone',count:3}]},findBlocks:()=>[]});
+  loadPlugin(){},pathfinder:{setMovements(){}},inventory:{items:()=>[{name:'stone',count:3}]},findBlocks:()=>[]});
  let handle;
  const ctx=vm.createContext({require:n=>n==='mineflayer'?{createBot:()=>bot}:n==='node:http'?{createServer:h=>{handle=h;return {listen(){},close(){}};}}:
-  n==='./spatial.cjs'?{...realRequire(n),localMap:()=>({slices:[]})}:realRequire(n),
+  n==='./spatial.cjs'?{...realRequire(n),SpatialMovements:class{},alignPlayerCollision(){},localMap:()=>({slices:[]})}:realRequire(n),
   module:{exports:{}},console:{log(){}},Buffer,process:{argv:['node','body.cjs',cfg],on(){},exit(){assert.fail('Unexpected exit');}},setTimeout,clearTimeout});
  vm.runInContext(fs.readFileSync(path.join(root,'body.cjs'),'utf8')+'\nready=true;module.exports={operate,history,start(){history.startTurn();turnUntil=Date.now()+240000;}};',ctx);
- return {...ctx.module.exports,file,initial,async request(url,authorization='Bearer fixture'){
+ return {...ctx.module.exports,bot,file,initial,async request(url,authorization='Bearer fixture'){
   const req=Readable.from([]);Object.assign(req,{url,method:'GET',headers:{authorization}});let status,text;
   await handle(req,{writeHead:x=>status=x,end:x=>text=x});return {status,value:text?JSON.parse(text):null};
  },close:()=>fs.rmSync(home,{recursive:true,force:true})};
@@ -86,4 +86,18 @@ test('duplicate public text is represented once while source evidence and trunca
  assert.equal(view.events[0].message,undefined);assert.equal(view.events[0].conversation_message_id,event.id);
  assert.deepEqual(view.events[0].transport,event.transport);assert.deepEqual(view.conversation,state.conversation);assert.deepEqual(state,original);
  message.text='A long';assert.equal(worldView(state).events[0].message,event.message);
+});
+test('world readiness does not claim respawn; legacy callbacks keep their original full evidence',async()=>{
+ const f=bodyFixture();try{
+  const legacy=f.history.record({kind:'spawn',time:'2026-11-10T01:00:00Z',position:{x:1,y:64,z:2}});
+  f.bot.emit('spawn');f.bot.emit('spawn');
+  const current=f.history.data.events.filter(e=>e.kind==='world_ready');assert.equal(current.length,2);
+  for(const event of current){assert.equal(event.source_event,'mineflayer_spawn');assert.equal(event.respawn,'not_established');}
+  f.bot.entity.position.x=9;assert.equal(current[0].position.x,1,'saved readiness position is a snapshot');
+  const before=fs.readFileSync(f.file,'utf8'),full=await f.request('/state'),view=await f.request('/observation');
+  const oldFull=full.value.events.find(e=>e.id===legacy.id),oldView=view.value.events.find(e=>e.id===legacy.id);
+  assert.deepEqual(oldFull,clone(legacy));assert.equal(oldFull.respawn,undefined);assert.equal(oldView.kind,'spawn');assert.equal(oldView.time,legacy.time);
+  assert.deepEqual(oldView,oldFull);assert.match(view.value.history_view.legacy_spawn_meaning,/not proof/);
+  assert.equal(fs.readFileSync(f.file,'utf8'),before);
+ }finally{f.close();}
 });

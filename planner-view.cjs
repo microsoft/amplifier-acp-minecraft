@@ -42,6 +42,8 @@ function worldView(state){
   // Keep exact outcomes for recent actions; don't summarize uncertain effects as success.
   receipts:receipts.slice(-recentReceipts),
   history_view:{retained_receipts:receipts.length,shown_receipts:Math.min(receipts.length,recentReceipts),
+   // One interpretation for legacy callbacks, not repeated prose on each event.
+   ...(events.some(e=>e.kind==='spawn')?{legacy_spawn_meaning:'Mineflayer world-readiness callback, also emitted on login/reconnect; not proof of a new player, relocation or respawn.'}:{}),
    details:'Recent working view. Full retained evidence is available with observe(detail="full"). Public chat is in conversation. Missing older detail is not evidence that work succeeded or was handled.'}};
 }
 module.exports={taskView,worldView};
