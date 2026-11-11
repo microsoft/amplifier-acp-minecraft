@@ -55,3 +55,28 @@ test('oversized non-packet evidence is omitted explicitly, never clipped into a 
  const h=fixture(t),id=randomUUID();h.startTurn({requestIds:[id],activity:true});publicReply(h,'x'.repeat(241));h.finish();
  const r=outcomes.query(h.data,[id]).outcomes[0];assert.deepEqual(r.responses,[]);assert.equal(r.responses_omitted,true);
 });
+
+const resumption=(id,task_id='original')=>({request_id:id,task_id,source:{id,message:'private original instruction'},arguments_hash:'retained',result:{task_id,status:'running',scheduled:true,execution_started:false}});
+test('saved resumption survives restart separately from conversation admission and current task state',t=>{
+ const h=fixture(t),id=randomUUID(),other=randomUUID();h.data.turn={request_ids:[id],started_at:new Date().toISOString(),conversation_only:true,task_id:null};outcomes.admit(h.data);h.finish();
+ h.data.work_resumptions=[resumption(id),resumption(other,'other')];h.data.task={id:'replacement',status:'completed',turns:99};h.save();
+ const loaded=new WorkshopState(h.file),before=fs.readFileSync(h.file,'utf8'),memory=JSON.stringify(loaded.data),r=outcomes.query(loaded.data,[id]).outcomes[0];
+ assert.equal(r.delivery,'terminal');assert.equal(r.conversation_only,true);assert.equal(r.completion,'not_established');assert.deepEqual(r.task_authorizations,[]);
+ assert.deepEqual(r.work_resumptions,[{task_id:'original',recorded_status:'running',scheduled:true,execution_started:false}]);
+ assert.ok(!JSON.stringify(r).includes('private original instruction'));assert.ok(!JSON.stringify(r).includes('replacement'));
+ assert.equal(fs.readFileSync(h.file,'utf8'),before);assert.equal(JSON.stringify(loaded.data),memory);
+});
+test('retained resumption does not fabricate evicted admission, terminal, or execution',()=>{
+ const id=randomUUID(),d={work_resumptions:[resumption(id)]},r=outcomes.query(d,[id]).outcomes[0];
+ assert.equal(r.delivery,'unknown');assert.equal(r.reason,'not_retained');assert.equal(r.terminal_at,null);assert.equal(r.conversation_only,null);
+ assert.equal(r.work_resumptions.length,1);assert.equal(r.work_resumptions[0].execution_started,false);assert.equal(r.completion,'not_established');
+});
+test('resumption evidence requires matching original request, source and task result',()=>{
+ const id=randomUUID(),other=randomUUID(),rows=[{...resumption(id),source:{id:other}},{...resumption(other),source:{id}}, {...resumption(id),result:{...resumption(id).result,task_id:'different'}},{...resumption(id),result:{task_id:'original',status:'running'}}];
+ const d={work_resumptions:rows},before=JSON.stringify(d),r=outcomes.query(d,[id]).outcomes[0];
+ assert.deepEqual(r.work_resumptions,[]);assert.equal(r.work_resumptions_omitted,true);assert.equal(JSON.stringify(d),before);
+});
+test('resumption projection is bounded with omission explicit and canonical receipts retained',()=>{
+ const id=randomUUID(),d={work_resumptions:Array.from({length:20},(_,i)=>resumption(id,`task-${i}`))},before=JSON.stringify(d),r=outcomes.query(d,[id]).outcomes[0];
+ assert.equal(r.work_resumptions.length,16);assert.equal(r.work_resumptions[0].task_id,'task-4');assert.equal(r.work_resumptions_omitted,true);assert.equal(JSON.stringify(d),before);
+});
