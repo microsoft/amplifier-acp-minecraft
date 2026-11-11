@@ -81,3 +81,11 @@ test('solid exact destination avoids exhaustive search without rejecting nearby 
  assert.equal(r.status,'target_obstructed');assert.equal(r.examined,0);assert.equal(r.target_stance.feet.name,'stone');
  assert.equal(walking.plan(bot,new Vec3(2,1,0),1).status,'success');
 });
+test('negative fractional start and chosen target retain explicit floored block evidence',async()=>{
+ const {bot,wait}=moving();bot.blockAt=p=>p.y===0?full:air;bot.entity.position=new Vec3(-313.1567,1,68.52);
+ const before=bot.entity.position.clone(),origin=before.floored(),west=origin.offset(-2,0,0);
+ const plan=walking.plan(bot,west);assert.deepEqual(plan.feet_block,origin);assert.deepEqual(plan.planned_from_block,origin);assert.deepEqual(plan.planned_from,before);assert.deepEqual(bot.entity.position,before);
+ const out=await walking.move(bot,west,0,()=>{},{wait});assert.deepEqual(out.before_feet_block,origin);assert.deepEqual(out.feet_block,west);
+ const back=await walking.move(bot,origin,0,()=>{},{wait});assert.deepEqual(back.feet_block,origin);assert.equal(back.reached,true);assert.equal(back.position.floored().x,-314);
+ bot.entity.position=new Vec3(-313.1567,1.5,68.52);const partial=walking.plan(bot,origin);assert.equal(partial.current_feet.y,1.5);assert.equal(partial.feet_block.y,1);assert.equal(partial.status,'non_level_start');
+});

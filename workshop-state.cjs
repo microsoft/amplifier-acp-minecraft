@@ -69,8 +69,13 @@ class WorkshopState {
   if(this.data.task)this.data.task_history=[...(this.data.task_history||[]),this.data.task].slice(-10);
   this.data.task=task;if(this.data.turn)this.data.turn.task_id=task.id;this.save();return task;
  }
- startTurn({peerOnly=false,requestIds=[],activity=false}={}){
-  const task=activity?null:this.task();
+ startTurn({peerOnly=false,requestIds=[],activity=false,continuation=false}={}){
+  const input=require('./installation-inputs.cjs'),task=activity?null:this.task(),last=this.data.last_turn;
+  const sameWork=activity?last?.activity===true:last?.activity!==true&&!!task&&last?.task_id===task.id;
+  const taskSource=task?.authority?.source?.id||task?.request_id;
+  const replyRoute=requestIds.length?input.replyRoute(this.data,requestIds):continuation?
+   (sameWork&&last?.reply_route||taskSource&&input.replyRoute(this.data,[taskSource])):null;
+  if(replyRoute)input.replyRecord(this.data,replyRoute);
   if(task&&!bounds.valid(task))throw Error('Unknown assignment bounds require inspection');
   if(['running','waiting'].includes(task?.status)){
    if(bounds.timeLow(task,120000)){this.budgetCheckpoint();throw Error('Insufficient time for another useful turn; progress saved');}
@@ -78,7 +83,7 @@ class WorkshopState {
    if(bounds.turnsLow(task)){task.status='budget_exhausted';this.save();throw Error('Task turn budget exhausted');}
    task.turns++;
   }
-  this.data.turn={...(activity?{activity:true}:{}),started_at:new Date().toISOString(),task_id:task?.id||null,progress_revision:task?.progress_revision||0,actions:[],request_ids:requestIds,may_mutate:!peerOnly||['running','waiting'].includes(task?.status)};inputOutcomes.admit(this.data);this.save();
+  this.data.turn={...(activity?{activity:true}:{}),...(replyRoute?{reply_route:structuredClone(replyRoute)}:{}),started_at:new Date().toISOString(),task_id:task?.id||null,progress_revision:task?.progress_revision||0,actions:[],request_ids:requestIds,may_mutate:!peerOnly||['running','waiting'].includes(task?.status)};inputOutcomes.admit(this.data);this.save();
  }
  actionStarted(id){if(this.data.turn){this.data.turn.actions.push({id,status:'pending'});this.save();}}
  actionSettled(id,success){const a=this.data.turn?.actions?.find(a=>a.id===id);if(a){a.status=success?'succeeded':'uncertain';this.save();}}

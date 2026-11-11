@@ -32,3 +32,13 @@ class DeliveryQueueTests(unittest.TestCase):
         self.assertEqual(attention_reply_messages([a,b],['a']),[])
         self.assertEqual(attention_reply_messages([a,b],['a','b']),[a,b])
         self.assertIsNone(attention_reply_messages([{'id':'human','source':'human'}],[]))
+
+class PrivateSourceQueue(unittest.TestCase):
+    def test_distinct_private_sources_and_public_inputs_keep_original_separate_admissions(self):
+        first={'id':'a','source':'human','reply_scope':'installation:a'}
+        second={'id':'b','source':'human','reply_scope':'installation:b'}
+        public={'id':'c','source':'human'}
+        messages=[first,second,public]
+        self.assertEqual(select_turn_messages(messages),[first])
+        self.assertEqual(select_turn_messages([public,first,second]),[public])
+        self.assertEqual(messages,[first,second,public])

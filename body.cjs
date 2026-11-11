@@ -74,7 +74,7 @@ const conversation=new Conversation(history,cfg.username);
 const huddleOptions={
  canPost:()=>ready&&!!history.data.turn&&Date.now()<turnUntil&&!history.data.turn.huddle_stopped,
  validatePublic:a=>{
-  if(!history.data.turn||history.data.turn.reply_recipient||Date.now()>=turnUntil)throw Error('Original public return requires an active public reply turn');
+  if(!history.data.turn||history.data.turn.reply_recipient||history.data.turn.reply_route||Date.now()>=turnUntil)throw Error('Original public return requires an active public reply turn');
   conversation.guard(a.conversation_revision);
  },
  onState:d=>{
@@ -90,7 +90,7 @@ const huddleOptions={
   else if(['running','waiting','blocked','needs_review','review'].includes(history.data.task?.status))history.stop();
  },
  sendPublic:async a=>{
-  if(!history.data.turn||history.data.turn.reply_recipient||Date.now()>=turnUntil)throw Error('Original public return requires an active public reply turn');
+  if(!history.data.turn||history.data.turn.reply_recipient||history.data.turn.reply_route||Date.now()>=turnUntil)throw Error('Original public return requires an active public reply turn');
   history.data.turn.explicit_speech=true;history.save();
   return speech('chat',{text:a.text,conversation_revision:a.conversation_revision,huddle_return:{room_id:a.room_id,request_id:a.request_id}});
  }
@@ -167,7 +167,7 @@ function snapshot(){
   humanActivity.sample(bot.players);
   const p=bot.entity.position;
   const blocks=bot.findBlocks({matching:b=>b.name!=='air'&&b.name!=='water'&&b.name!=='grass_block'&&b.name!=='dirt'&&b.name!=='stone',maxDistance:16,count:50});
-  return {username:bot.username,ready,busy,generation,turn_active:Date.now()<turnUntil,pending_messages:inbox.length,incoming_chat_only:cfg.incoming_chat_only===true,conversation_only:history.data.turn?.conversation_only===true,reply_work_allowed:replyWorkAllowed(),explicit_speech:history.data.turn?.explicit_speech===true,ordinary_activity:history.data.turn?.activity===true,ambient_activity:history.data.turn?.ambient_activity===true,peer_proposal:history.data.turn?.peer_proposal===true,task_capabilities:taskIntake.capabilities(),position:p,health:bot.health,food:bot.food,time:bot.time.timeOfDay,
+  return {username:bot.username,ready,busy,generation,turn_active:Date.now()<turnUntil,pending_messages:inbox.length,incoming_chat_only:cfg.incoming_chat_only===true,conversation_only:history.data.turn?.conversation_only===true,reply_work_allowed:replyWorkAllowed(),explicit_speech:history.data.turn?.explicit_speech===true,reply_route:history.data.turn?.reply_route||null,ordinary_activity:history.data.turn?.activity===true,ambient_activity:history.data.turn?.ambient_activity===true,peer_proposal:history.data.turn?.peer_proposal===true,task_capabilities:taskIntake.capabilities(),position:p,feet_block:p.floored(),health:bot.health,food:bot.food,time:bot.time.timeOfDay,
     inventory:bot.inventory.items().map(i=>({name:i.name,count:i.count})),
     terrain:spatial.localMap(bot,3),
     players:Object.values(bot.players).map(p=>({name:p.username,position:p.entity?.position})),
@@ -194,7 +194,14 @@ function speechIdentity(text){
  const recipient=history.data.turn?.reply_recipient||null;
  return JSON.stringify([conversation.snapshot().revision,recipient||null,text]);
 }
-function speak(text){
+function privateResponse(a={}){return history.data.turn?.reply_route?.kind==='installation'&&a.audience!=='game';}
+function privateReply(text){
+ const result=installationInputs.saveReply(history,text);
+ record('source_reply_recorded',{reply_id:result.id,request_id:history.data.turn.reply_route.request_id,duplicate:result.duplicate===true});
+ return {sent:result.text,private_reply:true,reply_id:result.id,at:result.at,delivery:result.delivery,transport_submitted:false,recipient_delivery_verified:false,...(result.duplicate?{duplicate:true}:{})};
+}
+function speak(text,{audience='reply'}={}){
+ if(history.data.turn?.reply_route?.kind==='installation'&&audience!=='game')return privateReply(text);
  const s=text.replace(/[\r\n\x00-\x1f]/g,' ').trim();if(!s||s.startsWith('/'))throw Error('Use ordinary chat, not slash commands');
  const recipient=history.data.turn?.reply_recipient||null;
  const result={sent:s.slice(0,240),...(recipient?{whisper:true,provenance:'minecraft_whisper',recipient}:{})};
@@ -207,12 +214,17 @@ function speak(text){
 }
 async function speech(name,a){
  const turn=history.data.turn,epoch=generation;
+ if(a.audience!==undefined&&!['reply','game'].includes(a.audience))throw Error('Unknown speech audience');
+ if(turn?.reply_route?.kind==='installation'&&a.audience!=='game'){
+  if(name==='tell'||a.reply_to!==undefined)throw Error('This reply belongs to the private installation caller, not a game player. Use chat or final text for the reply; select audience=game only for a requested game publication.');
+  return privateReply(a.text);
+ }
  const replyTo=require('./speech.cjs').replySources(history.data,a.reply_to,conversation);
  if(name==='tell'&&(a.player===bot.username||!bot.players[a.player]))throw Error('Choose another connected player by their exact name');
  const marker={request:'',update:'[FYI] ',ack:'[ACK] '}[a.intent]||'';
  const prefix=name==='tell'?'@'+a.player+' '+marker:'';
  const chunks=require('./speech.cjs').packets(a.text,prefix);
- const key=crypto.createHash('sha256').update(JSON.stringify([name,a.player||null,a.intent||null,a.text,turn?.reply_recipient||null])).digest('hex');
+ const key=crypto.createHash('sha256').update(JSON.stringify([name,a.player||null,a.intent||null,a.text,turn?.reply_recipient||null,a.audience||'reply',turn?.reply_route||null])).digest('hex');
  turn.speech_operations??=[];
  const old=turn.speech_operations.find(o=>o.key===key);
  if(old){if(JSON.stringify(old.reply_to||[])!==JSON.stringify(replyTo))throw Error('Existing utterance has different source associations; do not resend');if(old.status==='submitted')return {...old.result,duplicate:true};throw Error('This utterance has an unresolved or partial submission; inspect its receipts, do not replay');}
@@ -224,7 +236,7 @@ async function speech(name,a){
    if(history.data.turn!==turn||generation!==epoch||Date.now()>=turnUntil)throw Error('Speech interrupted; unsent packets cancelled');
    conversation.guard(a.conversation_revision);
    const packet=operation.packets[i];packet.status='submitting';history.save();
-   packet.receipt=speak(packet.text);packet.status='submitted';history.save();
+   packet.receipt=speak(packet.text,a);packet.status='submitted';history.save();
   }
   operation.status='submitted';operation.result={sent:chunks.join(' '),operation_id:operation.id,packet_count:chunks.length,transport_submitted:true,recipient_delivery_verified:false,...(name==='tell'?{intent:a.intent,requests_reply:a.intent==='request'}:{})};history.save();return operation.result;
  }catch(error){operation.status='incomplete';for(const packet of operation.packets)if(packet.status==='unsent')packet.status='cancelled';history.save();throw error;}
@@ -313,7 +325,7 @@ async function operate(name,a={},sequenceId=null){
   // Speech has its own settled receipt and never takes ownership of an
   // in-flight physical operation. The same audience/revision/lease checks apply.
   if(['chat','tell'].includes(name)&&actionSequence.active){
-    conversation.guard(a.conversation_revision);
+    if(!privateResponse(a))conversation.guard(a.conversation_revision);
     if(++actions>24&&cfg.human_engagement?.enabled!==true)throw Error('This turn reached its 24-action budget; inspect the sequence before reporting');
     const actionId=crypto.randomUUID();history.actionStarted(actionId);record('action_started',{action_id:actionId,action:name,arguments:a});
     try{
@@ -346,7 +358,7 @@ async function operate(name,a={},sequenceId=null){
   }
   if(!['chat','tell'].includes(name)&&!history.data.turn?.may_mutate)throw Error('A peer message does not authorize game actions after a responsibility stops. You may inspect and reply; a new human request is needed for more work.');
   const transfer=name==='give'||(name==='container'&&['deposit','withdraw'].includes(a.operation));
-  if(transfer||['chat','tell'].includes(name))conversation.guard(a.conversation_revision);
+  if(transfer||['chat','tell'].includes(name)&&!privateResponse(a))conversation.guard(a.conversation_revision);
   if(name==='container'&&transfer&&!a.contents_revision)throw Error('Inspect this container first and supply its contents_revision. No transfer attempted.');
   try{retryGuard.check(bot,name,a);}catch(e){record('action_retry_blocked',{action:name,arguments:a,...e.details});throw e;}
   if(name==='place')validatePlacementFacing(a.item,a.facing);
@@ -398,7 +410,7 @@ async function operate(name,a={},sequenceId=null){
       if(name==='container')return containers.container(bot,coord(a),a,check,{beforeTransfer:()=>conversation.guard(a.conversation_revision)});
       if(name==='till')return farming.till(bot,coord(a),a,check);
       if(name==='tell')return speech(name,a);
-      if(name==='move'){const p=coord(a),before=bot.entity.position.clone();if(a.mode==='walk_only')return walking.move(bot,p,a.range??0,check);await go(p,a.range??0,true);return {mode:'normal',position:bot.entity.position,before,target:p,reached:true,exact_feet_y:true};}
+      if(name==='move'){const p=coord(a),before=bot.entity.position.clone();if(a.mode==='walk_only')return walking.move(bot,p,a.range??0,check);await go(p,a.range??0,true);return {mode:'normal',position:bot.entity.position.clone(),feet_block:bot.entity.position.floored(),before,before_feet_block:before.floored(),target:p,reached:true,exact_feet_y:true};}
       if(name==='write_sign')return signs.write(bot,coord(a),a,check);
       if(name==='activate_control')return new BlockControls(history).use(bot,coord(a),a,check);
       if(name==='set_open'){const p=coord(a),block=bot.blockAt(p);if(!block||!/(?:_door|_trapdoor|_fence_gate)$/.test(block.name))throw Error('Only doors, trapdoors and fence gates can be opened here');if(p.distanceTo(bot.entity.position)>4)throw Error('Move within reach first');if(block.getProperties().open!==a.open){await bot.activateBlock(block);await delay(300);check();}const actual=bot.blockAt(p)?.getProperties().open;if(actual!==a.open)throw Error('Server did not confirm the requested open state');return {position:p,name:block.name,open:actual,verified:true};}
@@ -501,7 +513,7 @@ const definitions={
   inventory:['Refresh inventory from the server, including after crafting or a held-item discrepancy. A normal observation may reflect cached inventory.',{}],
   container:['First inspect to get contents_revision; transfers also need a fresh conversation_revision from conversation. A changed chest or new public message rejects the transfer before delivery. Inspect an ordinary chest/barrel or deposit/withdraw 1–64 ordinary supply items, verifying both inventories against server snapshots. Stand within four blocks with clear reach; never walks. Coordinate shared storage. Partial/unconfirmed results require inspection, never blind retries. recover returns a held cursor to its original source slot after an interrupted transfer. Tools and other component-bearing items require source_slot plus source_item_revision from inspect; this selects one exact stack and preserves its properties, using empty destination slots only.',{...xyz,expected:z.enum(['chest','barrel']),conversation_revision:revision,contents_revision:revision,operation:z.enum(['inspect','deposit','withdraw','recover']),source_slot:z.number().int().min(0).max(89).optional(),source_item_revision:z.string().regex(/^[0-9a-f]{64}$/).optional(),item:z.string().min(1).max(80).optional(),count:z.number().int().min(1).max(64).optional()}],
   work_note:['Update an existing task after a bounded recovery or new observation. Resolving a blocked task marks it for review; never schedules more work or resets budgets.',{task_id:z.string(),summary:z.string().min(1).max(2000),blocker_resolved:z.boolean().default(false),status:z.enum(['blocked','needs_review','review']).optional()}],
-  tell:['Pass the latest conversation_revision; reconsider newer public evidence before sending. Address a player in public chat. intent=request asks for action/reply; update adds visible [FYI], ack adds [ACK]. Instance attention decides whether a fresh public message merits an idle turn; active-turn awareness can carry all three as context. Use requests only for actual dependencies; do not acknowledge acknowledgments. When answering a queued human correction seen during this turn, optionally pass its exact source_fact in reply_to. This records a response only, not completed work; leave unanswered inputs pending. The connector splits long utterances into addressed packets; do not retry partial/unknown submission.',{conversation_revision:revision,player:z.string().min(1).max(16),text:z.string().min(1).max(4000),intent:z.enum(['request','update','ack']).default('request'),reply_to:replySources}],
+  tell:['Address an actual connected game player, never an installation caller label. For a private installation reply use chat or final text; select audience=game only for requested game publication. Pass the latest conversation_revision; reconsider newer public evidence before sending. Address a player in public chat. intent=request asks for action/reply; update adds visible [FYI], ack adds [ACK]. Instance attention decides whether a fresh public message merits an idle turn; active-turn awareness can carry all three as context. Use requests only for actual dependencies; do not acknowledge acknowledgments. When answering a queued human correction seen during this turn, optionally pass its exact source_fact in reply_to. This records a response only, not completed work; leave unanswered inputs pending. The connector splits long utterances into addressed packets; do not retry partial/unknown submission.',{conversation_revision:revision,player:z.string().min(1).max(16),text:z.string().min(1).max(4000),audience:z.enum(['reply','game']).default('reply'),intent:z.enum(['request','update','ack']).default('request'),reply_to:replySources}],
   task_capabilities:['Read effective task mode, allowed transitions, default limits, ceilings and blocked reasons. No authority change.',{}],
   task_accept:['Accept an actual public human or authenticated operator assignment using its verified event id. Not for greetings/questions. Durable/idempotent; metadata only, no world effects in this reply. Do not claim accepted until success. Optional limits require human instruction; otherwise use defaults.',{request_id:z.string(),goal:z.string().min(1).max(2000),max_turns:z.number().int().positive().optional(),seconds:z.number().int().positive().optional()}],
   task_accept_help:['Accept a helper proposal within ORIGINAL locally verified human lead/crew authorization. Quote the human instruction, bind both event IDs and describe the in-scope responsibility. For an existing active assignment supply expected_task_id and expected_revision: adds the coordinated responsibility without replacing the goal, resetting spent counts or changing bounds (omit seconds/max_turns). Human evidence retained during that assignment may support coordination; new assignments require fresh authority. Peer text alone grants nothing. No aggregate budget or further delegation. This reply stays effect-free; work follows after settlement.',{request_id:z.string(),peer_request_id:z.string(),authorization_quote:z.string().min(8).max(600),budget_scope:z.literal('independent_per_agent'),goal:z.string().min(1).max(2000),expected_task_id:z.string().optional(),expected_revision:z.number().int().positive().optional(),max_turns:z.number().int().positive().optional(),seconds:z.number().int().positive().optional()}],
@@ -522,8 +534,8 @@ const definitions={
   dig:['Remove one exact block, checking its expected type, reach, harvesting tool and player footing. Does not walk automatically or collect drops. Use gather with explicitly selected resource targets when you need inventory items. Preserve player builds unless authorized.',{...xyz,expected:z.string().min(1).max(80)}],
   inspect:['Inspect one nearby block, including empty spaces and support faces.',xyz],
   find:['Find up to twelve loaded blocks of an exact type near you.',{block:z.string(),radius:z.number().int().min(1).max(48).default(24)}],
-  chat:['Pass the latest conversation_revision; reconsider newer public evidence before sending. Say something in Minecraft public chat. When answering a queued human correction seen during this turn, optionally pass its exact source_fact in reply_to. This records a response only, not completed work; leave unanswered inputs pending. The connector splits a completed utterance into ordered packets; do not count characters or resend a partial/unknown submission. No slash commands.',{conversation_revision:revision,text:z.string().min(1).max(4000),reply_to:replySources}],
-  move:['Move to exact feet height. mode=walk_only uses level cardinal walking with no jumping/climbing/swimming or wall shortcuts and verifies the observed height. Rechecks terrain and stops on obstruction, lost footing or Stop. Normal mode may jump/climb. Range is horizontal only; use 0 for a precise destination.',{...xyz,range:z.number().int().min(0).max(3).default(0),mode:z.enum(['normal','walk_only']).default('normal')}],
+  chat:['Reply to the current audience: private installation caller, game whisper, or public game. Private replies are recorded for the original caller; they are not spoken in game. Only select audience=game for an explicitly requested game publication. Pass the latest conversation_revision for game speech; reconsider newer public evidence before sending. When answering a queued human correction seen during this turn, optionally pass its exact source_fact in reply_to. This records a response only, not completed work; leave unanswered inputs pending. The connector splits a completed utterance into ordered packets; do not count characters or resend a partial/unknown submission. No slash commands.',{conversation_revision:revision,text:z.string().min(1).max(4000),audience:z.enum(['reply','game']).default('reply'),reply_to:replySources}],
+  move:['Coordinates name a block, not a rounded raw position. Use observed feet_block (floor on all axes) to save a starting block; verify final feet_block before claiming return. reached verifies the chosen target only. Move to exact feet height. mode=walk_only uses level cardinal walking with no jumping/climbing/swimming or wall shortcuts and verifies the observed height. Rechecks terrain and stops on obstruction, lost footing or Stop. Normal mode may jump/climb. Range is horizontal only; use 0 for a precise destination.',{...xyz,range:z.number().int().min(0).max(3).default(0),mode:z.enum(['normal','walk_only']).default('normal')}],
   follow:['Follow a visible player by name OR a moving animal by entity_id and uuid from entities. Bounded duration, no digging. Rechecks identity and reports actual proximity; useful for approaching sheep that move between observations.',{player:z.string().optional(),entity_id:z.number().int().optional(),uuid:z.string().uuid().optional(),seconds:z.number().int().min(1).max(30).default(10)}],
   gather:['Mine only explicitly selected targets, in order, up to count. First use find/map/inspect and conversation to select resource blocks, not player builds: type alone cannot prove natural origin. Targets must be unique and within 24 blocks at the start. Never searches for replacements; changed/unsafe targets stop the batch. May walk to safe footing and drops. Returns exact removed coordinates and inventory deltas; inspect partial/unconfirmed results before retrying.',{block:z.string(),count:z.number().int().min(1).max(8).default(1),targets:z.array(z.object(xyz)).min(1).max(8)}],
   craft:['Craft recipe executions using your inventory and a nearby table when needed. Counts are recipe executions.',{item:z.string(),count:z.number().int().min(1).max(8).default(1)}],
@@ -615,8 +627,8 @@ const server=http.createServer(async(req,res)=>{
       else result={action:'hold'};
     }
     else if(req.method==='GET'&&(req.url==='/input-outcomes'||req.url.startsWith('/input-outcomes?')))result=inputOutcomes.query(history.data,inputOutcomes.requestIds(req.url));
-    else if(req.method==='GET'&&req.url==='/status')result={input_outcomes:inputOutcomes.CAPABILITY,installation_inputs:installationInputs.capability,ready,busy,turn_active:Date.now()<turnUntil,incoming_chat_only:cfg.incoming_chat_only===true,conversation_only:history.data.turn?.conversation_only===true,reply_work_allowed:replyWorkAllowed(),explicit_speech:history.data.turn?.explicit_speech===true,ordinary_activity:history.data.turn?.activity===true,ambient_activity:history.data.turn?.ambient_activity===true,peer_proposal:history.data.turn?.peer_proposal===true,task_intake_enabled:taskIntake.capabilities().task_intake_enabled,task_capabilities:taskIntake.capabilities(),task:history.task(),action_lease:lease.view(history.task()),action_sequence:actionSequence.status()};
-    else if(req.method==='GET'&&req.url==='/inbox/peek')result=(cfg.human_engagement?.enabled===true&&inbox.some(m=>m.source==='human'&&!m.attention_offer)?inbox.filter(m=>m.source==='human'&&!m.attention_offer):inbox).slice(0,8);
+    else if(req.method==='GET'&&req.url==='/status')result={input_outcomes:inputOutcomes.CAPABILITY,installation_inputs:installationInputs.capability,ready,busy,turn_active:Date.now()<turnUntil,incoming_chat_only:cfg.incoming_chat_only===true,conversation_only:history.data.turn?.conversation_only===true,reply_work_allowed:replyWorkAllowed(),explicit_speech:history.data.turn?.explicit_speech===true,reply_route:history.data.turn?.reply_route||null,ordinary_activity:history.data.turn?.activity===true,ambient_activity:history.data.turn?.ambient_activity===true,peer_proposal:history.data.turn?.peer_proposal===true,task_intake_enabled:taskIntake.capabilities().task_intake_enabled,task_capabilities:taskIntake.capabilities(),task:history.task(),action_lease:lease.view(history.task()),action_sequence:actionSequence.status()};
+    else if(req.method==='GET'&&req.url==='/inbox/peek')result=(cfg.human_engagement?.enabled===true&&inbox.some(m=>m.source==='human'&&!m.attention_offer)?inbox.filter(m=>m.source==='human'&&!m.attention_offer):inbox).slice(0,8).map(m=>installationInputs.projectInput(history.data,m));
     else if(req.method==='POST'&&req.url==='/inbox/retire-expired'){
       if(busy||Date.now()<turnUntil||history.data.turn)result={retired:0,reason:'turn_active'};
       else result=require('./delivery-queue.cjs').retireExpired(history,inbox);
@@ -658,7 +670,7 @@ const server=http.createServer(async(req,res)=>{
       if(ordinary&&!activityPolicy.allowed(history,cfg))throw Error('Ordinary activity is not available');
       if(a.continuation&&ordinary&&!activityPolicy.canContinue(history,cfg))throw Error('No continuing activity');
       if(a.continuation&&!ordinary&&history.task()?.status!=='running')throw Error('Task is no longer running');
-      if(!ordinary&&history.budgetCheckpoint()&&a.continuation)throw Error('Task budget saved for review');history.startTurn({peerOnly:!!a.peer_only,requestIds:ids,activity:ordinary});for(let i=inbox.length-1;i>=0;i--)if(ids.includes(inbox[i].id))inbox.splice(i,1);history.save();stop();lease.begin(history.data.turn,history.task(),a.renewable_lease===true);scheduleLease();actions=0;replies=0;conversation.exposedSources.clear();conversation.expose();result={active:true,action_lease:lease.view(history.task())};}}
+      if(!ordinary&&history.budgetCheckpoint()&&a.continuation)throw Error('Task budget saved for review');history.startTurn({peerOnly:!!a.peer_only,requestIds:ids,activity:ordinary,continuation:a.continuation===true});for(let i=inbox.length-1;i>=0;i--)if(ids.includes(inbox[i].id))inbox.splice(i,1);history.save();stop();lease.begin(history.data.turn,history.task(),a.renewable_lease===true);scheduleLease();actions=0;replies=0;conversation.exposedSources.clear();conversation.expose();result={active:true,action_lease:lease.view(history.task())};}}
     else if(req.method==='POST'&&req.url==='/sequence/cancel'){result=actionSequence.cancel('controller_settlement');}
     else if(req.method==='POST'&&req.url==='/turn/renew'){
       const a=await json(req);if(!ready)throw Error('Player disconnected');
@@ -671,9 +683,10 @@ const server=http.createServer(async(req,res)=>{
       result={sent:false};if(ready&&Date.now()-lastNoticeAt>20000){lastNoticeAt=Date.now();result=speak(notices[a.kind]);}
     }
     else if(req.method==='POST'&&req.url==='/reply'){
-      const a=z.object({text:z.string().min(1).max(240),conversation_revision:revision}).parse(await json(req));
+      const a=z.object({text:z.string().min(1).max(history.data.turn?.reply_route?.kind==='installation'?12000:240),conversation_revision:revision}).parse(await json(req));
       if(Date.now()>turnUntil)throw Error('Reply window is closed');
       if(history.data.turn?.explicit_speech)result={sent:false,reason:'explicit_speech_turn'};
+      else if(history.data.turn?.reply_route?.kind==='installation')result=privateReply(a.text);
       else if(a.conversation_revision!==undefined&&a.conversation_revision!==conversation.snapshot().revision)result={sent:false,reason:'conversation_changed'};
       else {
        // A model may repeat its successful chat tool output as its final answer.

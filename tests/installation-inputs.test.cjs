@@ -43,3 +43,55 @@ test('schemas refuse caller spoof, unknown fields, malformed source and duplicat
  const h=fixture(t),p=payload();for(const q of [{...p,caller:'owner'},{...p,source:{...p.source,caller:'owner'}},{...p,source:{...p.source,audience:{kind:'public',experience:'minecraft',id:'x'}}},{...p,source:{...p.source,occurred_at:'yesterday'}}])assert.throws(()=>api.enqueue(h,caller,q));
  const r=api.enqueue(h,caller,p).receipt;assert.throws(()=>api.query(h,caller,{version:1,requests:[{request_id:r.request_id,source:p.source},{request_id:r.request_id,source:p.source}]}));
 });
+test('private replies survive reload with stable identity/time and exact source access only',t=>{
+ const h=fixture(t),p=payload(),r=api.enqueue(h,caller,p).receipt;
+ const {ConversationAdmission}=require('../conversation-admission.cjs');
+ new ConversationAdmission(h,{human_engagement:{enabled:true}}).start([r.request_id],h.data.inbox);
+ const task=JSON.stringify(h.data.task),reply=api.saveReply(h,'PRIVATE_REPLY_SENTINEL');
+ assert.equal(reply.delivery,'recorded');assert.deepEqual(reply.audience,p.source.audience);
+ const duplicate=api.saveReply(h,'PRIVATE_REPLY_SENTINEL');const reloaded=new WorkshopState(h.file);
+ assert.equal(duplicate.id,reply.id);assert.equal(duplicate.at,reply.at);assert.equal(duplicate.duplicate,true);
+ assert.deepEqual(read(reloaded,p,r).source_replies,[reply]);assert.equal(read(reloaded,p,r).completion,'not_established');
+ assert.ok(!JSON.stringify(outcomes.query(reloaded.data,[r.request_id])).includes('PRIVATE_REPLY_SENTINEL'));
+ for(const altered of [{...p,source:{...p.source,audience:{...p.source.audience,id:'other'}}},{...p,source:{...p.source,actor:{...p.source.actor,id:'other'}}},{...p,source:{...p.source,revision:'changed'}}])assert.equal(read(reloaded,altered,r).source_replies,undefined);
+ assert.equal(read(reloaded,p,r,{...caller,id:'other'}).source_replies,undefined);
+ assert.equal(JSON.stringify(reloaded.data.task),task);
+});
+test('private reply save failure rolls back; bounds never truncate into a success',t=>{
+ const h=fixture(t),p=payload(),r=api.enqueue(h,caller,p).receipt;h.data.turn={started_at:new Date().toISOString(),reply_route:api.replyRoute(h.data,[r.request_id])};
+ const original=h.save.bind(h),before=JSON.stringify(h.data);h.save=()=>{throw Error('disk');};assert.throws(()=>api.saveReply(h,'Unacknowledged'),/disk/);assert.equal(JSON.stringify(h.data),before);h.save=original;
+ assert.throws(()=>api.saveReply(h,'😀'.repeat(3001)),/limit/);assert.equal(read(h,p,r).source_replies.length,0);
+ for(let i=0;i<32;i++)api.saveReply(h,'Reply '+i);
+ assert.throws(()=>api.saveReply(h,'OVER_CAPACITY_PRIVATE'),/capacity/);const result=read(h,p,r);assert.equal(result.source_replies.length,32);assert.equal(result.source_replies_omitted,true);assert.ok(!JSON.stringify(result).includes('OVER_CAPACITY_PRIVATE'));
+});
+test('private route is derived from durable ingress, separated from public and other private requests',t=>{
+ const h=fixture(t),p=payload(),r=api.enqueue(h,caller,p).receipt;
+ const q=payload();q.source.request_id='ca3a420b-54b9-4004-902b-b22ad783df86';const second=api.enqueue(h,caller,q).receipt;
+ const {ConversationAdmission}=require('../conversation-admission.cjs'),admission=new ConversationAdmission(h,{human_engagement:{enabled:true}});
+ const before=JSON.stringify(h.data);assert.throws(()=>admission.start([r.request_id,second.request_id],h.data.inbox),/own admission/);assert.equal(JSON.stringify(h.data),before);
+ const projected=api.projectInput(h.data,h.data.inbox[0]);assert.equal(projected.installation_source.actor.id,p.source.actor.id);assert.equal(projected.reply_scope,'installation:'+r.request_id);assert.equal(h.data.inbox[0].reply_scope,undefined);
+ admission.start([r.request_id],h.data.inbox);assert.equal(h.data.turn.reply_route.source.audience.id,p.source.audience.id);
+ h.data.turn.reply_route.source.audience.id='forged';assert.throws(()=>api.saveReply(h,'do not leak'),/changed/);
+});
+test('ordinary private-source continuation keeps reply destination without renewing work or input',t=>{
+ const h=fixture(t),p=payload(),r=api.enqueue(h,caller,p).receipt,originalTask=JSON.stringify(h.data.task);
+ h.startTurn({requestIds:[r.request_id],activity:true});const route=h.data.turn.reply_route;
+ h.data.last_turn={...h.data.turn,activity_report:{status:'running'}};h.data.turn=null;h.save();
+ h.startTurn({activity:true,continuation:true});assert.deepEqual(h.data.turn.reply_route,route);assert.deepEqual(h.data.turn.request_ids,[]);api.saveReply(h,'Later checked result');
+ assert.equal(read(h,p,r).source_replies[0].text,'Later checked result');assert.equal(JSON.stringify(h.data.task),originalTask);
+});
+
+test('unrelated task continuation cannot inherit a private activity reply route',t=>{
+ const h=fixture(t),p=payload(),r=api.enqueue(h,caller,p).receipt;
+ h.data.last_turn={activity:true,reply_route:api.replyRoute(h.data,[r.request_id]),task_id:null};
+ h.data.task={id:'unrelated',request_id:'public-source',status:'running',turns:0,max_turns:12,deadline:Date.now()+600000,progress:[]};
+ h.startTurn({continuation:true});assert.equal(h.data.turn.reply_route,undefined);
+});
+
+test('formal task continuation uses only its original private source, not the last unrelated reply',t=>{
+ const h=fixture(t),p=payload(),r=api.enqueue(h,caller,p).receipt;
+ const q=payload();q.source.request_id='ca3a420b-54b9-4004-902b-b22ad783df86';const other=api.enqueue(h,caller,q).receipt;
+ h.data.task={id:'current',request_id:r.request_id,status:'running',turns:2,max_turns:12,deadline:Date.now()+600000,progress:[],authority:{source:{id:r.request_id}}};
+ h.data.last_turn={task_id:'other',reply_route:api.replyRoute(h.data,[other.request_id])};
+ h.startTurn({continuation:true});assert.equal(h.data.turn.reply_route.request_id,r.request_id);assert.equal(h.data.task.turns,3);assert.deepEqual(h.data.turn.request_ids,[]);
+});
