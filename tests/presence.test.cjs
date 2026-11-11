@@ -3,7 +3,7 @@ const assert=require('node:assert/strict');
 const http=require('node:http');
 const {once}=require('node:events');
 const {createHandler,status,activity}=require('../presence.cjs');
-const snapshot={username:'Builder',ready:true,position:{x:3,y:64,z:5},
+const snapshot={username:'Builder',ready:true,position:{x:-507.92,y:64.5,z:-545.77},feet_block:{x:-508,y:64,z:-546},
   task:{id:'existing-task',goal:'An existing public goal',status:'waiting',turns:4,max_turns:12,deadline:100000,
     request:'Do not expose original source data',request_id:'private-request',progress:[{
       summary:'Waiting for material',request_id:'private-request',
@@ -16,13 +16,15 @@ const snapshot={username:'Builder',ready:true,position:{x:3,y:64,z:5},
   token:'never-public',receipts:[{private:true}]};
 test('status keeps useful progress without source requests or control details',()=>{
  const result=status(snapshot,'Workshop');
- assert.equal(result.task.status,'waiting');assert.equal(result.position.y,64);
+ assert.equal(result.task.status,'waiting');assert.deepEqual(result.position,snapshot.position);
+ assert.deepEqual(result.feet_block,snapshot.feet_block);
  assert.equal(result.task.request,undefined);assert.equal(result.task.request_id,undefined);
  assert.equal(result.token,undefined);assert.equal(result.receipts,undefined);
  assert.equal(result.task.progress[0].summary,'Waiting for material');
  assert.equal(result.task.progress[0].observation,undefined);
  assert.ok(!JSON.stringify(result).includes('private-request'));
  assert.equal(status({username:'Builder',ready:false},'Workshop').ready,false);
+ assert.equal(status({username:'Builder',ready:false},'Workshop').feet_block,undefined);
 });
 test('activity filters private messages and action receipts before slicing',()=>{
  const result=activity(snapshot,20,'Workshop');assert.deepEqual(result.messages.map(e=>e.id),['public']);
@@ -51,6 +53,8 @@ test('real MCP boundary exposes only observation tools and cannot begin work',as
  const read=await (await rpc('tools/call',{name:'minecraft_status',arguments:{}})).json();
  const projected=JSON.parse(read.result.content[0].text);
  assert.equal(projected.task.id,'existing-task');
+ assert.deepEqual(projected.position,snapshot.position);
+ assert.deepEqual(projected.feet_block,snapshot.feet_block);
  assert.equal(projected.task.limit_state.deadline.elapsed,true);
  assert.equal(projected.task.limit_state.turns.reached,false);
  assert.equal(projected.task.limit_state.observed_at,projected.observed_at);
