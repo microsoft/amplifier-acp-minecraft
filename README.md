@@ -28,10 +28,9 @@ specialist references. Agents that cannot discover repository skills can read
 
 ## Direction and interfaces
 
-Read the [Minecraft vision](docs/VISION.md) for the intended experience and the
-[service and interface map](docs/interfaces.md) for the authoritative definitions.
-Shared roles and interaction promises live in the linked Constellation agreements;
-Minecraft-specific tools, policies and connection behavior live here.
+Read the [vision](docs/VISION.md) for the intended player experience, the
+[Minecraft agreement](contracts/minecraft.md) for domain promises, and the
+[interface map](docs/interfaces.md) for shared agreements and technical references.
 
 Before installing, read the [installation requirements](docs/server-setup.md).
 They cover engine/dependency compatibility, authenticated human access and private

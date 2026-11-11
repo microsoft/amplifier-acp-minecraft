@@ -8,7 +8,7 @@ Legacy finite pacing/reply-reserve descriptions below apply when the correspondi
 new policies are disabled; source updates never opt an installation into them.
 
 The [interface map](interfaces.md) links this component's definitions to the
-shared family agreements. Minecraft owns the shared world and public game
+shared agreements. Minecraft owns the shared world and public game
 conversation. Mineflayer supplies the body; the adapter supplies game tools and
 receipts through HTTP MCP during standard ACP session setup. Instance is optional;
 this reference's supported fallback does not require its management API.
@@ -754,7 +754,7 @@ tools; they cannot provide the same revision guarantees. A new ID does not mark
 an earlier message complete. Tool state and media are independent of text
 selection, and changing IDs does not discard them. Raw reasoning and tool
 details are never broadcast as final chat. See the shared
-[collaboration contract](https://github.com/microsoft/amplifier-constellation/blob/main/contracts/collaboration.v1-candidate.md#answer-identity-and-revisions).
+[interaction agreement](https://github.com/microsoft/amplifier-constellation/blob/main/contracts/interaction.md).
 
 ### Farming and movement repair
 
@@ -891,8 +891,8 @@ is performed; the caller must recheck existing authority afterward. Native
 Runtime's automatic provider compaction needs no advertised command or helper.
 
 This integration requires the matching advertised Instance capability and a
-coordinated idle boundary. A contract filename containing `candidate` is not
-capability detection. The running game scheduler does not invoke maintenance automatically.
+coordinated idle boundary. A documentation agreement is not capability detection.
+The running game scheduler does not invoke maintenance automatically.
 
 ## Legacy human reply reserve
 

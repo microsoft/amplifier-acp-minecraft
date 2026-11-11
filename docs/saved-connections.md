@@ -1,7 +1,7 @@
 # Saved Minecraft connections
 
-The optional installation-owned connection command implements the shared
-[service-connections agreement](https://github.com/microsoft/amplifier-constellation/blob/main/contracts/service-connections.v1-candidate.md).
+The optional installation-owned connection command applies the saved-connection
+commitments in the shared [installation agreement](https://github.com/microsoft/amplifier-constellation/blob/main/contracts/installations.md).
 The [Instance reference](https://github.com/microsoft/amplifier-constellation-instance/blob/main/docs/service-connections.md)
 owns the generic host command/API shape; this reference owns the Minecraft
 configuration, phases and continuity checks. A host UI can disconnect a player
