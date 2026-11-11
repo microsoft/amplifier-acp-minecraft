@@ -51,6 +51,18 @@ class ChatDeliveryTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(delays,[.8]*(len(sent)-1))
         self.assertTrue(events[-1][1]['all_chunks_sent'])
 
+    async def test_private_final_is_saved_once_intact_without_public_packetization(self):
+        text='Private detail. '*100
+        calls=[];events=[]
+        async def request(path,payload):
+            calls.append((path,payload))
+            return {'delivery':'recorded','reply_id':'stable','transport_submitted':False}
+        async def sleep(delay):self.fail('Private replies have no game packet pacing')
+        await deliver_final_reply(text,'public-revision',request,lambda k,**d:events.append((k,d)),sleep=sleep,private_reply=True)
+        self.assertEqual(calls,[('/reply',{'text':text,'conversation_revision':'public-revision'})])
+        self.assertEqual(events,[('private_reply_recorded',{'recorded':True,'reply_id':'stable'})])
+        self.assertNotIn(text,repr(events))
+
     async def test_new_context_stops_unsent_tail_without_retry(self):
         calls=[];events=[]
         async def request(path,payload):

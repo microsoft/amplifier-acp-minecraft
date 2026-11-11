@@ -79,7 +79,29 @@ only authorized matches. `response_association` says `single_source`,
 `shared_turn` or `not_established`; co-admission is not an exclusive answer.
 Other inputs' IDs are omitted. Attributable public speech remains public and
 immutable. Minecraft whispers and unrelated private control remain withheld.
-There is no new private-response tool or automatic forwarding of private speech.
+When `source_replies:{version:1,max_items:32,max_text_bytes:12000}` is
+advertised, this same exact-source query also returns `source_replies`. Each
+immutable row has `id`, original `at`, `text`, original `audience`, and
+`delivery:"recorded"`. Only the matching caller and full source may read it;
+owner-wide input-outcome views still withhold private text. Existing public
+`responses` and Minecraft whisper withholding are unchanged. Missing rows do
+not prove no reply or successful delivery.
+
+Each private source is admitted separately. Its authenticated caller, human actor
+and private destination stay attached to the turn and its same-work continuation.
+They are not game-player names. Final text and default `chat` save a reply to
+that destination; `tell` cannot guess a game recipient from the caller label.
+Use explicit `audience:"game"` only for separately requested public game speech,
+never as a fallback for a private failure. A recorded row proves storage, not
+forwarding, hearing, or completed physical work. Consumers must negotiate this
+capability and preserve stable row IDs/times rather than repeat confirmations.
+
+Replies are bounded to 32 rows per source and 12,000 UTF-8 bytes per row. Oversize
+text is rejected without truncation. A full ledger rejects another reply and
+returns `source_replies_omitted:true`; this is a boolean, not an inferred count.
+Existing rows are never evicted. Identical text in the same turn keeps its ID and
+time after a lost reply. Query retained outcomes after uncertainty; do not
+replay a prompt or manufacture a new source.
 `completion:not_established` remains explicit: prompt settlement or a task
 transition is not proof of completed physical work.
 

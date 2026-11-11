@@ -48,11 +48,15 @@ def minecraft_reply_lines(text, limit=8, width=230):
     return lines,truncated
 
 
-async def deliver_final_reply(text, revision, request, observe, *, sleep=asyncio.sleep, explicit_speech=False):
+async def deliver_final_reply(text, revision, request, observe, *, sleep=asyncio.sleep, explicit_speech=False, private_reply=False):
     # Optional engagement publishes only intentional chat/tell tool calls. A
     # settled final is not a second public message, regardless of its wording.
     if explicit_speech:
         observe('final_reply_withheld',reason='explicit_chat_delivery',sent_chunks=0)
+        return
+    if private_reply:
+        delivery=await request('/reply',{'text':text,'conversation_revision':revision})
+        observe('private_reply_recorded',recorded=delivery.get('delivery')=='recorded',reply_id=delivery.get('reply_id'))
         return
     lines,truncated=minecraft_reply_lines(text)
     sent=0
@@ -149,7 +153,8 @@ async def human_reply_messages(request,connect,attention):
         offer=selected[0].get('attention_offer')
         audience=selected[0].get('username') if selected[0].get('whisper') else None
         return [m for m in selected if m.get('attention_offer')==offer and
-                (m.get('username') if m.get('whisper') else None)==audience][:8]
+                (m.get('username') if m.get('whisper') else None)==audience and
+                m.get('reply_scope')==selected[0].get('reply_scope')][:8]
 
     admission=await request('/conversation/admission')
     if not available(admission):return []
@@ -460,12 +465,13 @@ async def run(home):
             text=result.get('final_text',result['text']).strip()
             if disposition=='complete' and text:
                 fresh=await request('/conversation')
-                revision=awareness.final_revision(fresh)
+                private_reply=(final_status.get('reply_route') or {}).get('kind')=='installation'
+                revision=fresh.get('revision') if private_reply else awareness.final_revision(fresh)
                 if revision is None:
                     observe('final_reply_withheld',reason='public_context_not_exposed_or_incorporated')
                 else:
                     await deliver_final_reply(text,revision,request,observe,
-                        explicit_speech=bool(final_status.get('explicit_speech') or world.get('peer_proposal') or world.get('ambient_activity')))
+                        explicit_speech=bool(final_status.get('explicit_speech') or world.get('peer_proposal') or world.get('ambient_activity')),private_reply=private_reply)
             observe('turn_completed',stop_reason=result['stop_reason'],disposition=disposition,
                     unsettled_tool_count=len(result.get('unsettled_tools',[])))
             if watches and not conversation_only and disposition=='complete':

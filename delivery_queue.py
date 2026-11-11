@@ -3,7 +3,8 @@ def select_turn_messages(messages):
     if not messages:
         return []
     offer = messages[0].get('attention_offer')
-    return [message for message in messages if message.get('attention_offer') == offer]
+    return [message for message in messages if message.get('attention_offer') == offer
+            and message.get('reply_scope') == messages[0].get('reply_scope')]
 
 
 def optional_reply(messages):

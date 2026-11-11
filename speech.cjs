@@ -27,7 +27,7 @@ function pendingSource(data,source){
 function replySources(data,requested,conversation){
  if(requested===undefined)return [];
  if(!Array.isArray(requested)||!requested.length||requested.length>8||new Set(requested.map(s=>s?.id)).size!==requested.length)throw Error('Choose distinct pending public human sources for this response');
- if(data.turn?.reply_recipient)throw Error('A private response cannot settle public input');
+ if(data.turn?.reply_recipient||data.turn?.reply_route)throw Error('A private response cannot settle public input');
  for(const source of requested){
   if(!source||typeof source.id!=='string'||typeof source.revision!=='string'||!Number.isSafeInteger(source.occurredAt)||!conversation.wasExposed(source)||!pendingSource(data,source))throw Error('Reply source changed or was not exposed as pending public input; read conversation first');
  }

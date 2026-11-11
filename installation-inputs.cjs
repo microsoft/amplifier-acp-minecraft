@@ -5,7 +5,7 @@ const uuid=/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const equal=(a,b)=>typeof a==='string'&&typeof b==='string'&&Buffer.byteLength(a)===Buffer.byteLength(b)&&crypto.timingSafeEqual(Buffer.from(a),Buffer.from(b));
 const canonical=v=>Array.isArray(v)?v.map(canonical):v&&typeof v==='object'?Object.fromEntries(Object.keys(v).sort().map(k=>[k,canonical(v[k])])):v;
 const digest=v=>crypto.createHash('sha256').update(JSON.stringify(canonical(v))).digest('hex');
-const capability=Object.freeze({version:1,submission:{method:'POST',path:'/task'},outcomes:{method:'POST',path:'/source-outcomes',max_items:16},source_identity:'credential_bound_caller_and_exact_source',idempotency:'same_caller_source_request_id_and_payload',private_game_responses:false});
+const capability=Object.freeze({version:1,submission:{method:'POST',path:'/task'},outcomes:{method:'POST',path:'/source-outcomes',max_items:16},source_identity:'credential_bound_caller_and_exact_source',idempotency:'same_caller_source_request_id_and_payload',private_game_responses:false,source_replies:{version:1,max_items:32,max_text_bytes:12000}});
 function object(v,keys){if(!v||typeof v!=='object'||Array.isArray(v)||Object.keys(v).some(k=>!keys.includes(k))||keys.some(k=>!(k in v)))throw Error('Exact source fields required');}
 function text(v,max){if(typeof v!=='string'||!v.trim()||v.length>max||/[\u0000-\u001f]/.test(v))throw Error('Invalid bounded source field');}
 function source(v){
@@ -45,6 +45,41 @@ function enqueue(history,caller,payload,{now=Date.now(),seq=0}={}){
  try{history.save();}catch(error){inbox.length=ni;events.length=ne;data.inbox=priorInbox;data.events=priorEvents;if(priorReceipts===undefined)delete data.installation_input_receipts;else data.installation_input_receipts=priorReceipts;throw error;}
  return {receipt,event};
 }
+// The durable ingress receipt, not a caller label or model field, binds replies.
+function replyRoute(data,ids){
+ const records=ids.map(id=>Object.values(data.installation_input_receipts||{}).find(r=>r.receipt.request_id===id)||null);
+ if(!records.some(Boolean)){
+  if(ids.some(id=>data.events?.find(e=>e.id===id)?.installation_source))throw Error('Private source binding is not retained');
+  return null;
+ }
+ if(ids.length!==1||!records[0])throw Error('Private source replies require their own admission');
+ return {kind:'installation',request_id:ids[0],source:structuredClone(records[0].source)};
+}
+function projectInput(data,message){
+ const route=replyRoute(data,[message.id]);
+ return route?{...message,reply_scope:'installation:'+route.request_id,installation_source:route.source}:message;
+}
+function replyRecord(data,route){
+ if(route?.kind!=='installation')throw Error('No installation reply route');
+ const record=data.installation_input_receipts?.[digest([route.source?.caller?.id,route.source?.request_id])];
+ if(!record||record.receipt.request_id!==route.request_id||digest(record.source)!==digest(route.source))throw Error('Private reply source binding changed');
+ return record;
+}
+function saveReply(history,text){
+ const turn=history.data.turn,route=turn?.reply_route,record=replyRecord(history.data,route);
+ if(typeof text!=='string'||!text.trim()||Buffer.byteLength(text)>capability.source_replies.max_text_bytes)throw Error('Private reply exceeds its bounded text limit');
+ const id=digest([route.request_id,turn.started_at,text]),previous=(record.source_replies||[]).find(r=>r.id===id);
+ if(previous)return {...structuredClone(previous),duplicate:true};
+ if((record.source_replies||[]).length>=capability.source_replies.max_items){
+  const omitted=record.source_replies_omitted;record.source_replies_omitted=true;
+  try{history.save();}catch(error){if(omitted===undefined)delete record.source_replies_omitted;else record.source_replies_omitted=omitted;throw error;}
+  throw Error('Private reply capacity reached; inspect retained source outcomes');
+ }
+ const item={id,at:new Date().toISOString(),text,audience:structuredClone(record.source.audience),delivery:'recorded'};
+ const old=record.source_replies;record.source_replies=[...(old||[]),item];
+ try{history.save();}catch(error){if(old===undefined)delete record.source_replies;else record.source_replies=old;throw error;}
+ return structuredClone(item);
+}
 function query(history,caller,payload,{now=Date.now()}={}){
  object(payload,['version','requests']);if(payload.version!==1||!Array.isArray(payload.requests)||!payload.requests.length||payload.requests.length>16)throw Error('Supply 1–16 exact source outcome requests');
  const keys=new Set();
@@ -55,8 +90,8 @@ function query(history,caller,payload,{now=Date.now()}={}){
   if(!r||r.receipt.request_id!==q.request_id||digest({...q.source,caller:r.source.caller})!==digest(r.source))return unknown;
   const value=outcomes.query(history.data,[q.request_id],new Date(now).toISOString()).outcomes[0];
   const count=value.source_ids?.length||0;delete value.source_ids;
-  return {...value,source:structuredClone(r.source),response_association:count>1?'shared_turn':count===1?'single_source':'not_established',private_game_responses_included:false};
+  return {...value,source:structuredClone(r.source),response_association:count>1?'shared_turn':count===1?'single_source':'not_established',private_game_responses_included:false,source_replies:structuredClone(r.source_replies||[]),...(r.source_replies_omitted?{source_replies_omitted:true}:{})};
  });
  return {version:1,observed_at:new Date(now).toISOString(),outcomes:rows};
 }
-module.exports={capability,callers,authenticate,allowed,enqueue,query,source};
+module.exports={projectInput,replyRoute,replyRecord,saveReply,capability,callers,authenticate,allowed,enqueue,query,source};

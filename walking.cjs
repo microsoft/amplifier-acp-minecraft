@@ -13,7 +13,7 @@ function walkable(bot,p){
 function plan(bot,target,range=0,{maxNodes=4096,radius=64,startPosition=null}={}){
  const plannedFrom=(startPosition||bot.entity.position).clone(),start=plannedFrom.floored(),goal=new FeetGoal(target.x,target.y,target.z,range);
  const target_stance=targetStance(bot,target);
- const result=(status,path=[],examined=0)=>({mode:'walk_only',reachable:status==='success',status,current_feet:bot.entity.position.clone(),planned_from:plannedFrom,hypothetical_start:startPosition!==null,target,range,target_stance,exact_feet_y:true,
+ const result=(status,path=[],examined=0)=>({mode:'walk_only',reachable:status==='success',status,current_feet:bot.entity.position.clone(),feet_block:bot.entity.position.floored(),planned_from:plannedFrom,planned_from_block:start,hypothetical_start:startPosition!==null,target,range,target_stance,exact_feet_y:true,
   steps:path.map(p=>({x:p.x,y:p.y,z:p.z})),examined,
   constraints:'Level cardinal walking on full footing; no jumping, climbing, swimming, digging or diagonal shortcuts.',
   coverage:'Loaded terrain, bounded search. Rechecked during movement; planning is not arrival.'});
@@ -70,7 +70,7 @@ async function move(bot,target,range,check,{wait=sleep,stallMs=2500,maxMs=55000}
   }
   bot.clearControlStates();await wait(150);guard();
   if(!new FeetGoal(target.x,target.y,target.z,range).isEnd(bot.entity.position.floored()))throw Error('Walk-only arrival did not match the target.');
-  return {mode:'walk_only',before,position:bot.entity.position.clone(),target,reached:true,exact_feet_y:true,
+  return {mode:'walk_only',before,before_feet_block:before.floored(),position:bot.entity.position.clone(),feet_block:bot.entity.position.floored(),target,reached:true,exact_feet_y:true,
    traversed:visited,observation:{min_feet_y:minY,max_feet_y:maxY,samples,jump_requested:false}};
  }finally{bot.clearControlStates();}
 }

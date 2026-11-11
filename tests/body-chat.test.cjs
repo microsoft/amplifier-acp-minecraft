@@ -581,3 +581,20 @@ for(const webHuman of [false,true])test(`actual body automatic discovered idle $
  const final=await f.request('/reply',{text:'Room-only wrap-up',conversation_revision:event.id});assert.equal(final.sent,false);assert.deepEqual(sent,[]);
  state.room='stopped';state.revision=2;await f.request('/huddle/context');assert.equal(f.history.data.turn,null);assert.equal(JSON.stringify(f.history.data.task),originalTask);
 });
+test('actual body keeps installation final/tool replies private while explicit game publication stays separate',async t=>{
+ const caller={id:'voice',label:'Companion',token:'q'.repeat(40)},f=fixture('BuilderOne',false,{installation_callers:[caller],human_engagement:{enabled:true,task_optional:true}});t.after(f.close);
+ const {Vec3}=realRequire('vec3');f.bot.entity={position:new Vec3(-313.1567,73,68.52)};f.bot.pathfinder={setGoal(){}};f.bot.clearControlStates=()=>{};f.bot.stopDigging=()=>{};const sent=[];f.bot.chat=text=>sent.push(text);f.bot.whisper=()=>assert.fail('External caller is not a game whisper recipient');f.readyFixture();
+ const source={version:1,request_id:'93000000-0000-4000-8000-000000000001',call_id:'private-call',intent_id:'original',revision:'r1',occurred_at:new Date().toISOString(),actor:{id:'human',label:'Human'},audience:{kind:'private',experience:'companion',id:'private-audience'}};
+ const q=await f.request('/task',{text:'Check privately',source},200,caller.token),baseline=JSON.stringify(f.history.data.task);
+ const input=(await f.request('/inbox/peek'))[0];assert.equal(input.installation_source.actor.id,'human');assert.equal(input.reply_scope,'installation:'+q.request_id);
+ await f.request('/turn',{message_ids:[q.request_id],activity:true});assert.equal((await f.request('/status')).reply_route.source.audience.id,'private-audience');
+ const first=await f.request('/reply',{text:'PRIVATE_FINAL_SENTINEL',conversation_revision:'unrelated-public-revision'});assert.equal(first.delivery,'recorded');assert.equal(first.transport_submitted,false);assert.deepEqual(sent,[]);
+ const dup=await f.request('/reply',{text:'PRIVATE_FINAL_SENTINEL',conversation_revision:'another-public-revision'});assert.equal(dup.reply_id,first.reply_id);assert.equal(dup.at,first.at);
+ await assert.rejects(f.operate('tell',{player:'Companion',text:'PRIVATE_FAILED_TELL',conversation_revision:'empty'}),/private installation caller/);assert.deepEqual(sent,[]);
+ const tool=await f.operate('chat',{text:'PRIVATE_TOOL_SENTINEL',conversation_revision:'irrelevant'});assert.equal(tool.delivery,'recorded');assert.deepEqual(sent,[]);
+ await f.operate('chat',{text:'Explicitly requested public announcement',audience:'game',conversation_revision:'empty'});assert.deepEqual(sent,['Explicitly requested public announcement']);
+ await f.request('/finish',{});
+ const result=(await f.request('/source-outcomes',{version:1,requests:[{request_id:q.request_id,source}]},200,caller.token)).outcomes[0];assert.equal(result.delivery,'terminal');assert.equal(result.completion,'not_established');assert.equal(result.source_replies.length,2);assert.equal(result.source_replies[1].text,'PRIVATE_TOOL_SENTINEL');
+ const owner=await f.request('/input-outcomes?ids='+q.request_id);assert.ok(!JSON.stringify(owner).includes('PRIVATE_'));assert.equal(owner.outcomes[0].responses[0].text,'Explicitly requested public announcement');
+ assert.ok(!JSON.stringify(await f.request('/conversation')).includes('PRIVATE_'));assert.equal(JSON.stringify(f.history.data.task),baseline);
+});

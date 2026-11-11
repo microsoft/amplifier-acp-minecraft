@@ -22,6 +22,7 @@ class ConversationAdmission {
    (this.limit()!==null&&!this.status(inbox).remaining)||ids.some(id=>!inbox.some(m=>m.id===id&&this.eligible(m))))throw Error('No fresh human conversation admission available');
   const selected=inbox.filter(m=>ids.includes(m.id));
   const kinds=new Set(selected.map(m=>m.source));if(kinds.size!==1)throw Error('Human, activity and peer proposal admissions remain separate');
+  const replyRoute=require('./installation-inputs.cjs').replyRoute(this.history.data,ids);
   const audiences=new Set(selected.map(m=>m.source==='huddle'?'huddle:'+m.room_id:m.whisper?'private:'+m.username:'public'));
   if(audiences.size!==1)throw Error('Reply audiences cannot be mixed');
   const offers=new Set(selected.map(m=>JSON.stringify(m.attention_offer||null)));
@@ -33,7 +34,7 @@ class ConversationAdmission {
   // A lost response or restart must not submit these inputs again automatically.
   this.history.data.conversation_admissions=[...this.recent(),{at:this.now(),ids:[...ids],...(selected[0].source==='agent'?{kind:'peer_proposal'}:{})}];
   this.history.data.turn={started_at:new Date(this.now()).toISOString(),conversation_only:true,task_id:null,
-   ambient_activity:selected.every(m=>m.source==='activity'),peer_proposal:selected.every(m=>m.source==='agent'),request_ids:[...ids],messages:selected,reply_recipient:selected[0].whisper?selected[0].username:null,actions:[],may_mutate:false};
+   ambient_activity:selected.every(m=>m.source==='activity'),peer_proposal:selected.every(m=>m.source==='agent'),request_ids:[...ids],messages:selected,...(replyRoute?{reply_route:replyRoute}:{}),reply_recipient:selected[0].whisper?selected[0].username:null,actions:[],may_mutate:false};
   for(let i=inbox.length-1;i>=0;i--)if(ids.includes(inbox[i].id))inbox.splice(i,1);
   if(selected[0].source==='huddle'){this.history.data.turn.huddle_room_id=selected[0].room_id;this.history.data.turn.explicit_speech=true;}
   require('./input-outcomes.cjs').admit(this.history.data);
