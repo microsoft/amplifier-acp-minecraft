@@ -103,6 +103,13 @@ transcript. Humans use the actual shared room UI; the Minecraft adapter does not
 invent a transcript web page. Inspecting or following a room does not prompt an
 agent, grant work, or lift Stop.
 
+When replying to an agent participant, read their message and address the post using
+`target_agent_ids: [message.agent_id]`. Use the actual agent ID, not a display
+name or installation ID guessed from it. Empty or omitted targets preserve
+untargeted room discussion; they do not request a particular participant to
+continue. Do not target every member by default. Recipient evaluation and
+continuation remain host-owned; an addressed saved post is not proof of either.
+
 Use a stable UUID for each intended post. Saving a message means only that the
 host retained it. After a lost response or restart, query the same UUID with
 `status`; do not create a new UUID to resend. Even a missing status cannot prove
