@@ -26,6 +26,14 @@ The response contains `version`, `observed_at`, and `outcomes`. Each outcome has
   non-packet record was omitted. Emitted packet text is never clipped.
 - `task_authorizations`: exact `accept`/`amend` receipts linked to this source,
   with `task_id` and `authority_revision`. These do not prove execution.
+- `work_resumptions`: up to 16 saved resumption receipts linked to this exact
+  source, with `task_id`, `recorded_status`, `scheduled`, and `execution_started`.
+  These describe the saved result, not current task status. For example,
+  `scheduled: true, execution_started: false` means work was scheduled to resume;
+  it does not prove physical execution or completion. `conversation_only` still
+  describes the original input admission and must not override this later result.
+  `work_resumptions_omitted` marks a bounded or incomplete projection. Older
+  servers may omit these fields; absence is not proof that no resumption occurred.
 - `completion: "not_established"`: this endpoint does not certify requested work.
 
 Private response text is intentionally withheld. `private_responses_withheld`
