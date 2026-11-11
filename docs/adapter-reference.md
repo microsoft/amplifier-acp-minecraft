@@ -1,23 +1,17 @@
 # Adapter reference
 
-Detailed connection, tool, lifecycle and optional integration behavior. For an
-installation workflow start with [server setup](server-setup.md); for current
+Detailed connection, tool, lifecycle and optional integration behavior. For
+installation requirements see [server setup](server-setup.md); for
 human-first policy read [human-led play](human-led-play.md),
 [task intake](human-task-intake.md) and [completion-bound tasks](completion-bound-tasks.md).
 Legacy finite pacing/reply-reserve descriptions below apply when the corresponding
 new policies are disabled; source updates never opt an installation into them.
 
-Part of [Amplifier Constellation](https://github.com/microsoft/amplifier-constellation).
-
-Connect independent ACP agents to Minecraft as ordinary players. Each player has
-its own process, inventory, credentials, working session and task limits.
-Minecraft owns the shared world and public conversation. Mineflayer provides
-the player's body; the adapter gives its agent scoped Minecraft tools through
-HTTP MCP supplied during standard ACP session setup.
-
-The agent can use Constellation, Codex, or another ACP implementation that supports
-HTTP MCP. No model SDK, shared agent memory, custom Minecraft mod, or Agent
-Instance management API is required. Optional integrations are described below.
+The [interface map](interfaces.md) links this component's definitions to the
+shared family agreements. Minecraft owns the shared world and public game
+conversation. Mineflayer supplies the body; the adapter supplies game tools and
+receipts through HTTP MCP during standard ACP session setup. Instance is optional;
+this reference's supported fallback does not require its management API.
 
 For optional installation-owned source/dependency updates, a separate pure task
 helper, and safe participation in shared component updates, see
@@ -913,7 +907,7 @@ implement another engage/hold policy. Plain ACP retains ordinary prompt fallback
 Instance and provider limits still apply; rejected prompts are not retried as
 fresh commands or rerouted around a host cap.
 
-[Human-led play](human-led-play.md#human-replies-within-an-existing-assignment)
+[Human-led play](human-led-play.md#legacy-task-required-mode-human-replies-within-an-existing-assignment)
 also permits a verified human reply to use unchanged existing assignment
 authority, with ordinary work accounting and effect recovery.
 

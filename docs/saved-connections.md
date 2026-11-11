@@ -1,8 +1,11 @@
 # Saved Minecraft connections
 
 The optional installation-owned connection command implements the shared
-service-connections v1 contract. It lets a host UI disconnect a player while
-retaining the connection, then reconnect it later. This is separate from task
+[service-connections agreement](https://github.com/microsoft/amplifier-constellation/blob/main/contracts/service-connections.v1-candidate.md).
+The [Instance reference](https://github.com/microsoft/amplifier-constellation-instance/blob/main/docs/service-connections.md)
+owns the generic host command/API shape; this reference owns the Minecraft
+configuration, phases and continuity checks. A host UI can disconnect a player
+while retaining the connection, then reconnect it later. This is separate from task
 intake: connecting neither renews expired work nor replays earlier requests.
 The matching shared host/API implementation must be present before enrollment;
 an installed Minecraft source revision alone does not add UI controls.
@@ -32,8 +35,8 @@ one or require one for saved controls.
 
 Each connection needs its own home, context provider, control port, game route,
 session, credentials and two Linux systemd user units. Follow the
-[setup guide](server-setup.md) first. Do not point a second saved connection at
-another world's home or clone its task/session state.
+[installation requirements](server-setup.md) first. Do not point a second saved
+connection at another world's home or clone its task/session state.
 
 Add an explicit descriptor to that connection's owner updater configuration:
 
