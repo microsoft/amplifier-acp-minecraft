@@ -28,6 +28,16 @@ test('lost ack and restart use original saved receipt without another post',asyn
  f.bridge=new Huddle(f.history,f.config,{transport:f.transport,canPost:()=>true});const r=await f.bridge.post(p);assert.equal(r.state,'saved');assert.equal(f.posts,1);assert.equal(r.receipt.source.occurred_at,f.config.origin.occurred_at);assert.equal(r.receipt.source.revision,f.config.origin.source_revision);
  await assert.rejects(f.bridge.post({...p,text:'Altered'}),/different payload/);assert.equal(f.posts,1);
 });
+test('reply addresses actual read actor explicitly; lost ack cannot change targets or broadcast',async()=>{
+ const f=fixture(),task=JSON.stringify(f.history.data.task),page=await f.bridge.read();
+ const reply={request_id:id,text:'Here is my check.',kind:'message',target_agent_ids:[page.items[0].agent_id]};
+ f.loseAck=true;await assert.rejects(f.bridge.post(reply),/unknown/);
+ const saved=await f.bridge.status(id);assert.equal(saved.state,'saved');assert.deepEqual(saved.receipt.target_agent_ids,['peer']);assert.equal(f.posts,1);
+ await assert.rejects(f.bridge.post({...reply,target_agent_ids:[]}),/different payload/);assert.equal(f.posts,1);
+ assert.equal(JSON.stringify(f.history.data.task),task);assert.deepEqual(f.sent,[]);
+ const untargeted=fixture();await untargeted.bridge.read();const roomPost=await untargeted.bridge.post({request_id:id,text:'A room observation.'});
+ assert.deepEqual(roomPost.payload.target_agent_ids,[]);assert.deepEqual(roomPost.receipt.target_agent_ids,[]);assert.equal(roomPost.receipt.return.state,'not_requested');
+});
 test('saved receipt tampering and absent status preserve unknown',async()=>{
  const f=fixture();await f.bridge.post({request_id:id,text:'Checked'});f.saved.get(id).text_sha256='wrong';await assert.rejects(f.bridge.status(id),/does not match/);
  f.saved.delete(id);assert.equal((await f.bridge.status(id)).state,'unknown');assert.equal(f.posts,1);
