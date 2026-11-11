@@ -590,7 +590,10 @@ test('actual body keeps installation final/tool replies private while explicit g
  await f.request('/turn',{message_ids:[q.request_id],activity:true});assert.equal((await f.request('/status')).reply_route.source.audience.id,'private-audience');
  const first=await f.request('/reply',{text:'PRIVATE_FINAL_SENTINEL',conversation_revision:'unrelated-public-revision'});assert.equal(first.delivery,'recorded');assert.equal(first.transport_submitted,false);assert.deepEqual(sent,[]);
  const dup=await f.request('/reply',{text:'PRIVATE_FINAL_SENTINEL',conversation_revision:'another-public-revision'});assert.equal(dup.reply_id,first.reply_id);assert.equal(dup.at,first.at);
+ const priorActions=JSON.stringify(f.history.data.turn.actions);
  await assert.rejects(f.operate('tell',{player:'Companion',text:'PRIVATE_FAILED_TELL',conversation_revision:'empty'}),/private installation caller/);assert.deepEqual(sent,[]);
+ await assert.rejects(f.operate('chat',{text:'NOT_SENT',audience:'invalid'}),/Unknown speech audience/);
+ assert.equal(JSON.stringify(f.history.data.turn.actions),priorActions,'audience validation does not create uncertain effects');
  const tool=await f.operate('chat',{text:'PRIVATE_TOOL_SENTINEL',conversation_revision:'irrelevant'});assert.equal(tool.delivery,'recorded');assert.deepEqual(sent,[]);
  await f.operate('chat',{text:'Explicitly requested public announcement',audience:'game',conversation_revision:'empty'});assert.deepEqual(sent,['Explicitly requested public announcement']);
  await f.request('/finish',{});
