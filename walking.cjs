@@ -44,7 +44,7 @@ function plan(bot,target,range=0,{maxNodes=4096,radius=64,startPosition=null}={}
 async function move(bot,target,range,check,{wait=sleep,stallMs=2500,maxMs=55000}={}){
  const route=plan(bot,target,range);if(!route.reachable)throw Error(`No walk-only route (${route.status}); inspect the terrain. No movement performed.`);
  const before=bot.entity.position.clone(),started=Date.now(),height=before.floored().y;
- let minY=before.y,maxY=before.y,samples=0;const visited=[];
+ let minY=before.y,maxY=before.y,samples=0,failure;const visited=[];
  bot.pathfinder.setGoal(null);bot.clearControlStates();
  const guard=()=>{
   check();const p=bot.entity.position;minY=Math.min(minY,p.y);maxY=Math.max(maxY,p.y);samples++;
@@ -72,6 +72,6 @@ async function move(bot,target,range,check,{wait=sleep,stallMs=2500,maxMs=55000}
   if(!new FeetGoal(target.x,target.y,target.z,range).isEnd(bot.entity.position.floored()))throw Error('Walk-only arrival did not match the target.');
   return {mode:'walk_only',before,before_feet_block:before.floored(),position:bot.entity.position.clone(),feet_block:bot.entity.position.floored(),target,reached:true,exact_feet_y:true,
    traversed:visited,observation:{min_feet_y:minY,max_feet_y:maxY,samples,jump_requested:false}};
- }finally{bot.clearControlStates();}
+ }catch(error){failure=error;throw error;}finally{bot.clearControlStates();if(failure)failure.movementOperationSettled=true;}
 }
 module.exports={walkable,plan,move};

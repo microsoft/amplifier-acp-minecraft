@@ -45,7 +45,7 @@ test('Stop and newly obstructed routes release walking controls',async()=>{
 });
 test('unexpected vertical movement never reports a successful walk',async()=>{
  const {bot,controls,wait}=moving();const tick=async()=>{await wait();bot.entity.position.y+=.5;};
- await assert.rejects(walking.move(bot,new Vec3(3,1,0),0,()=>{},{wait:tick}),/elevation changed/);
+ await assert.rejects(walking.move(bot,new Vec3(3,1,0),0,()=>{},{wait:tick}),e=>/elevation changed/.test(e.message)&&e.movementOperationSettled===true);
  assert.ok(Object.values(controls).every(v=>!v));
 });
 test('an off-center half-height start cannot advertise or begin a level walk',async()=>{
@@ -88,4 +88,11 @@ test('negative fractional start and chosen target retain explicit floored block 
  const out=await walking.move(bot,west,0,()=>{},{wait});assert.deepEqual(out.before_feet_block,origin);assert.deepEqual(out.feet_block,west);
  const back=await walking.move(bot,origin,0,()=>{},{wait});assert.deepEqual(back.feet_block,origin);assert.equal(back.reached,true);assert.equal(back.position.floored().x,-314);
  bot.entity.position=new Vec3(-313.1567,1.5,68.52);const partial=walking.plan(bot,origin);assert.equal(partial.current_feet.y,1.5);assert.equal(partial.feet_block.y,1);assert.equal(partial.status,'non_level_start');
+});
+
+test('failed control cleanup never claims settled walking',async()=>{
+ const {bot,wait}=moving();let clears=0;
+ bot.clearControlStates=()=>{if(++clears>1)throw Error('Control cleanup unavailable');};
+ const tick=async()=>{await wait();bot.entity.position.y+=.5;};
+ await assert.rejects(walking.move(bot,new Vec3(3,1,0),0,()=>{},{wait:tick}),e=>e.message==='Control cleanup unavailable'&&e.movementOperationSettled!==true);
 });
