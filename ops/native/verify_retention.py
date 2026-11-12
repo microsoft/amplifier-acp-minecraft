@@ -9,7 +9,7 @@ sys.path.insert(0,str(bundle/'app'))
 manifest=json.loads((bundle/'manifest.json').read_text())
 from constellation_native import initialize_root,initialize_config,Session,Refused
 from installation_native import NativeIO
-from installation_guard import owner_io,installation_lock,durable_write,read
+from installation_guard import owner_io,installation_lock,read
 from installation_retention import Retention
 from installation_source_provider import fingerprint
 import shutil
@@ -25,12 +25,14 @@ class TrackedSession(Session):
 def main():
  driver=args.driver.resolve(); checks=[]
  with tempfile.TemporaryDirectory(prefix='minecraft-native-retention-') as temp:
-  base=Path(temp);home=base/'home';state=base/'state';shared=base/'shared';plans=shared/'plans'
+  base=Path(temp).resolve();home=base/'home';state=base/'state';shared=base/'shared';plans=shared/'plans'
   for p in [home,state,shared,plans,state/'stages',state/'backups',home/'app',home/'venv']:
    initialize_root(driver,p)
   protected=home/'original-session-fixture.json';protected.write_text('{"session":"retained-fixture","task":"unchanged","unknown":["preserve"]}')
   original=protected.read_bytes()
-  durable_write(shared/'state.json',{'state':'checking','transaction':None})
+  # Synthetic shared-plan input belongs to this fixture, not an enrolled
+  # domain write. Production retention journals below use NativeIO.
+  (shared/'state.json').write_text(json.dumps({'state':'checking','transaction':None}),encoding='utf-8')
   cfg={'home':str(home),'state':str(state),'shared_plans':str(plans),'app':str(home/'app'),'venv':str(home/'venv'),
        'native_platform':{'version':1,'regenerable_tree_removal':1}}
   owner={'version':1,'roots':{'home':str(home),'state':str(state)},'locks':{'installation':str(state/'installation.lock')},
