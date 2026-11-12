@@ -270,7 +270,7 @@ test('actual body accepts completion-bound work only after local helper discover
   // execFile deliberately has no shell. Use a native fixture executable rather
   // than pretending Windows can execute a Unix shebang or enabling cmd.exe.
   fs.copyFileSync(process.execPath,command);const bootstrap=path.join(dir,'fixture.cjs');
-  fs.writeFileSync(bootstrap,`if(process.argv.slice(1).join(' ')!=='helper-capabilities')process.exit(1);process.stdout.write(${JSON.stringify(JSON.stringify(capabilities))});process.exit(0);`);
+  fs.writeFileSync(bootstrap,`if(process.argv.length!==2||require('node:path').basename(process.argv[1])!=='helper-capabilities')process.exit(1);process.stdout.write(${JSON.stringify(JSON.stringify(capabilities))});process.exit(0);`);
   process.env.NODE_OPTIONS='--require '+JSON.stringify(bootstrap);
  }else fs.writeFileSync(command,`#!/usr/bin/env node\nif(process.argv.slice(2).join(' ')!=='helper-capabilities')process.exit(1);process.stdout.write(${JSON.stringify(JSON.stringify(capabilities))});`,{mode:0o700});
  const f=fixture({incoming_chat_only:true,task_helpers:{command},human_engagement:{enabled:true},human_task_intake:{enabled:true,default_bound_mode:'completion_bound'}});
