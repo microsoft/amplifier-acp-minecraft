@@ -38,6 +38,10 @@ function review(history,cfg,input,observation,{taskEffects=false}={}){
   // owner review of exact historical receipts, never automatic error recovery.
   if(start.action==='dig'&&!(item.outcome==='no_effect'&&end.error==='Refusing to remove a block supporting a player; move to safe footing first'))throw Error('Only exact supporting-player dig preflight is reviewable');
   const coordinateRefusal=start.action==='move'&&end.error==='Coordinates must be whole blocks within 64 blocks of this player';
+  if(taskEffects&&start.action==='move'&&!coordinateRefusal&&!(item.outcome==='settled_failed_movement'&&[
+   'Took to long to decide path to goal!',
+   'Movement ended without reaching the requested destination; inspect current position'
+  ].includes(end.error)))throw Error('Interrupted task movement needs an affirmative supported terminal settlement');
   const storageRefusal=start.action==='container'&&start.arguments?.operation==='inspect'&&[
    'Container is obstructed; inspect the observed blocker and choose a clear reachable position',
    'Move within four blocks of the container first; no movement performed'

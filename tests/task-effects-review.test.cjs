@@ -54,3 +54,9 @@ test('failed resume persistence cannot leave in-memory permission open',t=>{
  h.save=()=>{throw Error('disk full');};assert.throws(()=>h.resumeReviewed({task_id:'original-task',reason:'Review',effects_review_id:input.request_id}),/disk full/);
  assert.equal(JSON.stringify(h.data),before);assert.equal(policy.reason(h,cfg),'unresolved_task_effects');
 });
+for(const error of ['Action cancelled','Transport closed before movement settlement','Unexpected movement worker error','Took to long to decide path to goal!'])test('interrupted movement terminal classification: '+error,t=>{
+ const {h,input,observation}=fixture(t),e=h.data.events.find(e=>e.action_id==='move'&&e.kind==='action_failed');
+ e.error=error;input.reviews[0].receipt_sha256=digest(e);const before=JSON.stringify(h.data);
+ if(error==='Took to long to decide path to goal!')assert.equal(review(h,cfg,input,observation,{taskEffects:true}).activity_allowed,false);
+ else{assert.throws(()=>review(h,cfg,input,observation,{taskEffects:true}),/affirmative supported terminal/);assert.equal(JSON.stringify(h.data),before);}
+});
