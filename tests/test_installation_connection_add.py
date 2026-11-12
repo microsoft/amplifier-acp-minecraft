@@ -68,6 +68,15 @@ class AddTests(unittest.TestCase):
         self.assertFalse((self.home/'session.json').exists())
         self.assertEqual(self.game.actions,[])
 
+    def test_supplied_service_backend_retains_unused_route_and_provider_checks(self):
+        with patch.object(add,'Backend',side_effect=AssertionError('No default service backend construction')):
+            backend=add.Prerequisites(self.c,self.cfg,backend=self.game)
+            backend.providers=lambda:copy.deepcopy(self.providers)
+            self.assertEqual(backend.check(self.route)['services'],self.game.capture()['services'])
+            self.providers[0]['enabled']=True
+            with self.assertRaisesRegex(ContinuityError,'explicitly disabled'):backend.check(self.route)
+        self.assert_untouched()
+
     def test_save_offline_and_lost_reply_returns_identical_descriptor(self):
         result = self.run_add()
         self.assertEqual(result['state'],'saved'); self.assertTrue(result['settled'])

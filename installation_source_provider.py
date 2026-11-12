@@ -77,8 +77,9 @@ def verify_sdk(venv, app):
 
 
 class Provider:
-    def __init__(self, cfg):
+    def __init__(self, cfg, backend=None):
         enrollment_ids(cfg)
+        self.backend = backend
         self.c = cfg
         self.root, self.home = Path(cfg['state']), Path(cfg['home'])
         self.root.mkdir(parents=True, exist_ok=True, mode=0o700)
@@ -308,7 +309,8 @@ class Provider:
         if receipt.get('config_hash')!=digest(self.c) or receipt.get('phase') not in phases or not receipt.get('game') or gate != {'version':1,'transaction_id':transaction,'closed':True}:
             raise ContinuityError('Source update requires this transaction settled game boundary')
         from installation_participant import LocalInstallation
-        backend=LocalInstallation(self.c);services = backend.services()
+        backend=self.backend if self.backend is not None else LocalInstallation(self.c)
+        services = backend.services()
         if rollback and receipt['phase'] in ('verifying_body','verified'):
             from installation_guard import continuity, require_idle
             if services['controller']['ActiveState'] not in ('inactive','failed'):
