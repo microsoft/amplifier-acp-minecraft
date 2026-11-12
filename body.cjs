@@ -62,7 +62,7 @@ bot.on('path_update',result=>spatial.normalizePassages(bot,result));
 let ready=false, busy=false, activeAction=null, generation=0, turnUntil=0, actions=0, replies=0, sequence=0, shuttingDown=false;
 let lastHumanAt=Date.parse(history.data.events.filter(e=>e.kind==='chat'&&e.source==='human').at(-1)?.time)||0;
 let agentWakeTimes=[],lastNoticeAt=0;
-const {BlockControls,revision:blockRevision}=require('./block-controls.cjs');
+const {BlockControls,revision:blockRevision,noEffect:controlNoEffect}=require('./block-controls.cjs');
 const {ConversationAdmission,REPLY_TOOLS}=require('./conversation-admission.cjs');
 const replyWork=require('./reply-work.cjs');
 const replyWorkAllowed=()=>activityPolicy.allowed(history,cfg)||replyWork.available(history.data.turn,history.task(),workAllowed()&&!taskIntake.requiresReview(history.task()));
@@ -391,6 +391,7 @@ async function operate(name,a={},sequenceId=null){
   if(name==='gather')gatherTargets(a);
   if(name==='dig'){const block=bot.blockAt(coord(a));if(!block||block.name!==a.expected)throw Error('Target block changed; inspect before digging');spatial.digGuard(bot,block);spatial.harvestTool(bot,block);if(!bot.canDigBlock(block))throw Error('Target is out of reach; plan a safe standing position first');}
   if(name==='container')containers.preflight(bot,coord(a),a);
+  if(name==='activate_control')new BlockControls(history).preflight(bot,coord(a),a);
   }catch(error){try{retryGuard.failed(bot,name,a,error);}catch{}record('action_preflight_refused',{action:name,arguments:a,error:error.message,effect_attempted:false});throw error;}
   if(++actions>24&&cfg.human_engagement?.enabled!==true)throw Error('This turn reached its 24-action budget; save progress with work_report');
   busy=true;activeAction=name;const epoch=generation;const actionId=crypto.randomUUID();history.actionStarted(actionId);record('action_started',{action_id:actionId,action:name,arguments:a});let unfinished;
@@ -519,7 +520,7 @@ async function operate(name,a={},sequenceId=null){
       onUnsettled:completion=>{unfinished=completion;stop();}});
     if(['move','follow'].includes(name))check();
     if(result?.settled_failure&&(!result?.error||settledBuilds.has(result)))history.actionFailedSettled(actionId,result.settled_failure);else history.actionSettled(actionId,!result?.error);const r=record('action_result',{action_id:actionId,action:name,arguments:a,result});receipts.push(r);if(receipts.length>100)receipts.shift();return result;
-  }catch(e){try{retryGuard.failed(bot,name,a,e);}catch{}let repair;try{repair=repairs.explain(bot,name,a,e);}catch{}if(repair)e.details={...(e.details||{}),repair};const settled=name==='move'?movementFailures.get(e):name==='place'?placementFailures.get(e):null;if(settled){e.details={...(e.details||{}),settled_failure:settled};history.actionFailedSettled(actionId,settled);}else history.actionSettled(actionId,false);record('action_failed',{action_id:actionId,action:name,arguments:a,error:e.message,...(repair?{repair}:{}),...(settled?{settled_failure:settled}:{}),
+  }catch(e){try{retryGuard.failed(bot,name,a,e);}catch{}let repair;try{repair=repairs.explain(bot,name,a,e);}catch{}if(repair)e.details={...(e.details||{}),repair};const settled=name==='move'?movementFailures.get(e):name==='place'?placementFailures.get(e):name==='activate_control'&&controlNoEffect(e)&&epoch===generation&&ready&&Date.now()<turnUntil&&!e.actionTimeout?{kind:'settled_control_preflight',effect_attempted:false,replayed:false}:null;if(settled){e.details={...(e.details||{}),settled_failure:settled};history.actionFailedSettled(actionId,settled);}else history.actionSettled(actionId,false);record('action_failed',{action_id:actionId,action:name,arguments:a,error:e.message,...(repair?{repair}:{}),...(settled?{settled_failure:settled}:{}),
     ...(e.actionTimeout?{timeout:true,operation_settled:e.operationSettled,turn_preserved:Date.now()<turnUntil}: {})});throw e;}
   finally{const settled=()=>{busy=false;activeAction=null;};if(unfinished)unfinished.then(settled);else settled();}
 }

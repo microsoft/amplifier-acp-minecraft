@@ -3,6 +3,8 @@
 const {createHash}=require('node:crypto');
 const canonical=v=>Array.isArray(v)?v.map(canonical):v&&typeof v==='object'?Object.fromEntries(Object.keys(v).sort().map(k=>[k,canonical(v[k])])):v;
 const hash=v=>createHash('sha256').update(JSON.stringify(canonical(v))).digest('hex');
+const preflightRefusals=new WeakSet();
+const noEffect=error=>preflightRefusals.has(error);
 function revision(block){return block?hash({position:block.position,name:block.name,properties:block.getProperties()}):null;}
 class BlockControls {
  constructor(history){this.history=history;}
@@ -11,16 +13,17 @@ class BlockControls {
   this.history.data.block_controls={...before,[id]:value};
   try{this.history.save();}catch(error){this.history.data.block_controls=before;throw error;}
  }
- async use(bot,p,args,check,{sleep=ms=>new Promise(r=>setTimeout(r,ms))}={}){
+ preflight(bot,p,args,check=()=>{}){
   const id=args.operation_id;
   if(typeof id!=='string'||!/^[a-zA-Z0-9_-]{8,100}$/.test(id))throw Error('Supply a unique operation_id; never replay a pulse');
   const fingerprint=hash(args),prior=this.history.data.block_controls?.[id];
   if(prior){
    if(prior.fingerprint!==fingerprint)throw Error('Control operation_id already used with different arguments');
    if(prior.status!=='settled')throw Error('Control outcome is uncertain; inspect the circuit, do not repeat this operation');
-   return {...prior.result,duplicate:true};
+   return {duplicate:{...prior.result,duplicate:true}};
   }
-  check();const block=bot.blockAt(p),button=block?.name.endsWith('_button'),lever=block?.name==='lever';
+  check();try{
+  const block=bot.blockAt(p),button=block?.name.endsWith('_button'),lever=block?.name==='lever';
   if(!button&&!lever)throw Error('Only ordinary buttons and levers are supported');
   if(p.distanceTo(bot.entity.position)>4)throw Error('Move within reach of the control first');
   const eye=bot.entity.position.offset(0,bot.entity.eyeHeight||1.62,0),ray=p.offset(.5,.5,.5).minus(eye),distance=ray.norm();
@@ -32,6 +35,15 @@ class BlockControls {
   if(typeof powered!=='boolean')throw Error('Server control state is unavailable');
   if(button&&powered)throw Error('Button is already pressed; wait for release and inspect, do not repeat');
   const target=button?true:args.powered;
+  return {id,fingerprint,block,button,lever,powered,target};
+  }catch(error){preflightRefusals.add(error);throw error;}
+ }
+ async use(bot,p,args,check,{sleep=ms=>new Promise(r=>setTimeout(r,ms))}={}){
+  // Repeat the pure checks at the actual operation boundary; a changed stance
+  // or block before intent is still a proven no-effect refusal.
+  const selected=this.preflight(bot,p,args,check);
+  if(selected.duplicate)return selected.duplicate;
+  const {id,fingerprint,block,button,lever,powered,target}=selected;
   if(lever&&powered===target){const result={position:p,name:block.name,powered,changed:false,verified:true};this.save(id,{fingerprint,status:'settled',result});return result;}
   // Persist intent before the only effect. Any error/lost outcome leaves this
   // operation non-replayable across process restart.
@@ -49,4 +61,4 @@ class BlockControls {
   throw Error('Server did not confirm control state; outcome uncertain, inspect without replay');
  }
 }
-module.exports={BlockControls,revision};
+module.exports={BlockControls,revision,noEffect};

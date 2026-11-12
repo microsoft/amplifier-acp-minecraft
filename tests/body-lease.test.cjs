@@ -118,6 +118,30 @@ test('nearby range and partial or unavailable destination geometry are not false
   }finally{f.close();}
  }
 });
+test('obstructed control preflight does not create uncertain work and a fresh clear stance can press once',async()=>{
+ const f=fixture();try{
+  const {Vec3}=realRequire('vec3'),{revision}=realRequire('./block-controls.cjs');const p=new Vec3(1,64,0);let powered=false,clicks=0,obstructed=true;
+  const block={name:'stone_button',position:p,getProperties:()=>({powered})};f.bot.entity.position=new Vec3(0,64,0);f.bot.blockAt=()=>block;
+  f.bot.world={raycast:()=>obstructed?{position:new Vec3(0,65,0)}:null};f.bot.activateBlock=async()=>{clicks++;powered=true;};
+  const args={x:1,y:64,z:0,operation:'press',operation_id:'control-first',block_revision:revision(block)};
+  await f.request('/turn',{renewable_lease:true,continuation:true});const before=JSON.stringify(f.history.data.turn.actions);
+  await assert.rejects(f.operate('activate_control',args),/Control is obstructed/);assert.equal(clicks,0);
+  assert.equal(JSON.stringify(f.history.data.turn.actions),before);assert.equal(f.history.data.block_controls?.[args.operation_id],undefined);
+  const refusal=f.history.data.events.findLast(e=>e.kind==='action_preflight_refused');assert.equal(refusal.effect_attempted,false);
+  obstructed=false;const result=await f.operate('activate_control',{...args,operation_id:'control-clear'});assert.equal(result.verified,true);assert.equal(clicks,1);
+ }finally{f.close();}
+});
+test('control clearance changing after outer preflight records a settled no-effect failure',async()=>{
+ const f=fixture();try{
+  const {Vec3}=realRequire('vec3'),{revision}=realRequire('./block-controls.cjs');const p=new Vec3(1,64,0);let rays=0,clicks=0;
+  const block={name:'stone_button',position:p,getProperties:()=>({powered:false})};f.bot.entity.position=new Vec3(0,64,0);f.bot.blockAt=()=>block;
+  f.bot.world={raycast:()=>++rays===1?null:{position:new Vec3(0,65,0)}};f.bot.activateBlock=async()=>{clicks++;};
+  await f.request('/turn',{renewable_lease:true,continuation:true});
+  await assert.rejects(f.operate('activate_control',{x:1,y:64,z:0,operation:'press',operation_id:'control-race',block_revision:revision(block)}),/Control is obstructed/);
+  assert.equal(clicks,0);assert.equal(f.history.data.turn.actions[0].status,'failed_settled');assert.equal(f.history.data.turn.actions[0].outcome.effect_attempted,false);
+  assert.equal(f.history.data.block_controls?.['control-race'],undefined);
+ }finally{f.close();}
+});
 test('actual peer reply can schedule existing work and deliberately speak, but cannot execute effects until next work turn',async()=>{
  const f=fixture({incoming_chat_only:true,human_engagement:{enabled:true},agent_dialogue:true,bot_names:['Lead'],human_task_intake:{enabled:true,delegation:{enabled:true}}});try{
   const h=f.history;Object.assign(h.data.task,{status:'waiting',authority:{kind:'human_game_request'},authority_revision:1,wait_for:'Lead installs glass',started_at:new Date(Date.now()-10000).toISOString()});
