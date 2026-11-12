@@ -218,3 +218,57 @@ class OperatorAwareness(unittest.IsolatedAsyncioTestCase):
             restarted=Awareness(home,client,{'revision':'empty'},observe,audience='operator')
             await restarted.consider(update)
             self.assertEqual(len(client.calls),1)
+
+
+class RejectedAwarenessReceipt(unittest.IsolatedAsyncioTestCase):
+    async def exercise(self, rows, expected, audience='public'):
+        class Fake:
+            info={}
+            session='original-session'
+            active_prompt_id='original-prompt'
+            def __init__(self):self.calls=[];self.input_id=None
+            def supports_awareness(self):return True
+            def supports_input_receipts(self):return True
+            async def request(self,method,params):
+                self.calls.append((method,params))
+                if method=='_session/steering':
+                    self.input_id=params['_meta']['steering']['inputId']
+                    return {'outcome':'injected'}
+                if method=='_session/input_receipts':
+                    return {'inputReceipts':rows(self.input_id)}
+                raise AssertionError('No prompt/replay or other query')
+        with tempfile.TemporaryDirectory() as home:
+            client=Fake();observed=[]
+            a=Awareness(home,client,{'revision':'old'},lambda k,**v:observed.append((k,v)),audience=audience)
+            await a.consider(snapshot())
+            before=dict(a.sent[0]);await a.finish()
+            after=a.sent[0]
+            self.assertEqual(after['state'],expected)
+            self.assertEqual({k:v for k,v in after.items() if k not in ('state','reason')},
+                             {k:v for k,v in before.items() if k not in ('state','reason')})
+            self.assertIsNone(a.final_revision(snapshot()))
+            if expected=='notAccepted':self.assertEqual(after['reason'],'endpoint_receipt')
+            self.assertEqual([k for k,_ in client.calls],['_session/steering','_session/input_receipts'])
+            self.assertTrue(any(k=='awareness_receipt' and v['state']==expected for k,v in observed))
+            saved=a.path.read_bytes()
+            restarted=Awareness(home,client,{'revision':'old'},lambda *a,**k:None,audience=audience)
+            self.assertEqual(restarted.receipts[0]['state'],expected)
+            await restarted.consider(snapshot());await restarted.finish()
+            self.assertEqual(len(client.calls),2,'Rejection journal is not a replay queue')
+            self.assertEqual(restarted.path.read_bytes(),saved)
+            self.assertIsNone(restarted.final_revision(snapshot()))
+
+    async def test_definitive_not_accepted_is_retained_for_both_audiences(self):
+        for audience in ('public','operator'):
+            with self.subTest(audience=audience):
+                await self.exercise(lambda key:[{'inputId':key,'state':'notAccepted',
+                    'reason':'active_turn_context_capacity'}], 'notAccepted',audience)
+
+    async def test_missing_or_unknown_disposition_does_not_invent_rejection(self):
+        for rows in (lambda key:[],lambda key:[{'inputId':'other','state':'notAccepted'}],
+                     lambda key:[{'inputId':key,'state':'future_state'}]):
+            await self.exercise(rows,'received')
+
+    async def test_conflicting_duplicate_receipts_do_not_claim_terminal_state(self):
+        await self.exercise(lambda key:[{'inputId':key,'state':'received'},
+                                       {'inputId':key,'state':'notAccepted'}],'received')

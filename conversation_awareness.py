@@ -167,11 +167,13 @@ class Awareness:
             return
         try:
             result = await asyncio.wait_for(self.client.request('_session/input_receipts', {'sessionId': self.client.session}), 3)
-            records = {r.get('inputId'): r for r in result.get('inputReceipts', [])}
+            records = result.get('inputReceipts', [])
             for receipt in self.sent:
-                remote = records.get(receipt['input_id'], {})
+                matches = [r for r in records if isinstance(r, dict)
+                           and r.get('inputId') == receipt['input_id']]
+                remote = matches[0] if len(matches) == 1 else {}
                 state = remote.get('state')
-                if state in ('received', 'submitted', 'remoteQueued', 'incorporated'):
+                if state in ('received', 'submitted', 'remoteQueued', 'incorporated', 'notAccepted'):
                     receipt['state'] = state
                     receipt['reason'] = 'endpoint_receipt'
                 self.observe('awareness_receipt', input_id=receipt['input_id'], revision=receipt['revision'], state=receipt['state'])
