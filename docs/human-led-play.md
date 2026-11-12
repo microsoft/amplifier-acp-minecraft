@@ -361,6 +361,37 @@ recovery accounting and original failed/interrupted receipts. Stop still wins.
 On an uncertain response, inspect durable state rather than replaying the call.
 No model-facing recovery tool or automatic retry is introduced.
 
+### Reviewed interrupted ordinary activity
+
+An engine interruption can leave an ordinary activity held even when all its
+game actions have terminal receipts. The authenticated owner can inspect the
+engine outcome, asynchronous operations and full domain history, then use
+`POST /activity/review-interrupted`. This is separate from task recovery and is
+not a model, presence or installation-caller tool.
+
+Supply `generation`, UUID `request_id`, `expected_turn_sha256`,
+`expected_task_sha256` (including `null` if there is no task), current
+`expected_position`, `expected_inventory_sha256`, a retained assessment
+`evidence_sha256`, concrete `reason`, and `receipts` covering every action exactly.
+Each receipt contains `action_id` and the `receipt_sha256` of its complete retained
+`action_result` or `action_failed` event. Hash JSON with JavaScript `JSON.stringify`.
+
+The initial supported set is synchronous successful movement with arrival evidence,
+single placement verified as the exact requested block, fully submitted chat/tell
+packets, and structured settled movement failures. Speech submission still does
+not prove recipient delivery; failed movement still does not prove arrival.
+Unknown or pending effects, unsupported actions, asynchronous sequence receipts,
+timeouts, incomplete speech, missing/mismatched terminals, changed observations,
+an open container/cursor or an active turn/operation refuse review. Stop wins.
+
+The atomic review keeps the original interrupted marker, all action statuses,
+speech and input receipts, task identity/authority, limits and accounting. It only
+permits future independently admitted activity under existing installation policy;
+it does not continue the old turn, resume a task, replay input or perform any game
+action. An identical lost-response retry returns the saved result without another
+mutation; a changed request refuses. Inspect durable state first after an uncertain
+response. Reload checks the review against the exact retained original turn.
+
 ### Planner turn limits during ordinary activity
 
 A model request/token limit after settled calls is a checkpoint, not a completed

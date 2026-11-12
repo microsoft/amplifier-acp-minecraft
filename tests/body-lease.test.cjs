@@ -671,6 +671,29 @@ test('owner settled-movement review binds live idle state and cannot reopen the 
  }finally{f.close();}
 });
 
+test('owner interrupted-activity review needs exact idle evidence and leaves new work independently admitted',async()=>{
+ let moves=0;const f=fixture({...optionalConfig,installation_callers:[{id:'voice',label:'Voice',token:'v'.repeat(40)}]},{move:async()=>{moves++;return {reached:true};}});try{
+  const digest=v=>realRequire('node:crypto').createHash('sha256').update(JSON.stringify(v)).digest('hex');
+  const {Vec3}=realRequire('vec3');f.bot.entity.position=new Vec3(0,64,0);f.bot.inventory={slots:[null],selectedItem:null};
+  Object.assign(f.history.data.task,{status:'budget_exhausted',deadline:1});const task=JSON.stringify(f.history.data.task);
+  f.history.data.last_turn={activity:true,task_id:null,interrupted:true,started_at:'2026-11-11T01:00:00Z',activity_report:{status:'running'},actions:[{id:'walk',status:'succeeded'}]};
+  for(const kind of ['action_started','action_result'])f.history.record({kind,action:'move',action_id:'walk',time:'2026-11-11T01:00:01Z',arguments:{x:0,y:64,z:0,mode:'normal'},...(kind==='action_result'?{result:{reached:true,target:{x:0,y:64,z:0},position:{x:0,y:64,z:0}}}:{})});
+  const observation=await f.request('/installation-state');
+  const args={generation:(await f.request('/conversation')).generation,request_id:realRequire('node:crypto').randomUUID(),expected_turn_sha256:digest(f.history.data.last_turn),expected_task_sha256:digest(f.history.data.task),expected_position:observation.position,expected_inventory_sha256:digest(observation.inventory),evidence_sha256:'a'.repeat(64),reason:'Exact engine terminal and settled movement checked; no replay.',receipts:[{action_id:'walk',receipt_sha256:digest(f.history.data.events.at(-1))}]};
+  await f.request('/activity/review-interrupted',args,401,'wrong');
+  await f.request('/activity/review-interrupted',args,403,'v'.repeat(40));
+  await f.request('/activity/review-interrupted',{...args,generation:args.generation+1},400);
+  f.bot.currentWindow={};await f.request('/activity/review-interrupted',args,400);f.bot.currentWindow=null;
+  f.bot.entity.position.x=1;await f.request('/activity/review-interrupted',args,400);f.bot.entity.position.x=0;
+  const result=await f.request('/activity/review-interrupted',args);assert.equal(result.activity_allowed,true);assert.equal(moves,0);
+  assert.equal((await f.request('/activity/review-interrupted',args)).duplicate,true);
+  assert.equal(f.history.data.last_turn.interrupted,true);assert.equal(JSON.stringify(f.history.data.task),task);
+  await f.request('/turn',{activity:true,continuation:true},400);
+  const fresh=incoming(f);await f.request('/turn',{conversation_only:true,message_ids:[fresh.id]});
+  await f.operate('move',{x:1,y:64,z:0,mode:'walk_only'});assert.equal(moves,1);assert.equal(JSON.stringify(f.history.data.task),task);
+ }finally{f.close();}
+});
+
 test('actual authenticated control input resumes waiting metadata and permits task-optional movement',async()=>{
  let moves=0;const f=fixture(optionalConfig,{move:async()=>{moves++;return {reached:true};}});try{
   const {Vec3}=realRequire('vec3');f.bot.entity.position=new Vec3(0,64,0);

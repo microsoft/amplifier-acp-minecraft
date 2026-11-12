@@ -62,7 +62,7 @@ async def verify(root, source):
     try:
         shutil.copytree(source/'tests',fixtures)
         subprocess.run([str(node),'--test',*[str(fixtures/name) for name in
-            ('body-chat.test.cjs','body-gather.test.cjs','body-timeout.test.cjs','body-facing.test.cjs','body-lease.test.cjs','survival.test.cjs','block-controls.test.cjs','redstone-configuration.test.cjs','placement-receipt.test.cjs','task-effects-review.test.cjs','activity-review.test.cjs','screenshots.test.cjs')]],env=env,check=True)
+            ('body-chat.test.cjs','body-gather.test.cjs','body-timeout.test.cjs','body-facing.test.cjs','body-lease.test.cjs','survival.test.cjs','block-controls.test.cjs','redstone-configuration.test.cjs','placement-receipt.test.cjs','task-effects-review.test.cjs','activity-review.test.cjs','activity-settlement.test.cjs','screenshots.test.cjs')]],env=env,check=True)
     finally:
         shutil.rmtree(fixtures,ignore_errors=True)
     result={'target':manifest['target'],'source_commit':manifest['source_commit'],'official_sdk':manifest['sdk_commit'],
