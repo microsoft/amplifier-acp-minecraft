@@ -27,6 +27,17 @@ for the existing negotiated active-input contract. It never assigns or rewrites
 IDs. Message metadata, source revision facts, maintenance proofs, optional message
 identity, and received-versus-incorporated distinctions remain unchanged.
 
+For an SDK-correlated `RequestError`, the adapter retains the optional attention
+`not_forwarded` fact only when the endpoint advertises version 1 of both attention
+and `noForwardRejectionVersion`, names the expected prompt metadata, and the
+receipt matches the exact requested offer and current session. The
+`attention_not_forwarded` diagnostic contains those bounded IDs and the error
+code, never the ticket, error prose or arbitrary error data. An error code alone,
+missing or mismatched metadata, and a lost response leave delivery unknown.
+This is an input-admission fact: previous effects remain unresolved, and the
+existing failure/authority path is unchanged. It does not replay an input, retry
+an offer, refund capacity, complete work or authorize continuation.
+
 ## Bounded wrappers and upstream gaps
 
 The SDK independently schedules notifications and logs callback exceptions; its
