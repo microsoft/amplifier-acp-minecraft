@@ -1,5 +1,6 @@
 import hashlib
 import json
+import os
 from pathlib import Path
 import tarfile
 import tempfile
@@ -20,7 +21,14 @@ class ArchiveTests(unittest.TestCase):
             package=module('archive_bundle');a=package.archive(bundle,root/'first.tar.gz');b=package.archive(bundle,root/'second.tar.gz')
             self.assertEqual(a['sha256'],b['sha256'])
             with tarfile.open(root/'first.tar.gz') as tar:
-                self.assertEqual(tar.getnames(),['binary','manifest.json']);self.assertTrue(tar.getmember('binary').mode&0o100)
+                self.assertEqual(tar.getnames(),['binary','manifest.json'])
+                # Windows chmod does not add POSIX execute bits to this ordinary
+                # fixture file. Preserve the observed host mode, not a fictional
+                # Unix permission; actual packaged executable launch is separate.
+                executable=bool(binary.stat().st_mode&0o111)
+                self.assertEqual(bool(tar.getmember('binary').mode&0o111),executable)
+                if os.name=='posix':self.assertTrue(executable)
+                self.assertEqual(tar.getmember('manifest.json').mode,0o644)
             with self.assertRaises(ValueError):package.archive(bundle,bundle/'nested.tar.gz')
             manifest['source_clean']=False;(bundle/'manifest.json').write_text(json.dumps(manifest))
             with self.assertRaisesRegex(ValueError,'dirty'):package.archive(bundle,root/'dirty.tar.gz')
