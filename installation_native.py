@@ -53,6 +53,12 @@ class NativeIO:
         data = json.dumps(value, sort_keys=True).encode('utf-8')
         return self.session.private_write(root, relative, data)
 
+    def mkdir(self, path):
+        root, relative = self.relative(path)
+        parts = Path(relative).parts
+        for length in range(1, len(parts)+1):
+            self.session.private_dir(root, Path(*parts[:length]).as_posix())
+
     def remove(self, path):
         root, relative = self.relative(path)
         return self.session.durable_remove(root, relative)

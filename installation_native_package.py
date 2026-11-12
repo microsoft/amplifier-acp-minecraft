@@ -11,7 +11,7 @@ import platform
 import re
 import tarfile
 import urllib.request
-from installation_guard import ContinuityError, durable_write
+from installation_guard import ContinuityError, durable_write, current_owner_io
 from native_package import validate
 
 
@@ -19,6 +19,13 @@ def target():
     systems={'Linux':'linux','Darwin':'macos','Windows':'windows'}
     architectures={'x86_64':'x64','AMD64':'x64','aarch64':'arm64','arm64':'arm64','ARM64':'arm64'}
     return systems[platform.system()]+'-'+architectures[platform.machine()]
+
+
+def private_directory(path):
+    owner=current_owner_io()
+    if owner is None or not hasattr(owner,'mkdir'):
+        raise ContinuityError('Native package staging requires its protected owner storage scope')
+    owner.mkdir(path)
 
 
 def stage_package(provider,revision,previous,stage):
@@ -42,7 +49,8 @@ def stage_package(provider,revision,previous,stage):
     url='https://github.com/microsoft/amplifier-acp-minecraft/releases/download/'+tag+'/'+name
     if asset.get('browser_download_url')!=url or not 0<int(asset.get('size',0))<=2*1024**3:
         raise ContinuityError('Native release artifact route/size is invalid')
-    stage.mkdir(parents=True);archive=stage/'release.tar.gz';h=hashlib.sha256();size=0
+    if stage.exists():raise ContinuityError('Native build destination must be a fresh unreferenced stage')
+    private_directory(stage);archive=stage/'release.tar.gz';h=hashlib.sha256();size=0
     with urllib.request.urlopen(url,timeout=120) as response,archive.open('xb') as out:
         while block:=response.read(1024*1024):
             size+=len(block)
@@ -50,14 +58,24 @@ def stage_package(provider,revision,previous,stage):
             h.update(block);out.write(block)
     if size!=asset['size'] or h.hexdigest()!=digest[7:]:
         raise ContinuityError('Native archive differs from the published artifact')
-    package=stage/'package';package.mkdir()
+    package=stage/'package';private_directory(package)
     with tarfile.open(archive,'r:gz') as source:
         total=0
-        for item in source.getmembers():
+        members=source.getmembers()
+        for item in members:
             path=Path(item.name);total+=item.size
             if (path.is_absolute() or '..' in path.parts or '\\' in item.name or ':' in item.name
                     or not (item.isfile() or item.isdir() or item.issym()) or total>5*1024**3):
                 raise ContinuityError('Native archive contains an unsafe entry')
+        # Protected roots and directories come from the shared storage owner,
+        # including on Windows. Archive extraction never establishes ACLs.
+        directories=set()
+        for item in members:
+            path=Path(item.name)
+            directories.update(p for p in path.parents if p!=Path('.'))
+            if item.isdir():directories.add(path)
+        for path in sorted(directories,key=lambda p:(len(p.parts),p.as_posix())):
+            private_directory(package/path)
         source.extractall(package,filter='data')
     manifest=validate(package)
     if manifest.get('target')!=target() or manifest.get('source_clean') is not True:

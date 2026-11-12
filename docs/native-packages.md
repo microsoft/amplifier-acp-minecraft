@@ -65,3 +65,53 @@ The six-target fixture invokes the actual packaged `helper-capabilities`,
 explicit unbounded tasks, bounded watch lifetime, Stop, unknown-bound refusal
 and unchanged stored watches after invalid input. No maximum-number sentinel
 or task conversion is introduced.
+
+## Native lifecycle integration
+
+The candidate package can include the separately reviewed Constellation native
+installation driver and its Python binding. Build with both `--native-shared`
+(the exact checkout pinned in `ops/native/shared-driver-lock.json`) and
+`--native-driver` (the binary built for this target). The package records both
+source and binary identity. This is an explicit backend; existing Linux
+installations do not switch merely because it is present.
+
+Setup uses `installation_native_setup.profiles` to describe fixed body,
+controller and original ACP endpoint commands. The shared installer supplies
+protected owner roots and configuration; `register_no_start` registers those
+exact service definitions without starting, unpausing, changing context access,
+or creating an engine session. Keep the updater interpreter and helper code
+outside the mutable game home. The controller and session probe may use the
+verified private Python copy under `home/venv`, so source/environment exchanges
+retain their stable invocation paths. No host-wide Python or Node is required.
+
+`installation_enrollment.py` emits a registration delta for the explicit
+`native_platform` configuration, using isolated Python and fixed entry points.
+It does not install that delta or enable a schedule. The Minecraft source and
+pure task-helper components remain separate, with empty shared restart scopes;
+the participant owns game service admission, continuity checks, original-session
+verification, and restoration. Connection controls use the same backend and
+retain the acknowledged quiescence/readiness handoffs. An unknown operation is
+not permission to retry it.
+
+Native source updates use the stable channel's exact target archive, published
+digest and source tree. They verify the official SDK's immutable provenance and
+stage privately before stopping services. They do not run Git, npm or pip on
+the destination. A base Python, Node, or shared-driver change requires its own
+installation migration rather than silently changing those enrolled helpers.
+Source/environment publication uses two journaled native exchanges, retaining
+rollback targets; it is not an atomic pair. Restore begins only after the
+candidate's original saved session loads successfully, or initialize succeeds
+for a genuinely unused connection. Neither check prompts the model.
+
+The complete domain fixture is `ops/native/verify_lifecycle.py`. It uses actual
+native services on each target, a disposable body and deterministic ACP endpoint,
+and exercises no-start registration, source apply/verification/rollback,
+shared-component admission, Connect/Disconnect, and lost terminal replies.
+Its receipt separately records original loads, absence of prompts/new sessions,
+and disposal of its own test services. Keep failures as well as passing receipts.
+
+Native end-user enrollment remains a candidate until the combined target tests,
+protected initial-root setup, and reference-aware native staging cleanup are
+qualified together. Do not enable automatic source updates from package-build
+success alone, or substitute ordinary Windows directory deletion for the shared
+owner's protected cleanup operation.

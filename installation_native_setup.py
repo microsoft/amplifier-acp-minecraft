@@ -38,11 +38,17 @@ def profiles(cfg, owner_config, bundle, services):
         if entry.get('sha256')!=hashlib.sha256(result.read_bytes()).hexdigest():
             raise ValueError('Package command differs from manifest')
         return result
-    driver,python,node=command('native_driver'),command('python'),command('node')
+    driver,base_python,node=command('native_driver'),command('python'),command('node')
     if native['driver_sha256']!=hashlib.sha256(driver.read_bytes()).hexdigest():
         raise ValueError('Shared driver provenance differs')
-    if cfg['native_platform']['driver']!=str(driver) or cfg['native_platform']['python']!=str(python):
-        raise ValueError('Domain native runtime paths differ from package')
+    if cfg['native_platform']['driver']!=str(driver):
+        raise ValueError('Domain native driver path differs from package')
+    python=Path(cfg['native_platform']['python'])
+    if python!=base_python:
+        relative=Path(commands['python']).relative_to('python')
+        if (python!=home/'venv'/relative or not python.is_file()
+                or hashlib.sha256(python.read_bytes()).hexdigest()!=hashlib.sha256(base_python.read_bytes()).hexdigest()):
+            raise ValueError('Domain private Python copy differs from package')
     driver_config=Path(cfg['native_platform']['config'])
     if not driver_config.is_absolute():raise ValueError('Fixed protected driver config required')
     endpoint,_,_=saved_endpoint(home)  # validates an existing binding, never creates one

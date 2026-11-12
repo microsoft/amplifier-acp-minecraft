@@ -17,6 +17,7 @@ from installation_participant import Participant
 from installation_connection import Connection
 from installation_native_exchange import NativeExchange
 from installation_source_provider import Provider,fingerprint,verify_sdk
+from installation_enrollment import registration
 from installation_guard import digest
 
 def initial(path,value):
@@ -97,6 +98,13 @@ try:
  environment_python='python.exe' if os.name=='nt' else 'bin/python3'
  cfg['native_platform'].update(python=str(home/'venv'/environment_python),environment_python=environment_python)
  cfg.update(app=str(home/'app'),venv=str(home/'venv'),python=sys.executable,node=str(BUNDLE/manifest['commands']['node']),npm_cli=str(BUNDLE/'app/package.json'),channel='latest-passing-development',required_checks=['disposable-boundary'])
+ helpers=home/'task-helpers';helpers.mkdir();protect(helpers)
+ helper=helpers/('agent-runtime.exe' if os.name=='nt' else 'agent-runtime')
+ shutil.copy2(BUNDLE/manifest['commands']['task_helper'],helper);protect(helper)
+ if os.name!='nt':helper.chmod(0o700)
+ shared_plans=root/'shared'/'plans';shared_plans.mkdir(parents=True);protect(shared_plans.parent);protect(shared_plans)
+ initial(shared_plans.parent/'state.json',{'state':'succeeded','transaction':None})
+ cfg.update(task_helper=str(helper),shared_plans=str(shared_plans))
  initial(home/'app-source.json',{'revision':'a'*40,'fixture':True})
  original={p.name:p.read_bytes() for p in home.iterdir() if p.is_file() and p.name!='app-source.json'}
  original_source=read(home/'app-source.json')
@@ -126,6 +134,12 @@ try:
      input=json.dumps({'version':1,'id':'read-only-preflight','op':'describe'})+'\n',capture_output=True,text=True,timeout=20)
  report['driver_preflight']={'returncode':preflight.returncode,'stdout':preflight.stdout,'stderr':preflight.stderr}
  if preflight.returncode:raise RuntimeError('Native driver configuration failed: '+preflight.stderr)
+ enrollment=registration(ownercfg,BUNDLE/'app',pathlib.Path(sys.executable))
+ status_command=enrollment['components'][0]['commands']['status']
+ owner_status=subprocess.run(status_command,capture_output=True,text=True,timeout=30)
+ report['native_owner_registration']={'delta':enrollment,'status_returncode':owner_status.returncode,'status_stdout':owner_status.stdout,'status_stderr':owner_status.stderr}
+ assert owner_status.returncode==0,report['native_owner_registration']
+ assert json.loads(owner_status.stdout)['version']=='a'*40
  with Session(DRIVER,drivercfg) as session:
   io=NativeIO(cfg,session);backend=NativeInstallation(cfg,session)
   with owner_io(io),installation_lock(state/'installation.lock'):

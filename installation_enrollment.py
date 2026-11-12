@@ -11,12 +11,25 @@ from installation_source_provider import Provider
 
 
 def registration(config, helper_directory, python):
-    if platform.system()!='Linux':
+    if platform.system()!='Linux' and not Path(config).is_file():
         raise ValueError('This lifecycle driver requires Linux systemd-user; do not enroll on other platforms')
     config, helper_directory, python = map(Path,(config,helper_directory,python))
     if not all(p.is_absolute() for p in (config,helper_directory,python)):
         raise ValueError('Use absolute owner-installed helper/config/interpreter paths')
-    cfg=read(config);Provider(cfg);verification_seconds(cfg)
+    cfg=read(config)
+    native=cfg.get('native_platform')
+    if platform.system()!='Linux' and not native:
+        raise ValueError('Explicit qualified native lifecycle enrollment is required on this platform')
+    if native:
+        if native.get('version')!=1 or not (helper_directory/'native_entry.py').is_file():
+            raise ValueError('Install the explicit native entry point and configuration first')
+        if python.resolve().is_relative_to(Path(cfg['home']).resolve()):
+            raise ValueError('Updater interpreter must remain outside mutable game source/environment')
+        from installation_native import validate_driver_mapping
+        validate_driver_mapping(cfg,Path(native['config']))
+        for filename in ('installation_native.py','installation_native_exchange.py','installation_native_package.py','native_package.py'):
+            if not (helper_directory/filename).is_file():raise ValueError('Install fixed native owner helpers first')
+    Provider(cfg);verification_seconds(cfg)
     participant_id, ids = enrollment_ids(cfg)
     plans=Path(cfg.get('shared_plans',''))
     if (not plans.is_absolute() or plans.resolve()!=plans or not plans.is_dir()
@@ -32,7 +45,12 @@ def registration(config, helper_directory, python):
     for filename in ('installation_participant.py','installation_source_provider.py','installation_session_probe.py','installation_retention.py','connection_state.py'):
         if not (helper_directory/filename).is_file():raise ValueError('Install fixed owner helper files first')
     scope={'services':[],'instance':False,'slack_homes':[]}
-    def command(script,action):return [str(python),str(helper_directory/script),'--config',str(config),action]
+    def command(script,action):
+        if native:
+            mode={'installation_participant.py':'participant','installation_source_provider.py':'source-provider',
+                  'installation_connection.py':'connection'}[script]
+            return [str(python),'-I',str(helper_directory/'native_entry.py'),mode,'--config',str(config),action]
+        return [str(python),str(helper_directory/script),'--config',str(config),action]
     result = {'components':[
         {'id':ids['minecraft'],'provider':'command','protocol':2,'restart_scope':dict(scope),
          'commands':{action:command('installation_source_provider.py',action) for action in ('status','plan','apply','rollback','verify')}},

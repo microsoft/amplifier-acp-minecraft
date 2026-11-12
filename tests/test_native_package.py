@@ -54,7 +54,7 @@ class PackageTests(unittest.TestCase):
         self.release['assets']=[{'name':'minecraft-linux-arm64.tar.gz','digest':'sha256:'+hashlib.sha256(self.raw).hexdigest(),
           'browser_download_url':'https://github.com/microsoft/amplifier-acp-minecraft/releases/download/v1.0.0/minecraft-linux-arm64.tar.gz','size':len(self.raw)}]
     def run_stage(self):
-        with patch('installation_native_package.target',return_value='linux-arm64'),patch('installation_native_package.urllib.request.urlopen',return_value=io.BytesIO(self.raw)):
+        with patch('installation_native_package.private_directory',side_effect=lambda p:p.mkdir(parents=True,exist_ok=True)),patch('installation_native_package.target',return_value='linux-arm64'),patch('installation_native_package.urllib.request.urlopen',return_value=io.BytesIO(self.raw)):
             return stage_package(self.provider,REV,'a'*40,self.stage)
     def test_exact_published_package_stages_sdk_without_executing_it(self):
         before=(self.python.read_bytes(),self.node.read_bytes())

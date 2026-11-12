@@ -6,7 +6,7 @@ from pathlib import Path
 if __name__=='__main__':
     modules={'controller':'adapter','connection-probe':'connection_session_job',
              'session-probe':'installation_session_probe','participant':'installation_participant',
-             'connection':'installation_connection'}
+             'connection':'installation_connection','source-provider':'installation_source_provider'}
     if len(sys.argv)<2 or sys.argv[1] not in modules:
         raise SystemExit('Select one fixed Minecraft native entry point')
     module=modules[sys.argv[1]]
