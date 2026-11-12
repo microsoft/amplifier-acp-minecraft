@@ -3,6 +3,19 @@ const {once}=require('node:events');
 const {refreshInventory}=require('./inventory.cjs');
 const {inventoryBarrier}=require('./inventory-barrier.cjs');
 const counts=items=>{const n={};for(const i of items)n[i.name]=(n[i.name]||0)+i.count;return n;};
+// A synchronous observation only: preparation can return ingredients from the
+// cursor/grid or another window. In those states a negative inventory recipe
+// lookup is not yet a sound refusal, so leave preparation and its effects alone.
+function preflight(bot,itemName){
+ const item=bot.registry.itemsByName[itemName];if(!item)throw Error('Unknown item');
+ const inventory=bot.inventory;
+ if(bot.currentWindow!==null||inventory?.selectedItem!==null||!Array.isArray(inventory.slots)||inventory.slots.length<5)return;
+ for(let slot=0;slot<=4;slot++)if(inventory.slots[slot]!==null)return;
+ if(bot.recipesFor(item.id,null,1,null).length)return;
+ const table=bot.findBlock({matching:b=>b.name==='crafting_table',maxDistance:24});
+ if(bot.recipesFor(item.id,null,1,table).length)return;
+ throw Error('No recipe possible in the observed inventory with the currently loaded nearby crafting table; no crafting preparation, window change or movement attempted.');
+}
 async function click(bot,slot,button,check){
  check();const window=bot.currentWindow||bot.inventory,Item=require('prismarine-item')(bot.registry);
  if(!bot.supportFeature('stateIdUsed'))throw Error('Confirmed crafting needs a state-ID protocol');
@@ -79,4 +92,4 @@ async function craft(bot,item,count,table,check){
  }
 }
 // The same authoritative click is useful for ordinary storage transfers.
-module.exports={craft,prepare,parkCursor,click};
+module.exports={craft,prepare,parkCursor,click,preflight};
