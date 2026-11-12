@@ -74,3 +74,21 @@ test('upstream path-search timeout remains uncertain movement, not a no-effect c
  const {bot}=fixture();const r=new RepairHints().explain(bot,'move',{x:3,y:64,z:0},Error('Took to long to decide path to goal!'));
  assert.equal(r.code,'search_limit');assert.match(r.next_steps.join(' '),/may have included movement/);
 });
+
+test('jump clearance explains clear target with blocked source ceiling and tracks changed observations',()=>{
+ const h=new RepairHints();let ceiling='stone';
+ const bot={entity:{position:new Vec3(.5,54,.5)},blockAt:p=>{
+  const name=p.x===0&&p.y===56?ceiling:p.y===53||(p.x===1&&p.y===54)?'stone':'air';
+  return {name,shapes:name==='stone'?[[0,0,0,1,1,1]]:[],getProperties:()=>({})};}};
+ const args={x:1,y:55,z:0,mode:'normal'},error=Error('Movement ended without reaching the requested destination');
+ const first=h.explain(bot,'move',args,error);
+ assert.equal(first.observed.target_feet.name,'air');assert.equal(first.observed.target_head.name,'air');assert.equal(first.observed.target_floor.name,'stone');
+ assert.equal(first.observed.head.name,'air');assert.equal(first.observed.footprint.body_obstructions.length,0);
+ assert.equal(first.observed.source_jump_clearance.source_ceiling.name,'stone');
+ assert.equal(first.observed.source_jump_clearance.source_ceiling.position.y,56);
+ assert.equal(h.explain(bot,'move',args,error).same_observation_failures,2);
+ ceiling='air';const next=h.explain(bot,'move',args,error);
+ assert.equal(next.same_observation_failures,1);assert.equal(next.observed.source_jump_clearance.source_ceiling.geometry,'empty');
+ assert.match(next.next_steps.join(' '),/source_jump_clearance/);
+ assert.equal(next.effect_attempted,undefined);assert.equal(next.settled_failure,undefined,'diagnostic cannot settle historical effects');
+});
