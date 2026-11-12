@@ -585,3 +585,27 @@ test('actual authenticated control input resumes waiting metadata and permits ta
   await f.operate('move',{x:1,y:64,z:0,mode:'walk_only'});assert.equal(moves,1);assert.equal(f.history.data.turn.activity,true);assert.equal(f.history.task().id,before.id);assert.equal(f.history.task().turns,before.turns);
  }finally{f.close();}
 });
+
+test('owner task-effects review stays closed until exact resume and next lease, never replays effects',async()=>{
+ let moves=0;const f=fixture({...optionalConfig,installation_callers:[{id:'voice',label:'Voice',token:'v'.repeat(40)}]},{move:async()=>{moves++;return {reached:true};}});try{
+  const digest=v=>realRequire('node:crypto').createHash('sha256').update(JSON.stringify(v)).digest('hex');
+  const {Vec3}=realRequire('vec3');f.bot.entity.position=new Vec3(0,64,0);f.bot.inventory={slots:[null],selectedItem:null};
+  Object.assign(f.history.data.task,{status:'needs_review',authority:{kind:'human_game_request'},authority_revision:1});
+  f.history.data.last_turn={task_id:f.history.data.task.id,interrupted:true,started_at:'2026-11-12T11:37:00Z',actions:[{id:'failed',status:'uncertain'}]};
+  for(const kind of ['action_started','action_failed'])f.history.record({kind,action:'dig',action_id:'failed',time:'2026-11-12T11:37:01Z',arguments:{x:0,y:63,z:0,expected:'stone'},...(kind==='action_failed'?{error:'Refusing to remove a block supporting a player; move to safe footing first'}:{})});
+  const observation=await f.request('/installation-state'),before=structuredClone(f.history.data.task);
+  const args={generation:(await f.request('/conversation')).generation,request_id:realRequire('node:crypto').randomUUID(),expected_task_sha256:digest(before),expected_turn_sha256:digest(f.history.data.last_turn),expected_position:observation.position,expected_inventory_sha256:digest(observation.inventory),evidence_sha256:'a'.repeat(64),reviews:[{action_id:'failed',receipt_sha256:digest(f.history.data.events.at(-1)),outcome:'no_effect',reason:'Owner inspected exact preflight refusal and terminal engine tools; no dig occurred.'}]};
+  await f.request('/task/review-settled-actions',args,401,'wrong');
+  await f.request('/task/review-settled-actions',args,403,'v'.repeat(40));
+  await f.request('/task/review-settled-actions',{...args,generation:args.generation+1},400);
+  assert.equal((await f.request('/task/review-settled-actions',args)).activity_allowed,false);
+  assert.deepEqual(f.history.data.task,before);assert.equal(moves,0);
+  await f.request('/turn',{continuation:true},400);
+  await f.request('/resume-reviewed',{generation:args.generation,task_id:before.id,reason:'Engine terminal inspected',effects_review_id:'wrong'},400);
+  await f.request('/resume-reviewed',{generation:args.generation,task_id:before.id,reason:'Engine terminal inspected; resume with fresh observations and no replay.',effects_review_id:args.request_id});
+  assert.equal(moves,0);assert.equal(f.history.data.task.turns,before.turns);assert.equal(f.history.data.task.deadline,before.deadline);
+  assert.equal(f.history.data.last_turn.interrupted,true);assert.equal(f.history.data.last_turn.actions[0].status,'uncertain');
+  await f.request('/turn',{continuation:true,renewable_lease:true});
+  await f.operate('move',{x:2,y:64,z:0,mode:'walk_only'});assert.equal(moves,1);
+ }finally{f.close();}
+});

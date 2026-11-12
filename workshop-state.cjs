@@ -183,13 +183,21 @@ class WorkshopState {
   if(!task||task.id!==task_id||task.status!=='waiting'||bounds.turnsLow(task))throw Error('No authorized waiting task with remaining budget');
   task.status='running';this.save();return task;
  }
- resumeReviewed({task_id,reason,resume_stopped=false}){
+ resumeReviewed({task_id,reason,resume_stopped=false,effects_review_id}){
   const task=this.task();
   if(this.data.turn||!task||task.id!==task_id||(!['blocked','needs_review'].includes(task.status)&&!(task.status==='stopped'&&resume_stopped===true)))throw Error('Only an idle blocked or interrupted task can be resumed after review; stopped work requires explicit operator authorization');
   if(bounds.timeLow(task)||bounds.turnsLow(task))throw Error('Existing task budget exhausted; review cannot extend it');
   if(typeof reason!=='string'||!reason.trim()||reason.length>2000)throw Error('A concrete recovery review is required');
-  this.appendProgress(task,{at:new Date().toISOString(),kind:'operator_recovery',summary:reason,previous_status:task.status});
-  task.status='running';task.wait_for=null;task.wait_started_at=null;this.save();return task;
+  const review=this.data.last_turn?.effect_review;
+  if(effects_review_id!==undefined){
+   const digest=value=>require('node:crypto').createHash('sha256').update(JSON.stringify(value)).digest('hex');
+   if(review?.scope!=='task_effects'||review.task_id!==task.id||review.request_id!==effects_review_id||review.expected_task_sha256!==digest(task)||review.resumed_task_id)throw Error('Exact unconsumed task-effects review required');
+  }else if(review?.scope==='task_effects'&&review.task_id===task.id)throw Error('Name the exact task-effects review before resuming');
+  const original=structuredClone(this.data);
+  this.appendProgress(task,{at:new Date().toISOString(),kind:'operator_recovery',summary:reason,previous_status:task.status,...(effects_review_id?{effects_review_id}:{})});
+  if(effects_review_id)review.resumed_task_id=task.id;
+
+  task.status='running';task.wait_for=null;task.wait_started_at=null;try{this.save();}catch(error){this.data=original;throw error;}return task;
  }
  stop({activity=false}={}){inputOutcomes.settle(this.data,{interrupted:true,reason:'explicit_stop'});if(activity)this.data.activity_stop={at:Date.now()};if(this.data.turn)this.data[this.data.turn.conversation_only?'last_conversation_turn':'last_turn']={...this.data.turn,interrupted:!!this.data.turn.actions?.some(a=>a.status==='pending'||a.status==='uncertain')};if(['running','waiting','blocked','needs_review','review'].includes(this.data.task?.status))this.data.task.status='stopped';this.data.turn=null;this.save();}
  query(q,cfg,live){

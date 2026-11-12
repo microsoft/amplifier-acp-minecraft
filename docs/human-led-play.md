@@ -341,3 +341,22 @@ The owner-only historical review also accepts the exact legacy post-movement
 arrival-check failure as `settled_partial_gather`; it preserves the original
 receipt and does not infer how many blocks were harvested or collected. As with
 other historical reviews, this permits fresh planning only, never replay.
+
+### Reviewed interrupted task effects
+
+For a genuinely interrupted task, the owner can use
+`POST /task/review-settled-actions` with the same complete per-action evidence
+and current observation as the activity review, plus `expected_task_sha256`.
+The task ID must match the retained interrupted turn, every uncertain action
+must have an exact supported terminal receipt, and pending/time-out effects
+remain refused. The legacy supporting-player dig guard can be reviewed as
+no effect; a failed move must preserve its partial-movement distinction.
+
+This first step records evidence only. It does not resume the task or clear its
+effect hold. After separately checking the engine's terminal outcome, call the
+existing `/resume-reviewed` with the returned `effects_review_id` (the review's
+`request_id`) and a concrete reason. Resume verifies that the same task has not
+changed and still has authority; it preserves spent counts, bounds, source,
+recovery accounting and original failed/interrupted receipts. Stop still wins.
+On an uncertain response, inspect durable state rather than replaying the call.
+No model-facing recovery tool or automatic retry is introduced.

@@ -7,7 +7,7 @@ function reason(history,cfg){
  const turn=history.data.last_turn;
  if(turn?.activity&&(turn.interrupted||turn.actions?.some(a=>a.status==='pending'||a.status==='uncertain'&&a.review?.outcome!=='no_effect'&&!(turn.effect_review?.future_work_only&&['settled_failed_movement','settled_failed_storage','settled_partial_gather'].includes(a.review?.outcome)))))return 'unresolved_activity_effects';
  // A separate activity cannot hide unsettled effects from an existing task.
- if(turn&&!turn.activity&&turn.interrupted&&turn.actions?.some(a=>a.status!=='succeeded'))return 'unresolved_task_effects';
+ if(turn&&!turn.activity&&turn.interrupted&&turn.actions?.some(a=>a.status!=='succeeded')&&!(turn.effect_review?.scope==='task_effects'&&turn.effect_review.future_work_only&&turn.effect_review.resumed_task_id===turn.task_id&&turn.task_id===history.data.task?.id))return 'unresolved_task_effects';
  return null;
 }
 function allowed(history,cfg){return reason(history,cfg)===null;}
