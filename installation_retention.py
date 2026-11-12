@@ -9,7 +9,8 @@ import shutil
 import time
 import uuid
 from pathlib import Path
-from installation_guard import ContinuityError, digest, durable_write, read, enrollment_ids
+from installation_guard import (ContinuityError, digest, durable_write, read,
+                                enrollment_ids, current_owner_io)
 
 GRACE_SECONDS = 86400
 
@@ -24,6 +25,18 @@ class Retention:
         if not self.root.is_absolute() or self.root.resolve() != self.root:
             raise ContinuityError('Owner artifact root must be direct')
         self.records = self.root/'artifact-receipts'
+
+    def stage_contents_match(self,path,manifest,fingerprint):
+        expected={'app','venv','manifest.json'}
+        if self.cfg.get('native_platform'):
+            expected|={'package','package-receipt.json'}
+        if set(p.name for p in path.iterdir())!=expected:return False
+        if any(fingerprint(path/k)!=manifest['fingerprints'][k] for k in ('app','venv')):return False
+        if self.cfg.get('native_platform'):
+            extra=manifest.get('native_artifacts',{})
+            if (extra.get('package')!=fingerprint(path/'package')
+                    or extra.get('receipt')!=hashlib.sha256((path/'package-receipt.json').read_bytes()).hexdigest()):return False
+        return True
 
     def path(self, kind, identifier):
         if kind not in ('stage', 'backup') or not canonical_id(identifier):
@@ -131,6 +144,39 @@ class Retention:
         for key in ('app','venv'):
             identifier = self.stage_reference(self.cfg[key])
             if identifier:stages.add(identifier)
+        if self.cfg.get('native_platform'):
+            native=self.root/'native-source'
+            receipts=self.root/'native-source-receipts'
+            if native.resolve()!=native or receipts.resolve()!=receipts:
+                raise ContinuityError('Indirect native source journal root')
+            operations={p.stem:p for p in receipts.glob('*.json')}
+            entries={p.name:p for p in native.glob('*')}
+            if set(operations)!=set(entries):
+                raise ContinuityError('Native source artifacts lack matching journals')
+            for operation,path in sorted(operations.items()):
+                if not canonical_id_or_false(operation):raise ContinuityError('Unknown native source operation')
+                value=document(path)
+                phase=value.get('phase');keys=set(value.get('entries',{}))
+                if (phase not in ('applied','rolled_back') or not keys.issubset({'app','venv'})
+                        or (phase=='applied' and keys!={'app','venv'})):
+                    raise ContinuityError('Native source exchange is unsettled')
+                transaction=value.get('transaction')
+                if not canonical_id_or_false(transaction):raise ContinuityError('Unknown native source transaction')
+                if document(self.root/'transactions'/(transaction+'.json')).get('phase')!='restored':
+                    raise ContinuityError('Native source restoration is unsettled')
+                directory=entries[operation]
+                if directory.resolve()!=directory or not directory.is_dir():
+                    raise ContinuityError('Indirect native source artifact directory')
+                children=list(directory.iterdir());signature[str(directory)]=sorted(p.name for p in children)
+                for child in children:
+                    if child.name not in {k+'-'+phase for k in ('app','venv') for phase in ('baseline','rejected','incoming')}:
+                        raise ContinuityError('Unknown native source artifact')
+                    # Keep every retained native rollback target. Removal of an
+                    # obsolete pointer tree requires shared native cleanup; the
+                    # Python collector never follows/deletes a Windows junction.
+                    identifier=self.stage_reference(child)
+                    signature[str(child)]=str(child.resolve())
+                    if identifier:stages.add(identifier)
         backups = self.root/'backups'
         if backups.is_symlink():raise ContinuityError('Indirect backup directory')
         for backup in sorted(backups.glob('*')):
@@ -142,6 +188,12 @@ class Retention:
 
     def safe_path(self, kind, identifier):
         path = self.path(kind, identifier)
+        native = self.native_trees()
+        if native is not None:
+            # Rooted native inspection covers allocation/reuse as well as
+            # removal. It does not traverse a package or grant deletion.
+            native.tree_inspect(kind, identifier)
+            return path
         if self.root.resolve() != self.root or path.parent.resolve() != path.parent or path.is_symlink():
             raise ContinuityError('Artifact path is indirect')
         if not shutil.rmtree.avoids_symlink_attacks:
@@ -151,8 +203,37 @@ class Retention:
                 raise ContinuityError('Artifact contains a mount')
         return path
 
+    def native_trees(self):
+        requested = self.cfg.get('native_platform', {}).get('regenerable_tree_removal')
+        if requested is None:
+            return None
+        if type(requested) is not int or requested != 1:
+            raise ContinuityError('Unsupported native regenerable tree enrollment')
+        native = current_owner_io()
+        if native is None or not callable(getattr(native, 'tree_inspect', None)):
+            raise ContinuityError('Native regenerable trees require enrolled owner I/O')
+        return native
+
     def remove(self, kind, identifier, reason):
-        if not self.owned(kind, identifier):return False
+        record = self.owned(kind, identifier)
+        if not record:return False
+        if record.get('state') == 'pruning':
+            raise ContinuityError('Existing pruning intent requires read-only reconciliation')
+        native = self.native_trees()
+        if native is not None:
+            expected = native.tree_inspect(kind, identifier)
+            timeout = native.tree_removal_timeout() if expected is not None else None
+            self.mark(kind, identifier, state='pruning', reason=reason,
+                      pruned_at=time.time(), removal_backend='native',
+                      expected_tree=expected, removal_timeout_seconds=timeout)
+            if expected is not None:
+                # No catch: transport loss invalidates ALL Session locks.
+                # Preserve this intent and unwind before any recovery write.
+                result = native.tree_remove(kind, identifier, expected, timeout=timeout)
+                if result != {'absent':True}:
+                    raise ContinuityError('Native tree removal has no observed absence')
+            self.mark(kind, identifier, state='pruned')
+            return True
         path = self.safe_path(kind, identifier)
         self.mark(kind, identifier, state='pruning', reason=reason, pruned_at=time.time())
         if path.exists():shutil.rmtree(path)
@@ -188,10 +269,8 @@ class Retention:
                 if record['state'] == 'ready':
                     manifest = read(path/'manifest.json')
                     if (digest(manifest) != record.get('manifest_hash')
-                            or set(p.name for p in path.iterdir()) != {'app','venv','manifest.json'}):
+                            or not self.stage_contents_match(path,manifest,fingerprint)):
                         continue
-                    if any(fingerprint(path/k) != manifest['fingerprints'][k] for k in ('app','venv')):
-                        continue  # Unexplained edits are not regenerable data.
                 if self.references() != (stages, plans, signature):raise ContinuityError('References changed during cleanup')
                 self.remove('stage', identifier, 'failed_build_unreferenced' if identifier == failed else 'unreferenced_after_grace')
                 removed.append('stage/'+identifier)

@@ -11,7 +11,24 @@ import tempfile
 import time
 from collections import Counter
 from contextlib import contextmanager
+from contextvars import ContextVar
 from pathlib import Path
+
+_owner_io = ContextVar('minecraft_owner_io', default=None)
+
+
+def current_owner_io():
+    return _owner_io.get()
+
+
+@contextmanager
+def owner_io(backend):
+    """Use an explicitly installed native I/O owner for this invocation only."""
+    token = _owner_io.set(backend)
+    try:
+        yield
+    finally:
+        _owner_io.reset(token)
 
 
 def enrollment_ids(cfg):
@@ -33,6 +50,85 @@ class NotIdle(RuntimeError):
 
 class ContinuityError(RuntimeError):
     pass
+
+
+def native_service(state):
+    """Recognize an exact shared-driver snapshot, without translating OS states."""
+    return (state.get('schema') == 1 and isinstance(state.get('service'), dict)
+            and state['service'].get('manager') in
+            ('systemd_user', 'launch_agent', 'scheduled_task'))
+
+
+def service_active(state):
+    if native_service(state):
+        return (state.get('active') is True and state.get('transitioning') is False
+                and ('application' not in state or state['application'].get('status') == 'running'))
+    return state.get('ActiveState') == 'active'
+
+
+def service_stopped(state):
+    if native_service(state):
+        return (state.get('active') is False and state.get('transitioning') is False
+                and state.get('processes') == []
+                and ('application' not in state or state['application'].get('status') == 'absent'))
+    return (state.get('ActiveState') in ('inactive', 'failed')
+            and str(state.get('MainPID')) == '0')
+
+
+def service_unavailable(state):
+    if native_service(state):
+        return state.get('masked') is not False or state.get('start_allowed') is not True
+    return state.get('LoadState') == 'masked' or 'masked' in state.get('UnitFileState', '')
+
+
+def service_process_identity(state):
+    """The actual acknowledged controller process, never a scheduler engine PID.
+
+    The shared driver retains native roles. A Windows task engine alone does
+    not prove the Python controller identity; reject until that binding exists.
+    """
+    if not native_service(state):
+        return state.get('process_identity')
+    if not service_active(state):
+        return None
+    if 'application' in state:
+        proof = state['application']
+        identity = proof.get('identity')
+        if (proof.get('status') != 'running' or not isinstance(identity, dict)
+                or type(identity.get('pid')) is not int or identity['pid'] <= 0
+                or len(identity) < 2 or not isinstance(proof.get('supervisor'), dict)
+                or not isinstance(proof.get('manager_process'), dict)
+                or not re.fullmatch('[0-9a-f]{64}', proof.get('profile_sha256', ''))):
+            raise ContinuityError('Actual service application generation is not proved')
+        return identity
+    roles = {'systemd_user':'MainPID', 'launch_agent':'launchd_pid'}
+    role = roles.get(state['service']['manager'])
+    matches = [p.get('identity') for p in state.get('processes', [])
+               if role is not None and p.get('role') == role]
+    if (len(matches) != 1 or not isinstance(matches[0], dict)
+            or type(matches[0].get('pid')) is not int or matches[0]['pid'] <= 0
+            or len(matches[0]) < 2):
+        raise ContinuityError('Actual service process generation is not proved')
+    return matches[0]
+
+
+def service_generation(state):
+    if native_service(state):
+        return {k:state.get(k) for k in ('service', 'active', 'transitioning', 'processes', 'application')}
+    return {k:state.get(k) for k in ('MainPID', 'ExecMainStartTimestamp', 'ActiveState')}
+
+
+def native_restore_evidence(state):
+    keys = ('service', 'definition', 'effective_definition', 'enabled', 'start_allowed', 'masked')
+    if (not native_service(state) or any(k not in state for k in keys)
+            or state.get('definition_matches') is not True
+            or type(state.get('start_allowed')) is not bool
+            or type(state.get('masked')) is not bool):
+        raise ContinuityError('Native service definition/restoration evidence is incomplete')
+    # loaded changes during launchd stop/start; the registered definition and
+    # independent enable/disable policy must not. Preserve raw native evidence
+    # in the receipt, including unknown enabled values for static systemd units.
+    return {k:state[k] for k in keys}
 
 
 # Source observations can arrive while game admission is closed. These fields
@@ -58,6 +154,11 @@ def installation_lock(path):
     Kernel ownership expires on a crash; the durable receipt does not. Taking
     this lock after a crash is not permission to repeat an uncertain operation.
     """
+    native = _owner_io.get()
+    if native is not None:
+        with native.lock(Path(path)):
+            yield
+        return
     import fcntl
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
@@ -73,6 +174,9 @@ def installation_lock(path):
 
 
 def durable_write(path, value):
+    native = _owner_io.get()
+    if native is not None:
+        return native.write(Path(path), value)
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
     with tempfile.NamedTemporaryFile(mode='w', dir=path.parent, delete=False) as stream:
@@ -90,6 +194,19 @@ def durable_write(path, value):
             os.close(directory)
     finally:
         temporary.unlink(missing_ok=True)
+
+
+def durable_remove(path):
+    native = _owner_io.get()
+    if native is not None:
+        return native.remove(Path(path))
+    path = Path(path)
+    path.unlink()
+    fd = os.open(path.parent, os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        os.fsync(fd)
+    finally:
+        os.close(fd)
 
 
 def protected_files(home):
@@ -202,6 +319,16 @@ def require_idle(value):
     services = value['services']
     for kind in ('controller', 'body'):
         state = services[kind]
+        if native_service(state):
+            if not service_active(state) and not service_stopped(state):
+                raise NotIdle('Native service is transitioning or process state is unknown')
+            processes = state.get('processes')
+            if (service_active(state) and (not isinstance(processes, list) or not processes
+                    or any(not isinstance(p, dict) or not isinstance(p.get('identity'), dict)
+                           or type(p['identity'].get('pid')) is not int or p['identity']['pid'] <= 0
+                           or len(p['identity']) < 2 for p in processes))):
+                raise NotIdle('Active native service has no process generation evidence')
+            continue
         if state.get('ActiveState') not in ('active', 'inactive', 'failed'):
             raise NotIdle('Service is transitioning')
         if state.get('ActiveState') != 'active' and str(state.get('MainPID')) != '0':
@@ -212,8 +339,8 @@ def require_idle(value):
             raise NotIdle('Active process identity is unknown')
     if value['turn'] is not None or 'running' in value['sequence_states']:
         raise NotIdle('Saved work/sequence has not settled; never clear or replay it')
-    if services['body']['ActiveState'] != 'active':
-        if services['controller']['ActiveState'] == 'active':
+    if not service_active(services['body']):
+        if service_active(services['controller']):
             raise NotIdle('Controller active without observable body')
         return
     body = value['body']
@@ -254,9 +381,7 @@ def continuity(before, after, *, body_restart=False, allow_expiry=False):
             checks[key] = after['body'] is not None and before['body'][key] == after['body'][key]
     if not body_restart:
         checks['source_metadata'] = before.get('source_metadata') == after.get('source_metadata')
-        checks['body_process'] = all(
-            before['services']['body'].get(k) == after['services']['body'].get(k)
-            for k in ('MainPID', 'ExecMainStartTimestamp', 'ActiveState'))
+        checks['body_process'] = service_generation(before['services']['body']) == service_generation(after['services']['body'])
     if not all(checks.values()):
         raise ContinuityError('Update continuity changed: '+','.join(k for k, v in checks.items() if not v))
     return checks
@@ -272,6 +397,13 @@ def restore_plan(captured, current):
     result = {}
     for kind in ('body', 'controller'):
         old, new = captured[kind], current[kind]
+        if native_service(old) or native_service(new):
+            if not service_active(old) and not service_stopped(old):
+                raise NotIdle('Original native service was not settled')
+            if native_restore_evidence(old) != native_restore_evidence(new):
+                raise ContinuityError('Native service definition or independent availability changed')
+            result[kind] = 'start' if service_active(old) and not service_unavailable(old) else 'leave_stopped'
+            continue
         required = ('unit_sha256', 'LoadState', 'UnitFileState', 'ActiveState')
         if any(k not in state for state in (old, new) for k in required):
             raise ContinuityError('Service restoration evidence is incomplete')

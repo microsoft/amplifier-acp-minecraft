@@ -17,10 +17,12 @@ import uuid
 import urllib.request
 import urllib.parse
 from pathlib import Path
+from contextlib import ExitStack
 
 from connection_state import state as connection_state
 from installation_guard import (ContinuityError, NotIdle, continuity, digest, authority_checks,
-    durable_write, installation_lock, read, require_idle, restore_plan)
+    durable_write, durable_remove, installation_lock, read, require_idle, restore_plan, service_active, service_stopped,
+    service_unavailable, service_process_identity, native_service)
 from installation_participant import LocalInstallation
 from update_admission import process_identity
 
@@ -163,14 +165,14 @@ class Connection:
         services = self.backend.services()
         marker = connection_state(self.home)
         if self.gate.exists() or marker and marker['phase'] != 'connected':
-            if marker and marker['phase']=='disconnected' and all(s['ActiveState'] in ('inactive','failed') and str(s['MainPID'])=='0' for s in services.values()):
+            if marker and marker['phase']=='disconnected' and all(service_stopped(s) for s in services.values()):
                 return self.result('disconnected', True)
             return self.result('busy', False, 'Connection is held or changing.')
-        if all(s['ActiveState']=='active' for s in services.values()):
+        if all(service_active(s) for s in services.values()):
             # Active services alone are not proof of a joined player.
             if self.backend.connected():
                 return self.result('connected',True)
-        if all(s['ActiveState'] in ('inactive','failed') and str(s['MainPID'])=='0' for s in services.values()):
+        if all(service_stopped(s) for s in services.values()):
             return self.result('disconnected',True)
         return self.result('unknown',False,'Listener and game connection do not agree.')
 
@@ -186,7 +188,9 @@ class Connection:
                 return self.result(message='An installation update is still in progress.')
         original = self.backend.services()
         restore_plan(original, original)
-        if any(s.get('LoadState')=='masked' or 'masked' in s.get('UnitFileState','') for s in original.values()):
+        if service_active(original['controller']) and not service_process_identity(original['controller']):
+            raise ContinuityError('Controller generation is unavailable before connection closure')
+        if any(service_unavailable(s) for s in original.values()):
             raise NotIdle('An independent service mask must remain in force')
         old = connection_state(self.home)
         baseline = None
@@ -249,7 +253,7 @@ class Connection:
                     or prior.get('config_hash') != digest(self.c)
                     or prior.get('baseline',{}).get('task_hash') != digest(None)
                     or (self.home/'session.json').exists()
-                    or not all(s.get('ActiveState')=='inactive' and str(s.get('MainPID'))=='0'
+                    or not all(service_stopped(s) and (native_service(s) or s.get('ActiveState')=='inactive')
                                for s in self.backend.services().values())):
                 raise ContinuityError('Only the original unused prepared slot can be activated')
             capability = self.backend.context_api('GET','descriptor').get('context_provider_mutation')
@@ -306,7 +310,7 @@ class Connection:
 
     def stopped(self, kind):
         s = self.service(kind)
-        return s['ActiveState'] in ('inactive','failed') and str(s['MainPID'])=='0'
+        return service_stopped(s)
 
     def advance(self):
         if self.value['phase']=='accepting':
@@ -325,10 +329,10 @@ class Connection:
         phase = self.value['phase']
         if phase=='waiting':
             controller = self.service('controller')
-            if controller['ActiveState']=='active':
+            if service_active(controller):
                 ack = self.home/'installation-updates/controller-idle.json'
-                expected = {'transaction_id':self.id, **controller['process_identity']}
-                if controller.get('process_identity') != self.value['original']['controller'].get('process_identity'):
+                expected = {'transaction_id':self.id, **service_process_identity(controller)}
+                if service_process_identity(controller) != service_process_identity(self.value['original']['controller']):
                     raise ContinuityError('Controller changed before settlement')
                 if not ack.exists() or read(ack)!=expected:
                     return self.result(message='Waiting for current work to settle.')
@@ -367,7 +371,7 @@ class Connection:
             if self.stopped('body'):self.backend.action('body','start')
             return self.result()
         if self.value['phase']=='await_body_start':
-            if self.service('body')['ActiveState']!='active':return self.result()
+            if not service_active(self.service('body')):return self.result()
             now = self.backend.capture()
             stored_continuity(self.value['baseline'], now)
             checks = continuity(self.value['baseline'],now,body_restart=True,allow_expiry=True)
@@ -412,16 +416,13 @@ class Connection:
             self.mark('connected')
             if self.gate.exists():
                 if not self.gate_owned():raise ContinuityError('Do not remove another admission hold')
-                self.gate.unlink()
-                fd=os.open(self.gate.parent,os.O_RDONLY|os.O_DIRECTORY)
-                try:os.fsync(fd)
-                finally:os.close(fd)
+                durable_remove(self.gate)
             self.save(phase='await_listener')
-            if self.service('controller')['ActiveState']!='active':self.backend.action('controller','start')
+            if not service_active(self.service('controller')):self.backend.action('controller','start')
             return self.result(context_ready=True)
         if self.value['phase']=='await_listener':
-            if self.service('controller')['ActiveState']!='active':return self.result(context_ready=True)
-            if self.service('body')['ActiveState']!='active' or not self.backend.connected():
+            if not service_active(self.service('controller')):return self.result(context_ready=True)
+            if not service_active(self.service('body')) or not self.backend.connected():
                 return self.result('unknown',message='Body lost connection before listener confirmation.')
             return self.finish('connected')
         return self.result()
@@ -444,10 +445,16 @@ def main():
     if len(data)>65536:raise ValueError('Connection envelope too large')
     envelope=json.loads(data)
     if envelope.get('action')!=args.action:raise ValueError('Command action mismatch')
-    with installation_lock(Path(cfg['state'])/'installation.lock'):
-        connection=Connection(cfg,envelope)
-        try:result=connection.run()
-        except NotIdle:result=connection.result(message='Waiting for settled game or installation state.')
+    with ExitStack() as stack:
+        backend=None
+        if 'native_platform' in cfg:
+            from installation_native import native_scope, connection_backend
+            session=stack.enter_context(native_scope(cfg))
+            backend=connection_backend(cfg,session)
+        with installation_lock(Path(cfg['state'])/'installation.lock'):
+            connection=Connection(cfg,envelope,backend)
+            try:result=connection.run()
+            except NotIdle:result=connection.result(message='Waiting for settled game or installation state.')
     print(json.dumps(result))
 
 

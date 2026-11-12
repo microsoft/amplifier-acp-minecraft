@@ -1,10 +1,16 @@
 """Controller settlement acknowledgment; no session/task/world mutations."""
 import os
 from pathlib import Path
-from installation_guard import read, durable_write, ContinuityError
+from installation_guard import read, durable_write, ContinuityError, current_owner_io
 
 
 def process_identity(pid):
+    native = current_owner_io()
+    if native is not None:
+        identity = native.session.process_identity(pid)
+        if identity is None:
+            raise ProcessLookupError('Native process generation is absent')
+        return identity
     # stat's parenthesized comm may itself contain spaces/parentheses.
     stat = Path(f'/proc/{pid}/stat').read_text().rsplit(')', 1)[1].split()
     return {'pid': int(pid), 'start_ticks': stat[19],

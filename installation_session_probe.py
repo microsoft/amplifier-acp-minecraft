@@ -36,7 +36,24 @@ def saved_endpoint(home):
     return endpoint, session, binding
 
 
-async def probe(home, timeout, client_factory=None, *, idle_timeout=None):
+def supervised_endpoint(endpoint, driver, config):
+    """Keep the stored binding original; qualify only the fixed probe transport."""
+    driver, config = Path(driver), Path(config)
+    if not driver.is_absolute() or not config.is_absolute():
+        raise ValueError('Absolute enrolled native transport paths required')
+    owner = json.loads(config.read_text())
+    profile = owner.get('commands', {}).get('session_endpoint', {})
+    if (owner.get('version') != 1
+            or [profile.get('executable'), *profile.get('args', [])] != endpoint['command']
+            or profile.get('cwd') != endpoint.get('cwd')
+            or type(profile.get('timeout_seconds')) is not int
+            or not 1 <= profile['timeout_seconds'] <= 200):
+        raise ValueError('Fixed supervised endpoint differs from original binding')
+    return {**endpoint, 'command':[str(driver),'--config',str(config),
+                                  'exec','--command','session_endpoint']}
+
+
+async def probe(home, timeout, client_factory=None, *, idle_timeout=None, native_driver=None):
     idle_timeout = min(30, timeout) if idle_timeout is None else idle_timeout
     if not 0 < timeout <= 180 or not 0 < idle_timeout <= min(30, timeout):
         raise ValueError("Bounded verification and independent inactivity budgets required")
@@ -48,7 +65,8 @@ async def probe(home, timeout, client_factory=None, *, idle_timeout=None):
         from acp_client import Client
         client_factory = Client
     endpoint, session, binding = original
-    client = client_factory(endpoint, lambda *args, **kwargs: None,
+    transport = supervised_endpoint(endpoint, *native_driver) if native_driver else endpoint
+    client = client_factory(transport, lambda *args, **kwargs: None,
                             load_timeout=timeout, idle_timeout=idle_timeout)
     client.permission_active = lambda: False
     client.permission_tools = lambda: set()
@@ -85,7 +103,12 @@ if __name__ == '__main__':
     parser.add_argument('--home', type=Path, required=True)
     parser.add_argument('--timeout', type=float, default=12)
     parser.add_argument('--idle-timeout', type=float)
+    parser.add_argument('--native-driver', type=Path)
+    parser.add_argument('--native-driver-config', type=Path)
     args = parser.parse_args()
     if not args.home.is_absolute() or not 0 < args.timeout <= 180:
         parser.error('Absolute home and bounded verification timeout required')
-    print(json.dumps(asyncio.run(probe(args.home, args.timeout, idle_timeout=args.idle_timeout))))
+    if bool(args.native_driver) != bool(args.native_driver_config):
+        parser.error('Native driver and fixed configuration are required together')
+    native=(args.native_driver,args.native_driver_config) if args.native_driver else None
+    print(json.dumps(asyncio.run(probe(args.home,args.timeout,idle_timeout=args.idle_timeout,native_driver=native))))

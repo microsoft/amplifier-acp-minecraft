@@ -4,11 +4,12 @@ import shutil
 import sys
 import tempfile
 import time
+import types
 import unittest
 import uuid
 from pathlib import Path
 from unittest.mock import patch
-from installation_guard import ContinuityError, durable_write, read
+from installation_guard import ContinuityError, durable_write, installation_lock, read
 from installation_source_provider import fingerprint
 from test_installation_source_provider import FakeProvider
 
@@ -82,6 +83,43 @@ class RetentionTests(unittest.TestCase):
         receipt=read(next(self.keep.records.glob('stage-*.json')))
         self.assertEqual(receipt['state'],'pruned');self.assertEqual(receipt['reason'],'failed_build_unreferenced')
         self.assertEqual(outside.read_text(),'keep')
+
+    def test_native_errors_preserve_primary_failure_without_staging_recovery(self):
+        # Binding contract doubles; actual Session transport/lock loss is
+        # qualified separately. No shared Python dependency for legacy installs.
+        class DriverError(RuntimeError):
+            def __init__(self,code):self.code=code;super().__init__(code)
+        class Unknown(DriverError):pass
+        class Refused(DriverError):pass
+        for error in (DriverError('transport_timeout'),Unknown('transport_timeout'),
+                      Unknown('correlated_unknown'),Refused('predispatch')):
+            with self.subTest(error=type(error).__name__,code=error.code):
+                cfg={**self.cfg,'native_platform':{'version':1},'state':str(self.root/str(uuid.uuid4()))}
+                provider=FakeProvider(cfg);keep=provider.retention
+                stages=[]
+                def fail(revision,previous,stage):
+                    stage.mkdir(parents=True);(stage/'partial').write_text('retain uncertain output')
+                    stages.append(stage)
+                    raise error
+                with patch.dict(sys.modules,{'constellation_native':types.SimpleNamespace(DriverError=DriverError)}), \
+                     patch.object(provider,'build',side_effect=fail) as build, \
+                     patch.object(keep,'mark',wraps=keep.mark) as mark, \
+                     patch.object(provider,'cleanup',wraps=provider.cleanup) as cleanup:
+                    with self.assertRaises(DriverError) as caught:
+                        with installation_lock(provider.root/'installation.lock'):
+                            provider.plan()
+                    self.assertIs(caught.exception,error)
+                    self.assertEqual(build.call_count,1)
+                    self.assertEqual(mark.call_count,1)
+                    self.assertEqual(mark.call_args.kwargs['state'],'building')
+                    cleanup.assert_called_once_with()  # Only pre-build collection.
+                # Reacquire and inspect the same intent, without calling plan or
+                # declaring uncertain work failed. The partial stage survives.
+                with installation_lock(provider.root/'installation.lock'):
+                    record=keep.owned('stage',stages[0].name)
+                    self.assertEqual(record['state'],'building')
+                    self.assertNotIn('error_type',record)
+                    self.assertEqual((stages[0]/'partial').read_text(),'retain uncertain output')
 
     def test_failed_build_that_became_referenced_is_preserved(self):
         def fail(revision,previous,stage):

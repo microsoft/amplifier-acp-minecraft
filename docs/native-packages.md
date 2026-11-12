@@ -65,3 +65,99 @@ The six-target fixture invokes the actual packaged `helper-capabilities`,
 explicit unbounded tasks, bounded watch lifetime, Stop, unknown-bound refusal
 and unchanged stored watches after invalid input. No maximum-number sentinel
 or task conversion is introduced.
+
+## Native lifecycle integration
+
+The candidate package can include the separately reviewed Constellation native
+installation driver and its Python binding. Build with both `--native-shared`
+(the exact checkout pinned in `ops/native/shared-driver-lock.json`) and
+`--native-driver` (the binary built for this target). The package records both
+source and binary identity. This is an explicit backend; existing Linux
+installations do not switch merely because it is present.
+
+Setup uses `installation_native_setup.profiles` to describe fixed body,
+controller and original ACP endpoint commands. The shared installer supplies
+protected owner roots and configuration; `register_no_start` registers those
+exact service definitions without starting, unpausing, changing context access,
+or creating an engine session. Keep the updater interpreter and helper code
+outside the mutable game home. The controller and session probe may use the
+verified private Python copy under `home/venv`, so source/environment exchanges
+retain their stable invocation paths. No host-wide Python or Node is required.
+
+`installation_enrollment.py` emits a registration delta for the explicit
+`native_platform` configuration, using isolated Python and fixed entry points.
+It does not install that delta or enable a schedule. The Minecraft source and
+pure task-helper components remain separate, with empty shared restart scopes;
+the participant owns game service admission, continuity checks, original-session
+verification, and restoration. Connection controls use the same backend and
+retain the acknowledged quiescence/readiness handoffs. An unknown operation is
+not permission to retry it.
+
+Native source updates use the stable channel's exact target archive, published
+digest and source tree. They verify the official SDK's immutable provenance and
+stage privately before stopping services. They do not run Git, npm or pip on
+the destination. A base Python, Node, or shared-driver change requires its own
+installation migration rather than silently changing those enrolled helpers.
+Source/environment publication uses two journaled native exchanges, retaining
+rollback targets; it is not an atomic pair. Restore begins only after the
+candidate's original saved session loads successfully, or initialize succeeds
+for a genuinely unused connection. Neither check prompts the model.
+
+The complete domain fixture is `ops/native/verify_lifecycle.py`. It uses actual
+native services on each target, a disposable body and deterministic ACP endpoint,
+and exercises no-start registration, source apply/verification/rollback,
+shared-component admission, Connect/Disconnect, and lost terminal replies.
+Its receipt separately records original loads, absence of prompts/new sessions,
+and disposal of its own test services. Keep failures as well as passing receipts.
+
+Native end-user enrollment remains a candidate until the combined target tests,
+protected initial-root setup, and reference-aware native staging cleanup are
+qualified together. Do not enable automatic source updates from package-build
+success alone, or substitute ordinary Windows directory deletion for the shared
+owner's protected cleanup operation.
+
+
+### Candidate native staging cleanup
+
+Native regenerable-tree cleanup is a separately negotiated capability. A reviewed
+owner configuration may select `native_platform.regenerable_tree_removal: 1` only
+when the installed shared driver advertises `regenerable_tree_removal: 1` and
+`tree.inspect`/`tree.remove`. Setup then enrolls exactly the existing `state/stages`
+and `state/backups` subdirectories under the installation lock. This does not
+modify an existing protected driver configuration or enable cleanup on older
+installations. The directories must exist before protected configuration bootstrap.
+
+Minecraft still selects only marked, unreferenced regenerable artifacts. Current
+app/venv, baseline directories, retained shared plans, native rollback pointers
+and unsettled journals remain protected. Rooted inspection supports stage
+allocation/reuse without relying on Python recursive-deletion support. Before
+removal Minecraft records the exact shared identity in its durable pruning intent;
+the shared driver performs removal under the same Session installation lock.
+There is no connector fallback to platform deletion commands.
+
+A lost transport or unknown removal outcome leaves the intent unresolved. Unwind
+the Session before any recovery write, then acquire a fresh lock for read-only
+inspection. Neither a remaining tree nor a replacement authorizes redispatch.
+The current optional inspection API returns null for absence without exposing the
+original root identity, so this consumer conservatively retains an unresolved
+pruning intent even when the leaf is absent. It does not automatically reconcile
+that case or resume collection. This limitation is separate from successful
+observed removal and awaits an explicit root-bound recovery guarantee.
+
+The shared cleanup candidate and combined six-platform consumer tests must be
+qualified before enrollment. Local contract tests or a disposable Linux run alone
+are not release or live-installation evidence.
+
+
+The source-provider entrypoint captures one monotonic 600-second invocation
+deadline before setup and lock acquisition. Its optional native cleanup selects
+at most 120 seconds for one `tree_remove(..., timeout=...)`, reduced to the
+remaining invocation time minus a 60-second settlement/close/output reserve.
+With less than 30 seconds available after that reserve it defers before dispatch.
+The allowance is checked before journaling and again immediately before removal;
+it is never reset between artifacts. If time expires between those checks, the
+existing pruning intent remains conservative and no removal is dispatched.
+Other calls retain the Session default; service, prepare, verify and restore
+budgets do not change. Consumers without an enclosing cleanup deadline keep the
+Session default. The extended per-call API requires the separately qualified
+shared candidate; unit budget tests alone do not qualify a Windows removal.

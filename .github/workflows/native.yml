@@ -21,13 +21,82 @@ jobs:
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - uses: actions/checkout@v4
+        with:
+          repository: microsoft/amplifier-constellation
+          ref: 5b270368b9193a7d9b8c38fc80bb1c458defeb83
+          path: native-shared
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
+      - name: Install pinned Rust toolchain
+        run: rustup toolchain install 1.93.0 --profile minimal
+      - name: Match qualified Windows static CRT target
+        if: runner.os == 'Windows'
+        shell: bash
+        run: |
+          python - <<'PYCODE'
+          import os, subprocess
+          host = next(line.removeprefix('host: ') for line in subprocess.check_output(['rustc', '+1.93.0', '-vV'], text=True).splitlines() if line.startswith('host: '))
+          expected = {'X64': 'x86_64-pc-windows-msvc', 'ARM64': 'aarch64-pc-windows-msvc'}[os.environ['RUNNER_ARCH']]
+          if host != expected: raise SystemExit(f'Unexpected Rust host: {host}; expected {expected}')
+          with open(os.environ['GITHUB_ENV'], 'a') as output:
+              output.write('CARGO_BUILD_TARGET='+host+'\nRUSTFLAGS=-C target-feature=+crt-static\n')
+          PYCODE
+      - name: Build actual target shared driver
+        shell: bash
+        run: |
+          cargo +1.93.0 build --locked --manifest-path native-shared/crates/native-platform-driver/Cargo.toml
+      - name: Build shared disposable Windows service cleanup fixture
+        if: runner.os == 'Windows'
+        shell: bash
+        run: cargo +1.93.0 build --locked --manifest-path native-shared/crates/native-platform/Cargo.toml --features installation --example windows_service_fixture
+      - name: Bind and inspect actual native build outputs
+        shell: bash
+        run: |
+          python - <<'PYCODE'
+          import os, pathlib, subprocess, sys
+          shared=pathlib.Path('native-shared').resolve()
+          target=pathlib.Path('target')/os.environ.get('CARGO_BUILD_TARGET','')/'debug'
+          suffix='.exe' if os.name=='nt' else ''
+          driver=shared/'crates/native-platform-driver'/target/('constellation-native-driver'+suffix)
+          subprocess.run([sys.executable,str(shared/'tests/native_python/inspect_driver.py'),'--driver',str(driver),'--output','native-driver-inspection.json'],check=True)
+          with open(os.environ['GITHUB_ENV'],'a') as output:
+              output.write('MINECRAFT_NATIVE_DRIVER='+str(driver)+'\n')
+              if os.name=='nt':
+                  fixture=shared/'crates/native-platform'/target/'examples'/('windows_service_fixture'+suffix)
+                  output.write('NATIVE_SERVICE_FIXTURE='+str(fixture)+'\n')
+          PYCODE
       - name: Test package validation
         run: python -m unittest discover -s ops/native -p test_*.py -v
-      - name: Build private native runtimes and dependencies
-        run: python ops/native/build_bundle.py --output bundle --cache runtime-cache
+      - name: Build private native runtimes and dependencies (Unix)
+        if: runner.os != 'Windows'
+        run: python ops/native/build_bundle.py --output bundle --cache runtime-cache --native-shared native-shared --native-driver "${{ env.MINECRAFT_NATIVE_DRIVER }}"
+      - name: Build private native runtimes and dependencies (Windows)
+        if: runner.os == 'Windows'
+        run: python ops/native/build_bundle.py --output bundle --cache runtime-cache --native-shared native-shared --native-driver "${{ env.MINECRAFT_NATIVE_DRIVER }}"
+      - name: Prepare disposable Linux native service manager
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          sudo loginctl enable-linger "$USER"
+          sudo systemctl start "user@$(id -u).service"
+          echo "XDG_RUNTIME_DIR=/run/user/$(id -u)" >> "$GITHUB_ENV"
+          echo "DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/$(id -u)/bus" >> "$GITHUB_ENV"
+      - name: Verify actual native lifecycle and original session (Unix)
+        if: runner.os != 'Windows'
+        run: bundle/python/bin/python3 -I ops/native/verify_lifecycle.py --bundle bundle --source . --shared native-shared --driver bundle/native/constellation-native-driver --receipt native-lifecycle-result.json
+      - name: Verify actual native lifecycle and original session (Windows)
+        if: runner.os == 'Windows'
+        run: bundle/python/python.exe -I ops/native/verify_lifecycle.py --bundle bundle --source . --shared native-shared --driver bundle/native/constellation-native-driver.exe --receipt native-lifecycle-result.json
+      - name: Verify packaged native retention (Unix)
+        if: runner.os != 'Windows'
+        run: bundle/python/bin/python3 -I ops/native/verify_retention.py --bundle bundle --driver bundle/native/constellation-native-driver --receipt native-retention-result.json
+      - name: Verify packaged native retention (Windows)
+        if: runner.os == 'Windows'
+        run: bundle/python/python.exe -I ops/native/verify_retention.py --bundle bundle --driver bundle/native/constellation-native-driver.exe --receipt native-retention-result.json
       - name: Install Linux browser OS libraries on disposable runner
         if: runner.os == 'Linux'
         run: bundle/node/bin/node bundle/app/node_modules/playwright/cli.js install-deps chromium
@@ -38,20 +107,28 @@ jobs:
         if: runner.os == 'Windows'
         run: bundle/python/python.exe -I ops/native/verify_bundle.py --bundle bundle --source . --receipt native-result.json
       - uses: actions/upload-artifact@v4
+        if: always()
         with:
           name: minecraft-evidence-${{ matrix.target }}
           path: |
+            native-driver-inspection.json
+            native-retention-result.json
+            native-lifecycle-result.json
             native-result.json
             bundle/manifest.json
             bundle/python-packages.json
           retention-days: 14
       - name: Archive tested bundle
-        run: python -c "import shutil; shutil.make_archive('minecraft-${{ matrix.target }}','gztar','bundle')"
+        run: python ops/native/archive_bundle.py --bundle bundle --output minecraft-${{ matrix.target }}.tar.gz
       - uses: actions/upload-artifact@v4
         with:
           name: minecraft-${{ matrix.target }}
           path: |
             minecraft-${{ matrix.target }}.tar.gz
+            minecraft-${{ matrix.target }}.tar.gz.json
+            native-driver-inspection.json
+            native-retention-result.json
+            native-lifecycle-result.json
             native-result.json
             bundle/manifest.json
           retention-days: 7
