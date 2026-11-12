@@ -19,6 +19,7 @@ async def verify(root, source):
          'PLAYWRIGHT_BROWSERS_PATH':str(root/'browsers'),'RUN_SCREENSHOT_RENDER':'1',
          'WORKSHOP_TEST_PYTHON':str(python)}
     subprocess.run([str(python),'-I',str(root/'launch.py'),'doctor'],env=env,check=True)
+    sys.path.insert(0,str(source/'ops/native'))
     from verify_task_helper import verify as verify_helper
     helper_result=verify_helper(root/manifest['commands']['task_helper'])
     subprocess.run([str(python),'-s',str(root/'app/adapter.py'),'--help'],env=env,check=True,timeout=30)
