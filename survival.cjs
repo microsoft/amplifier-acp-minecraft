@@ -53,16 +53,24 @@ async function shear(bot,a,check){
 }
 const stack=i=>i?{name:i.name,count:i.count}:null;
 function furnaceState(f){return {input:stack(f.inputItem()),fuel:stack(f.fuelItem()),output:stack(f.outputItem()),burning:f.fuel===null?null:f.fuel>0,progress:f.progress};}
-function validLoad(a){
- if(!a.item||!a.count)throw Error('Loading requires item and count');
- if(!['raw_iron','raw_gold','raw_copper','iron_ore','gold_ore','copper_ore','sand','cobblestone'].includes(a.item)&&!a.item.endsWith('_log'))throw Error('Supported inputs: raw metals, ores, sand, cobblestone or logs');
- if(a.fuel&&!['coal','charcoal','stick'].includes(a.fuel)&&!a.fuel.endsWith('_planks')&&!a.fuel.endsWith('_log'))throw Error('Supported fuels: coal, charcoal, sticks, planks or logs');
- if(!!a.fuel!==!!a.fuel_count)throw Error('Provide fuel and fuel_count together');
+function validLoad(a,registry){
+ if(typeof a.item!=='string'||!Number.isInteger(a.count)||a.count<1||a.count>8)throw Error('Loading requires an exact item and count from 1 to 8');
+ if((a.fuel!==undefined)!==(a.fuel_count!==undefined))throw Error('Provide fuel and fuel_count together');
+ if(a.fuel!==undefined&&(typeof a.fuel!=='string'||!Number.isInteger(a.fuel_count)||a.fuel_count<1||a.fuel_count>8))throw Error('Fuel needs an exact item and count from 1 to 8');
+ for(const name of [a.item,...(a.fuel!==undefined?[a.fuel]:[])])if(!Object.hasOwn(registry?.itemsByName||{},name)||!Number.isSafeInteger(registry.itemsByName[name]?.id))throw Error('Unknown registered furnace item: '+name);
+ // The server owns recipes and fuel eligibility. A short client whitelist
+ // incorrectly rejected ordinary fuels such as oak slabs. Known item names
+ // are not a promise that the selected input/fuel will smelt anything.
 }
-async function furnace(bot,p,a,check){
- if(a.operation==='load')validLoad(a);
+function furnacePreflight(bot,p,a){
+ if(!['inspect','load','collect'].includes(a.operation))throw Error('Unknown furnace operation');
+ if(a.operation==='load')validLoad(a,bot.registry);
  const block=bot.blockAt(p);if(block?.name!=='furnace')throw Error('Target must be an ordinary furnace');
  if(p.offset(.5,.5,.5).distanceTo(bot.entity.position)>4)throw Error('Move within reach of the furnace first');
+ return block;
+}
+async function furnace(bot,p,a,check){
+ const block=furnacePreflight(bot,p,a);
  await refreshInventory(bot);check();
  let f;
  try{
@@ -89,4 +97,4 @@ async function furnace(bot,p,a,check){
   return {position:p,operation:a.operation,...furnaceState(f),collected,inventory:inventory.items,guidance:'Smelting continues in the world after closing. Inspect later; collect only reports items verified in inventory. Coordinate furnace ownership through game chat.'};
  }finally{if(f)f.close();}
 }
-module.exports={entities,describe,sheepTarget,shear,furnace,validLoad};
+module.exports={entities,describe,sheepTarget,shear,furnace,validLoad,furnacePreflight};

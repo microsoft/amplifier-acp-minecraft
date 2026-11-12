@@ -1017,3 +1017,16 @@ These are current limit facts, not the historical reason a status changed.
 `budget_exhausted` alone does not establish which limit was reached, physical
 completion, or whether independent task-optional activity is permitted. This
 projection does not modify, resume, or renew an assignment.
+
+### Furnace loads
+
+`furnace` accepts exact registered inventory item names, including ordinary
+wooden slabs as fuel. The server owns recipe and fuel eligibility; the connector
+does not maintain a competing recipe/fuel whitelist. A load response is a slot
+observation, not evidence of completed smelting. Inspect later and verify collected
+output. Argument, furnace-target and reach errors refuse before action admission.
+A failure after opening or transferring retains possible partial effects and must
+be inspected; it is never automatically reloaded.
+
+The optional loopback-only `tests/facing_live.py --furnace-only` fixture verifies
+oak-slab fuel, server-produced stone and collection in a disposable world.
