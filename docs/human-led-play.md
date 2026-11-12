@@ -360,3 +360,21 @@ changed and still has authority; it preserves spent counts, bounds, source,
 recovery accounting and original failed/interrupted receipts. Stop still wins.
 On an uncertain response, inspect durable state rather than replaying the call.
 No model-facing recovery tool or automatic retry is introduced.
+
+### Settled placement refusal and partial builds
+
+A refused placement is not an uncertain worker when the ordinary placement call
+has settled and ordered server updates confirm the reference acknowledgment and
+unchanged target. The body retains that evidence as `settled_failed_placement`.
+A build stops at that cell, retains every verified prior placement, and reports
+`settled_partial_build`; it never reports full success or repeats the batch.
+Missing/out-of-order acknowledgments, timeouts and unloaded/changed targets
+remain uncertain. Fresh planning still observes current position and inventory.
+
+For historical build receipts, the existing owner-only exact activity review
+accepts `settled_partial_build` only with an ordered verified prefix, the exact
+server-refused-air result, and a later retained successful placement of that
+same cell/item. It keeps all original receipts and task state. This review
+permits future work only; it does not claim the earlier batch had zero effects
+or replay any successful placement.
+
