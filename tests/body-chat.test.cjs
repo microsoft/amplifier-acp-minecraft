@@ -601,3 +601,15 @@ test('actual body keeps installation final/tool replies private while explicit g
  const owner=await f.request('/input-outcomes?ids='+q.request_id);assert.ok(!JSON.stringify(owner).includes('PRIVATE_'));assert.equal(owner.outcomes[0].responses[0].text,'Explicitly requested public announcement');
  assert.ok(!JSON.stringify(await f.request('/conversation')).includes('PRIVATE_'));assert.equal(JSON.stringify(f.history.data.task),baseline);
 });
+test('invalid movement and blocked storage preflight never poison future activity',async t=>{
+ const {Vec3}=realRequire('vec3'),f=fixture('BuilderOne',false,{human_engagement:{enabled:true,task_optional:true}});t.after(()=>f.close());
+ f.bot.entity={position:new Vec3(0,64,0)};f.bot.pathfinder={setGoal(){}};f.bot.clearControlStates=()=>{};
+ f.bot.blockAt=p=>({name:'barrel',position:p});f.bot.world={raycast:()=>({name:'stone',position:new Vec3(0,65,0)})};
+ f.startFixtureTurn();f.history.data.turn.activity=true;f.history.data.turn.task_id=null;f.history.data.turn.may_mutate=true;
+ const before=JSON.stringify(f.history.data.turn.actions);
+ await assert.rejects(f.operate('move',{x:1000,y:64,z:0,mode:'normal'}),/Coordinates must/);
+ await assert.rejects(f.operate('container',{x:1,y:64,z:0,operation:'inspect',expected:'barrel'}),/obstructed/);
+ await assert.rejects(f.operate('container',{x:8,y:64,z:0,operation:'inspect',expected:'barrel'}),/within four/);
+ assert.equal(JSON.stringify(f.history.data.turn.actions),before);
+ assert.equal(f.history.data.events.filter(e=>e.kind==='action_started').length,0);
+});

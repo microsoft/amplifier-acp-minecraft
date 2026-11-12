@@ -258,6 +258,16 @@ function validatePlacementFacing(item,facing){
     }
     return {furnaceFacing,stairsFacing,pistonFacing};
 }
+function gatherTargets(a){
+ const count=a.count??1;
+ if(!Array.isArray(a.targets)||!a.targets.length||a.targets.length>8)throw Error('Gather requires 1–8 explicit targets. Use find/map/inspect to select resource blocks; do not select player builds.');
+ if(!Number.isInteger(count)||count<1||count>8||count>a.targets.length)throw Error('Gather count must be 1–8 and no greater than the target selection');
+ const origin=bot.entity.position.clone();
+ const targets=a.targets.map(t=>{if(!t||![t.x,t.y,t.z].every(Number.isInteger)||t.y< -64||t.y>319)throw Error('Gather targets must be whole block coordinates');const p=new Vec3(t.x,t.y,t.z);if(p.distanceTo(origin)>24)throw Error('Gather targets must be within 24 blocks of the starting position');return p;});
+ if(new Set(targets.map(p=>p.toString())).size!==targets.length)throw Error('Gather target selection must not contain duplicates');
+ return {count,targets};
+}
+
 async function operate(name,a={},sequenceId=null){
   if(!ready)throw Error('Player is not connected');
   if(name==='huddle'){
@@ -374,6 +384,11 @@ async function operate(name,a={},sequenceId=null){
   if(name==='container'&&transfer&&!a.contents_revision)throw Error('Inspect this container first and supply its contents_revision. No transfer attempted.');
   try{retryGuard.check(bot,name,a);}catch(e){record('action_retry_blocked',{action:name,arguments:a,...e.details});throw e;}
   if(name==='place')validatePlacementFacing(a.item,a.facing);
+  // Pure argument/reach checks precede effect admission. Recheck inside the
+  // operation too: a later race or transport failure remains uncertain.
+  if(name==='move')coord(a);
+  if(name==='gather')gatherTargets(a);
+  if(name==='container')containers.preflight(bot,coord(a),a);
   if(++actions>24&&cfg.human_engagement?.enabled!==true)throw Error('This turn reached its 24-action budget; save progress with work_report');
   busy=true;activeAction=name;const epoch=generation;const actionId=crypto.randomUUID();history.actionStarted(actionId);record('action_started',{action_id:actionId,action:name,arguments:a});let unfinished;
   const check=()=>{if(epoch!==generation||Date.now()>turnUntil)throw Error('Action cancelled');};
@@ -439,12 +454,7 @@ async function operate(name,a={},sequenceId=null){
       if(name==='gather'){
         // Resource names do not establish ownership. Never choose a nearby
         // building block on behalf of the caller, or substitute a new target.
-        const count=a.count??1;
-        if(!Array.isArray(a.targets)||!a.targets.length||a.targets.length>8)throw Error('Gather requires 1–8 explicit targets. Use find/map/inspect to select resource blocks; do not select player builds.');
-        if(!Number.isInteger(count)||count<1||count>8||count>a.targets.length)throw Error('Gather count must be 1–8 and no greater than the target selection');
-        const origin=bot.entity.position.clone();
-        const targets=a.targets.map(t=>{if(!t||![t.x,t.y,t.z].every(Number.isInteger)||t.y< -64||t.y>319)throw Error('Gather targets must be whole block coordinates');const p=new Vec3(t.x,t.y,t.z);if(p.distanceTo(origin)>24)throw Error('Gather targets must be within 24 blocks of the starting position');return p;});
-        if(new Set(targets.map(p=>p.toString())).size!==targets.length)throw Error('Gather target selection must not contain duplicates');
+        const {count,targets}=gatherTargets(a);
         const before=snapshot().inventory,removed=[];let blocked=null,error=null;
         const target=p=>{const b=bot.blockAt(p);if(!b||b.name!==a.block)throw Error('Selected target changed or is unloaded; inspect it before choosing more resources');spatial.digGuard(bot,b);spatial.harvestTool(bot,b);return b;};
         for(const p of targets.slice(0,count)){
@@ -713,7 +723,7 @@ const server=http.createServer(async(req,res)=>{
     else if(req.method==='POST'&&req.url==='/finish'){const a=await json(req);if(ready)history.checkpoint({position:bot.entity.position.clone(),health:bot.health,recent_actions:receipts.slice(-8)});history.finish(!!a.error||busy,!!a.budget_limited&&!busy);stop();result={stopped:true};}
     else if(req.method==='POST'&&req.url==='/wake'){if(!workAllowed())throw Error('Current mode/task cannot wake construction');const a=await json(req);if(a.generation!==generation||Date.now()<turnUntil)throw Error('Observation superseded or turn already active');result=history.wake(a.task_id);record('attention_wake',{task_id:a.task_id});}
     else if(req.method==='POST'&&req.url==='/activity/review-no-effect'){const a=await json(req);if(!ready||busy||Date.now()<turnUntil||a.generation!==generation)throw Error('Activity review superseded or player not idle');result=activityPolicy.reviewNoEffect(history,cfg,a);record('operator_activity_review',result);}
-    else if(req.method==='POST'&&req.url==='/activity/review-settled-moves'){
+    else if(req.method==='POST'&&['/activity/review-settled-moves','/activity/review-settled-actions'].includes(req.url)){
       const a=await json(req);
       if(!ready||busy||actionSequence.active||bot.currentWindow||Date.now()<turnUntil||a.generation!==generation)throw Error('Activity review superseded or player not idle');
       result=require('./activity-review.cjs').review(history,cfg,a,{position:{x:bot.entity.position.x,y:bot.entity.position.y,z:bot.entity.position.z},inventory:containers.inventorySnapshot(bot.inventory)});
