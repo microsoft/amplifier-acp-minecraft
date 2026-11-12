@@ -115,3 +115,35 @@ protected initial-root setup, and reference-aware native staging cleanup are
 qualified together. Do not enable automatic source updates from package-build
 success alone, or substitute ordinary Windows directory deletion for the shared
 owner's protected cleanup operation.
+
+
+### Candidate native staging cleanup
+
+Native regenerable-tree cleanup is a separately negotiated capability. A reviewed
+owner configuration may select `native_platform.regenerable_tree_removal: 1` only
+when the installed shared driver advertises `regenerable_tree_removal: 1` and
+`tree.inspect`/`tree.remove`. Setup then enrolls exactly the existing `state/stages`
+and `state/backups` subdirectories under the installation lock. This does not
+modify an existing protected driver configuration or enable cleanup on older
+installations. The directories must exist before protected configuration bootstrap.
+
+Minecraft still selects only marked, unreferenced regenerable artifacts. Current
+app/venv, baseline directories, retained shared plans, native rollback pointers
+and unsettled journals remain protected. Rooted inspection supports stage
+allocation/reuse without relying on Python recursive-deletion support. Before
+removal Minecraft records the exact shared identity in its durable pruning intent;
+the shared driver performs removal under the same Session installation lock.
+There is no connector fallback to platform deletion commands.
+
+A lost transport or unknown removal outcome leaves the intent unresolved. Unwind
+the Session before any recovery write, then acquire a fresh lock for read-only
+inspection. Neither a remaining tree nor a replacement authorizes redispatch.
+The current optional inspection API returns null for absence without exposing the
+original root identity, so this consumer conservatively retains an unresolved
+pruning intent even when the leaf is absent. It does not automatically reconcile
+that case or resume collection. This limitation is separate from successful
+observed removal and awaits an explicit root-bound recovery guarantee.
+
+The shared cleanup candidate and combined six-platform consumer tests must be
+qualified before enrollment. Local contract tests or a disposable Linux run alone
+are not release or live-installation evidence.

@@ -23,6 +23,13 @@ class SetupTests(unittest.TestCase):
             original={p.name:p.read_bytes() for p in home.iterdir() if p.is_file()}
             services={k:{'manager':'scheduled_task','name':'Minecraft-'+k} for k in ['body','controller']}
             result=profiles(cfg,state/'owner.json',bundle,services)
+            self.assertNotIn('regenerable_trees',result)
+            cfg['native_platform']['regenerable_tree_removal']=1
+            cleanup=profiles(cfg,state/'owner.json',bundle,services)
+            self.assertEqual(cleanup['regenerable_trees'],{
+                name:{'root':'state','path':name,'lock':'installation'}
+                for name in ('stages','backups')})
+            cfg['native_platform'].pop('regenerable_tree_removal')
             self.assertTrue(all(p['autostart'] is False for p in result['registrations'].values()))
             self.assertEqual(result['service_applications']['controller']['args'][:3],['-I',str(home/'app/native_entry.py'),'controller'])
             self.assertEqual(result['commands']['session_endpoint']['args'],endpoint['command'][1:])

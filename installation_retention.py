@@ -9,7 +9,8 @@ import shutil
 import time
 import uuid
 from pathlib import Path
-from installation_guard import ContinuityError, digest, durable_write, read, enrollment_ids
+from installation_guard import (ContinuityError, digest, durable_write, read,
+                                enrollment_ids, current_owner_io)
 
 GRACE_SECONDS = 86400
 
@@ -187,6 +188,12 @@ class Retention:
 
     def safe_path(self, kind, identifier):
         path = self.path(kind, identifier)
+        native = self.native_trees()
+        if native is not None:
+            # Rooted native inspection covers allocation/reuse as well as
+            # removal. It does not traverse a package or grant deletion.
+            native.tree_inspect(kind, identifier)
+            return path
         if self.root.resolve() != self.root or path.parent.resolve() != path.parent or path.is_symlink():
             raise ContinuityError('Artifact path is indirect')
         if not shutil.rmtree.avoids_symlink_attacks:
@@ -196,8 +203,36 @@ class Retention:
                 raise ContinuityError('Artifact contains a mount')
         return path
 
+    def native_trees(self):
+        requested = self.cfg.get('native_platform', {}).get('regenerable_tree_removal')
+        if requested is None:
+            return None
+        if type(requested) is not int or requested != 1:
+            raise ContinuityError('Unsupported native regenerable tree enrollment')
+        native = current_owner_io()
+        if native is None or not callable(getattr(native, 'tree_inspect', None)):
+            raise ContinuityError('Native regenerable trees require enrolled owner I/O')
+        return native
+
     def remove(self, kind, identifier, reason):
-        if not self.owned(kind, identifier):return False
+        record = self.owned(kind, identifier)
+        if not record:return False
+        if record.get('state') == 'pruning':
+            raise ContinuityError('Existing pruning intent requires read-only reconciliation')
+        native = self.native_trees()
+        if native is not None:
+            expected = native.tree_inspect(kind, identifier)
+            self.mark(kind, identifier, state='pruning', reason=reason,
+                      pruned_at=time.time(), removal_backend='native',
+                      expected_tree=expected)
+            if expected is not None:
+                # No catch: transport loss invalidates ALL Session locks.
+                # Preserve this intent and unwind before any recovery write.
+                result = native.tree_remove(kind, identifier, expected)
+                if result != {'absent':True}:
+                    raise ContinuityError('Native tree removal has no observed absence')
+            self.mark(kind, identifier, state='pruned')
+            return True
         path = self.safe_path(kind, identifier)
         self.mark(kind, identifier, state='pruning', reason=reason, pruned_at=time.time())
         if path.exists():shutil.rmtree(path)

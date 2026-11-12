@@ -63,6 +63,29 @@ class NativeIO:
         root, relative = self.relative(path)
         return self.session.durable_remove(root, relative)
 
+    def tree_profile(self, kind):
+        names = {'stage':'stages', 'backup':'backups'}
+        if kind not in names:
+            raise ContinuityError('Unknown native artifact kind')
+        description = self.session.describe()
+        if (type(description.get('regenerable_tree_removal')) is not int
+                or description['regenerable_tree_removal'] != 1
+                or not {'tree.inspect','tree.remove'}.issubset(description.get('operations', []))):
+            raise ContinuityError('Native driver lacks enrolled tree removal capability')
+        return names[kind]
+
+    def tree_inspect(self, kind, identifier):
+        from installation_retention import canonical_id_or_false
+        if not canonical_id_or_false(identifier):
+            raise ContinuityError('Native artifact must use its canonical UUID')
+        return self.session.tree_inspect(self.tree_profile(kind), identifier)
+
+    def tree_remove(self, kind, identifier, expected):
+        from installation_retention import canonical_id_or_false
+        if not canonical_id_or_false(identifier) or not isinstance(expected, dict):
+            raise ContinuityError('Native removal requires exact artifact identity')
+        return self.session.tree_remove(self.tree_profile(kind), identifier, expected)
+
 
 class NativeInstallation(LocalInstallation):
     """Use raw native services with the existing Minecraft continuity checks.
@@ -133,6 +156,15 @@ def validate_driver_mapping(cfg, driver_config):
         raise ValueError('Native installation lock mapping differs')
     if any(name not in actual.get('services', {}) for name in ('body', 'controller')):
         raise ValueError('Native body/controller services are not enrolled')
+    requested = cfg['native_platform'].get('regenerable_tree_removal')
+    if requested is not None:
+        if type(requested) is not int or requested != 1:
+            raise ValueError('Unsupported native tree removal enrollment')
+        expected = {name:{'root':'state','path':name,'lock':'installation'}
+                    for name in ('stages','backups')}
+        if any(actual.get('regenerable_trees', {}).get(name) != value
+               for name,value in expected.items()):
+            raise ValueError('Native regenerable roots differ from domain staging')
 
 
 def connection_backend(cfg, session):

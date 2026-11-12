@@ -69,7 +69,7 @@ def profiles(cfg, owner_config, bundle, services):
               ['-I',str(entry),'controller','--home',str(home),'--native-owner-config',str(owner_config)])
         applications[kind]={'executable':str(node if kind=='body' else python),'args':argv,'cwd':str(home),
                             'identity_path':str(state/(kind+'-identity.json'))}
-    return {'version':1,'roots':{'home':str(home),'state':str(state)},
+    result = {'version':1,'roots':{'home':str(home),'state':str(state)},
         'locks':{'installation':str(state/'installation.lock')},'services':services,
         'registrations':registration,'service_applications':applications,
         'commands':{
@@ -80,6 +80,13 @@ def profiles(cfg, owner_config, bundle, services):
               'cwd':str(home),'timeout_seconds':200,'result_root':'state'}},
         'exchanges':{key:{'lock':'installation','profile':{'current':str(home/key),'roots':{'state':str(state)}}}
                      for key in ('app','venv')}}
+    requested = cfg['native_platform'].get('regenerable_tree_removal')
+    if requested is not None:
+        if type(requested) is not int or requested != 1:
+            raise ValueError('Unsupported native tree removal enrollment')
+        result['regenerable_trees'] = {name:{'root':'state','path':name,'lock':'installation'}
+                                     for name in ('stages','backups')}
+    return result
 
 
 def register_no_start(session, expected_config, observed_config):
