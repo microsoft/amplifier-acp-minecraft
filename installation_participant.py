@@ -9,10 +9,11 @@ import subprocess
 import time
 import urllib.request
 import uuid
+from contextlib import ExitStack
 from pathlib import Path
 
 from installation_guard import (ContinuityError, NotIdle, continuity, digest,
-                                durable_write, installation_lock, read,
+                                durable_write, durable_remove, installation_lock, read,
                                 require_idle, restore_plan, snapshot, OBSERVATIONS, enrollment_ids,
                                 service_active, service_stopped, service_unavailable, service_process_identity)
 from update_admission import process_identity
@@ -126,7 +127,7 @@ class LocalInstallation:
         # An unused installation still needs initialize compatibility, but must
         # stay unused: never create a replacement or prime session persistence.
         present = (self.home/'session.json').exists()
-        python = Path(self.c['venv'])/'bin/python'
+        python = self.session_python()
         script = Path(__file__).with_name('installation_session_probe.py')
         if timeout <= 7:
             raise ContinuityError('Insufficient operation budget for saved-session verification')
@@ -142,6 +143,9 @@ class LocalInstallation:
                 or value.get('new_session_created') is not False or value.get('prompt_sent') is not False):
             raise ContinuityError('ACP initialization or original session verification failed')
         return value
+
+    def session_python(self):
+        return Path(self.c['venv'])/'bin/python'
 
 
 class Participant:
@@ -330,12 +334,7 @@ class Participant:
         if self.gate.exists():
             if not self.gate_owned():
                 raise ContinuityError('Do not remove another admission hold')
-            self.gate.unlink()
-            fd = os.open(self.gate.parent, os.O_RDONLY | os.O_DIRECTORY)
-            try:
-                os.fsync(fd)
-            finally:
-                os.close(fd)
+            durable_remove(self.gate)
         if not self.value.get('untouched'):
             for kind in ('body', 'controller'):
                 services = self.backend.services()
@@ -363,9 +362,15 @@ def main():
     outcome = os.environ['CONSTELLATION_UPDATE_OUTCOME']
     if outcome not in ('unchanged', 'applied', 'rolled_back'):
         raise ValueError('Unknown lifecycle outcome')
-    with installation_lock(Path(cfg['state'])/'installation.lock'):
-        participant = Participant(cfg, envelope)
-        result = participant.prepare() if args.action == 'prepare' else getattr(participant, args.action)(outcome)
+    with ExitStack() as stack:
+        backend = None
+        if 'native_platform' in cfg:
+            from installation_native import native_scope, NativeInstallation
+            session = stack.enter_context(native_scope(cfg))
+            backend = NativeInstallation(cfg, session)
+        with installation_lock(Path(cfg['state'])/'installation.lock'):
+            participant = Participant(cfg, envelope, backend)
+            result = participant.prepare() if args.action == 'prepare' else getattr(participant, args.action)(outcome)
     print(json.dumps(result))
 
 

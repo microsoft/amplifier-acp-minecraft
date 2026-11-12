@@ -11,7 +11,24 @@ import tempfile
 import time
 from collections import Counter
 from contextlib import contextmanager
+from contextvars import ContextVar
 from pathlib import Path
+
+_owner_io = ContextVar('minecraft_owner_io', default=None)
+
+
+def current_owner_io():
+    return _owner_io.get()
+
+
+@contextmanager
+def owner_io(backend):
+    """Use an explicitly installed native I/O owner for this invocation only."""
+    token = _owner_io.set(backend)
+    try:
+        yield
+    finally:
+        _owner_io.reset(token)
 
 
 def enrollment_ids(cfg):
@@ -125,6 +142,11 @@ def installation_lock(path):
     Kernel ownership expires on a crash; the durable receipt does not. Taking
     this lock after a crash is not permission to repeat an uncertain operation.
     """
+    native = _owner_io.get()
+    if native is not None:
+        with native.lock(Path(path)):
+            yield
+        return
     import fcntl
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
@@ -140,6 +162,9 @@ def installation_lock(path):
 
 
 def durable_write(path, value):
+    native = _owner_io.get()
+    if native is not None:
+        return native.write(Path(path), value)
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
     with tempfile.NamedTemporaryFile(mode='w', dir=path.parent, delete=False) as stream:
@@ -157,6 +182,19 @@ def durable_write(path, value):
             os.close(directory)
     finally:
         temporary.unlink(missing_ok=True)
+
+
+def durable_remove(path):
+    native = _owner_io.get()
+    if native is not None:
+        return native.remove(Path(path))
+    path = Path(path)
+    path.unlink()
+    fd = os.open(path.parent, os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        os.fsync(fd)
+    finally:
+        os.close(fd)
 
 
 def protected_files(home):

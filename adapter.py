@@ -502,5 +502,15 @@ async def run(home):
 
 
 if __name__=='__main__':
-    p=argparse.ArgumentParser();p.add_argument('--home',type=Path,required=True);a=p.parse_args()
-    asyncio.run(run(a.home.expanduser()))
+    p=argparse.ArgumentParser();p.add_argument('--home',type=Path,required=True)
+    p.add_argument('--native-owner-config',type=Path,help='Fixed installation-owned native lifecycle enrollment')
+    a=p.parse_args()
+    if a.native_owner_config:
+        from installation_native import native_scope
+        cfg=json.loads(a.native_owner_config.read_text())
+        if Path(cfg['home']).resolve()!=a.home.expanduser().resolve():
+            p.error('Native enrollment belongs to a different game connection')
+        with native_scope(cfg):
+            asyncio.run(run(a.home.expanduser()))
+    else:
+        asyncio.run(run(a.home.expanduser()))

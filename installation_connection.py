@@ -17,10 +17,11 @@ import uuid
 import urllib.request
 import urllib.parse
 from pathlib import Path
+from contextlib import ExitStack
 
 from connection_state import state as connection_state
 from installation_guard import (ContinuityError, NotIdle, continuity, digest, authority_checks,
-    durable_write, installation_lock, read, require_idle, restore_plan, service_active, service_stopped,
+    durable_write, durable_remove, installation_lock, read, require_idle, restore_plan, service_active, service_stopped,
     service_unavailable, service_process_identity, native_service)
 from installation_participant import LocalInstallation
 from update_admission import process_identity
@@ -415,10 +416,7 @@ class Connection:
             self.mark('connected')
             if self.gate.exists():
                 if not self.gate_owned():raise ContinuityError('Do not remove another admission hold')
-                self.gate.unlink()
-                fd=os.open(self.gate.parent,os.O_RDONLY|os.O_DIRECTORY)
-                try:os.fsync(fd)
-                finally:os.close(fd)
+                durable_remove(self.gate)
             self.save(phase='await_listener')
             if not service_active(self.service('controller')):self.backend.action('controller','start')
             return self.result(context_ready=True)
@@ -447,10 +445,16 @@ def main():
     if len(data)>65536:raise ValueError('Connection envelope too large')
     envelope=json.loads(data)
     if envelope.get('action')!=args.action:raise ValueError('Command action mismatch')
-    with installation_lock(Path(cfg['state'])/'installation.lock'):
-        connection=Connection(cfg,envelope)
-        try:result=connection.run()
-        except NotIdle:result=connection.result(message='Waiting for settled game or installation state.')
+    with ExitStack() as stack:
+        backend=None
+        if 'native_platform' in cfg:
+            from installation_native import native_scope, connection_backend
+            session=stack.enter_context(native_scope(cfg))
+            backend=connection_backend(cfg,session)
+        with installation_lock(Path(cfg['state'])/'installation.lock'):
+            connection=Connection(cfg,envelope,backend)
+            try:result=connection.run()
+            except NotIdle:result=connection.result(message='Waiting for settled game or installation state.')
     print(json.dumps(result))
 
 
