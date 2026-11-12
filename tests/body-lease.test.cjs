@@ -124,6 +124,23 @@ for(const failure of ['occupied','unsupported'])test('initial '+failure+' placem
   assert.equal(effects,0);assert.equal(JSON.stringify(f.history.data.turn.actions),before);assert.equal(f.history.data.events.at(-1).kind,'action_preflight_refused');
  }finally{f.close();}
 });
+test('furnace argument/target preflight cannot create an uncertain action or block later work',async()=>{
+ const f=fixture({human_engagement:{enabled:true,task_optional:true}});try{
+  const {Vec3}=realRequire('vec3');f.bot.entity.position=new Vec3(.5,64,.5);
+  f.bot.registry=realRequire('minecraft-data')('1.21.1');let effects=0;
+  f.bot.blockAt=()=>({name:'furnace'});f.bot.openFurnace=async()=>{effects++;throw Error('Unexpected open');};
+  f.bot.supportFeature=()=>{effects++;throw Error('Unexpected refresh');};
+  await f.request('/turn',{activity:true,renewable_lease:true});
+  const before=JSON.stringify(f.history.data.turn.actions);
+  await assert.rejects(f.operate('furnace',{x:1,y:64,z:0,operation:'load',item:'missing_item',count:1}),/Unknown registered/);
+  f.bot.blockAt=()=>({name:'air'});
+  await assert.rejects(f.operate('furnace',{x:1,y:64,z:0,operation:'inspect'}),/ordinary furnace/);
+  assert.equal(JSON.stringify(f.history.data.turn.actions),before);assert.equal(effects,0);
+  assert.equal(f.history.data.events.at(-1).effect_attempted,false);
+  await f.request('/finish',{});
+  assert.equal((await f.request('/status')).task_capabilities.activity_allowed,true);
+ }finally{f.close();}
+});
 test('exact blocked destination is a no-effect refusal and changed clearance permits fresh movement',async()=>{
  for(const obstruction of ['feet','head'])for(const mode of ['normal','walk_only']){
   let moves=0,searches=0,solid=true;const f=fixture({}, {move:async()=>{moves++;return {reached:true};}});try{

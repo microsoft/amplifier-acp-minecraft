@@ -24,6 +24,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--node', required=True)
     parser.add_argument('--configuration-only', action='store_true', help='Configure repeaters/comparators through ordinary confirmed interactions')
+    parser.add_argument('--furnace-only', action='store_true', help='Verify server-owned oak-slab fuel and actual smelting/collection')
     parser.add_argument('--redstone-only', action='store_true', help='Run only the item-to-wire placement regression')
     parser.add_argument('--properties', type=Path, required=True)
     parser.add_argument('--out', type=Path, required=True)
@@ -62,6 +63,26 @@ def main():
                              'tp FacingTester 1.5 81 1.5', 'clear FacingTester']:
                     r(text)
                 time.sleep(.4)
+                if args.furnace_only:
+                    r('setblock 2 81 1 furnace'); r('give FacingTester cobblestone 1'); r('give FacingTester oak_slab 2')
+                    time.sleep(.3); control(cfg, '/turn', {})
+                    loaded=act('furnace',x=2,y=81,z=1,operation='load',item='cobblestone',count=1,fuel='oak_slab',fuel_count=2)
+                    report['checks'].append({'load':loaded})
+                    # Real furnace time is independent from the model/turn clock.
+                    deadline=time.monotonic()+20
+                    while time.monotonic()<deadline:
+                        time.sleep(1)
+                        confirmation=r('data get block 2 81 1 Items')
+                        if 'minecraft:stone' in confirmation:break
+                    else:raise AssertionError('Server did not produce stone from oak-slab fuel')
+                    inspected=act('furnace',x=2,y=81,z=1,operation='inspect')
+                    assert inspected['output']=={'name':'stone','count':1},inspected
+                    collected=act('furnace',x=2,y=81,z=1,operation='collect')
+                    assert collected['collected']=={'name':'stone','count':1},collected
+                    assert any(i['name']=='stone' and i['count']==1 for i in collected['inventory']),collected
+                    report['checks'].append({'inspect':inspected,'collection':collected,'independent_server_confirmation':confirmation})
+                    report['passed']=True
+                    return
                 if args.configuration_only:
                     for name, prop, values in [('repeater','delay',[1,2,3,4]), ('comparator','mode',['compare','subtract'])]:
                         for initial in values:
