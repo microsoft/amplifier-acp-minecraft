@@ -25,6 +25,18 @@ class Retention:
             raise ContinuityError('Owner artifact root must be direct')
         self.records = self.root/'artifact-receipts'
 
+    def stage_contents_match(self,path,manifest,fingerprint):
+        expected={'app','venv','manifest.json'}
+        if self.cfg.get('native_platform'):
+            expected|={'package','package-receipt.json'}
+        if set(p.name for p in path.iterdir())!=expected:return False
+        if any(fingerprint(path/k)!=manifest['fingerprints'][k] for k in ('app','venv')):return False
+        if self.cfg.get('native_platform'):
+            extra=manifest.get('native_artifacts',{})
+            if (extra.get('package')!=fingerprint(path/'package')
+                    or extra.get('receipt')!=hashlib.sha256((path/'package-receipt.json').read_bytes()).hexdigest()):return False
+        return True
+
     def path(self, kind, identifier):
         if kind not in ('stage', 'backup') or not canonical_id(identifier):
             raise ContinuityError('Unknown owned artifact')
@@ -131,6 +143,37 @@ class Retention:
         for key in ('app','venv'):
             identifier = self.stage_reference(self.cfg[key])
             if identifier:stages.add(identifier)
+        if self.cfg.get('native_platform'):
+            native=self.root/'native-source'
+            receipts=self.root/'native-source-receipts'
+            if native.resolve()!=native or receipts.resolve()!=receipts:
+                raise ContinuityError('Indirect native source journal root')
+            operations={p.stem:p for p in receipts.glob('*.json')}
+            entries={p.name:p for p in native.glob('*')}
+            if set(operations)!=set(entries):
+                raise ContinuityError('Native source artifacts lack matching journals')
+            for operation,path in sorted(operations.items()):
+                if not canonical_id_or_false(operation):raise ContinuityError('Unknown native source operation')
+                value=document(path)
+                if value.get('phase') not in ('applied','rolled_back') or set(value.get('entries',{}))!={'app','venv'}:
+                    raise ContinuityError('Native source exchange is unsettled')
+                transaction=value.get('transaction')
+                if not canonical_id_or_false(transaction):raise ContinuityError('Unknown native source transaction')
+                if document(self.root/'transactions'/(transaction+'.json')).get('phase')!='restored':
+                    raise ContinuityError('Native source restoration is unsettled')
+                directory=entries[operation]
+                if directory.resolve()!=directory or not directory.is_dir():
+                    raise ContinuityError('Indirect native source artifact directory')
+                children=list(directory.iterdir());signature[str(directory)]=sorted(p.name for p in children)
+                for child in children:
+                    if child.name not in {k+'-'+phase for k in ('app','venv') for phase in ('baseline','rejected','incoming')}:
+                        raise ContinuityError('Unknown native source artifact')
+                    # Keep every retained native rollback target. Removal of an
+                    # obsolete pointer tree requires shared native cleanup; the
+                    # Python collector never follows/deletes a Windows junction.
+                    identifier=self.stage_reference(child)
+                    signature[str(child)]=str(child.resolve())
+                    if identifier:stages.add(identifier)
         backups = self.root/'backups'
         if backups.is_symlink():raise ContinuityError('Indirect backup directory')
         for backup in sorted(backups.glob('*')):
@@ -188,10 +231,8 @@ class Retention:
                 if record['state'] == 'ready':
                     manifest = read(path/'manifest.json')
                     if (digest(manifest) != record.get('manifest_hash')
-                            or set(p.name for p in path.iterdir()) != {'app','venv','manifest.json'}):
+                            or not self.stage_contents_match(path,manifest,fingerprint)):
                         continue
-                    if any(fingerprint(path/k) != manifest['fingerprints'][k] for k in ('app','venv')):
-                        continue  # Unexplained edits are not regenerable data.
                 if self.references() != (stages, plans, signature):raise ContinuityError('References changed during cleanup')
                 self.remove('stage', identifier, 'failed_build_unreferenced' if identifier == failed else 'unreferenced_after_grace')
                 removed.append('stage/'+identifier)

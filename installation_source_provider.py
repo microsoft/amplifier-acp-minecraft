@@ -225,10 +225,9 @@ class Provider:
             stage = self.retention.safe_path('stage', identifier)
             try:
                 manifest = read(stage/'manifest.json')
-                if (set(p.name for p in stage.iterdir()) != ({'app','venv','manifest.json','package','package-receipt.json'} if self.c.get('native_platform') else {'app','venv','manifest.json'})
+                if (not self.retention.stage_contents_match(stage,manifest,fingerprint)
                         or manifest.get('build_inputs') != inputs
-                        or digest(manifest) != record.get('manifest_hash')
-                        or any(fingerprint(stage/k) != manifest['fingerprints'][k] for k in self.paths)):
+                        or digest(manifest) != record.get('manifest_hash')):
                     continue
                 verify_sdk(stage/'venv', stage/'app')
                 self.screenshot_browser(stage/'app', prepare=True)
@@ -269,6 +268,9 @@ class Provider:
                 manifest = {'revision':revision,'checks':checks,'sdk':sdk,'build_inputs':inputs,
                             'fingerprints':{k:fingerprint(stage/k) for k in self.paths},
                             'python_sha256':inputs['python_sha256']}
+                if self.c.get('native_platform'):
+                    manifest['native_artifacts']={'package':fingerprint(stage/'package'),
+                        'receipt':hashlib.sha256((stage/'package-receipt.json').read_bytes()).hexdigest()}
                 durable_write(stage/'manifest.json',manifest)
                 self.retention.mark('stage', stage.name, state='ready', last_offered=time.time(),
                                     manifest_hash=digest(manifest))

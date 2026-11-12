@@ -78,12 +78,13 @@ jobs:
             bundle/python-packages.json
           retention-days: 14
       - name: Archive tested bundle
-        run: python -c "import shutil; shutil.make_archive('minecraft-${{ matrix.target }}','gztar','bundle')"
+        run: python ops/native/archive_bundle.py --bundle bundle --output minecraft-${{ matrix.target }}.tar.gz
       - uses: actions/upload-artifact@v4
         with:
           name: minecraft-${{ matrix.target }}
           path: |
             minecraft-${{ matrix.target }}.tar.gz
+            minecraft-${{ matrix.target }}.tar.gz.json
             native-result.json
             bundle/manifest.json
           retention-days: 7
