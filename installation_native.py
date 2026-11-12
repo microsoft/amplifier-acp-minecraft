@@ -18,8 +18,9 @@ from installation_participant import LocalInstallation, verification_seconds
 class NativeIO:
     """Fixed roots/lock with protected publication delegated to shared code."""
 
-    def __init__(self, cfg, session):
+    def __init__(self, cfg, session, *, cleanup_deadline=None):
         self.session = session
+        self.cleanup_deadline = cleanup_deadline
         self.roots = {key:Path(cfg[key]) for key in ('home', 'state')}
         if any(not path.is_absolute() for path in self.roots.values()):
             raise ValueError('Native owner roots must be absolute')
@@ -80,11 +81,28 @@ class NativeIO:
             raise ContinuityError('Native artifact must use its canonical UUID')
         return self.session.tree_inspect(self.tree_profile(kind), identifier)
 
-    def tree_remove(self, kind, identifier, expected):
+    def tree_removal_timeout(self):
+        if self.cleanup_deadline is None:
+            return None  # Existing Session default; no hidden timeout increase.
+        # The source-provider entrypoint supplies its invocation deadline. Leave
+        # 60 seconds for journal settlement, invocation close and output. Never
+        # begin a new removal with less than the ordinary 30-second allowance.
+        remaining = self.cleanup_deadline - time.monotonic() - 60
+        if remaining < 30:
+            raise ContinuityError('Insufficient provider time for native cleanup')
+        return min(120.0, remaining)
+
+    def tree_remove(self, kind, identifier, expected, *, timeout=None):
         from installation_retention import canonical_id_or_false
         if not canonical_id_or_false(identifier) or not isinstance(expected, dict):
             raise ContinuityError('Native removal requires exact artifact identity')
-        return self.session.tree_remove(self.tree_profile(kind), identifier, expected)
+        profile = self.tree_profile(kind)
+        remaining = self.tree_removal_timeout()
+        if remaining is not None:
+            timeout = remaining if timeout is None else min(timeout, remaining)
+        if timeout is None:
+            return self.session.tree_remove(profile, identifier, expected)
+        return self.session.tree_remove(profile, identifier, expected, timeout=timeout)
 
 
 class NativeInstallation(LocalInstallation):
@@ -192,7 +210,7 @@ def connection_backend(cfg, session):
 
 
 @contextmanager
-def native_scope(cfg, *, session_factory=None):
+def native_scope(cfg, *, session_factory=None, cleanup_deadline=None):
     """Explicit owner enrollment only; never inferred from the host OS."""
     native = cfg['native_platform']
     driver, config = Path(native['driver']), Path(native['config'])
@@ -208,5 +226,5 @@ def native_scope(cfg, *, session_factory=None):
                     'service.action','storage.write','storage.mkdir','storage.remove'}
         if description.get('protocol') != 1 or not required.issubset(description.get('operations', [])):
             raise ContinuityError('Installed native driver lacks the required interface')
-        with owner_io(NativeIO(cfg, session)):
+        with owner_io(NativeIO(cfg, session, cleanup_deadline=cleanup_deadline)):
             yield session

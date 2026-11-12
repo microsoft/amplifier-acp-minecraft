@@ -222,13 +222,14 @@ class Retention:
         native = self.native_trees()
         if native is not None:
             expected = native.tree_inspect(kind, identifier)
+            timeout = native.tree_removal_timeout() if expected is not None else None
             self.mark(kind, identifier, state='pruning', reason=reason,
                       pruned_at=time.time(), removal_backend='native',
-                      expected_tree=expected)
+                      expected_tree=expected, removal_timeout_seconds=timeout)
             if expected is not None:
                 # No catch: transport loss invalidates ALL Session locks.
                 # Preserve this intent and unwind before any recovery write.
-                result = native.tree_remove(kind, identifier, expected)
+                result = native.tree_remove(kind, identifier, expected, timeout=timeout)
                 if result != {'absent':True}:
                     raise ContinuityError('Native tree removal has no observed absence')
             self.mark(kind, identifier, state='pruned')

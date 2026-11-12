@@ -147,3 +147,17 @@ observed removal and awaits an explicit root-bound recovery guarantee.
 The shared cleanup candidate and combined six-platform consumer tests must be
 qualified before enrollment. Local contract tests or a disposable Linux run alone
 are not release or live-installation evidence.
+
+
+The source-provider entrypoint captures one monotonic 600-second invocation
+deadline before setup and lock acquisition. Its optional native cleanup selects
+at most 120 seconds for one `tree_remove(..., timeout=...)`, reduced to the
+remaining invocation time minus a 60-second settlement/close/output reserve.
+With less than 30 seconds available after that reserve it defers before dispatch.
+The allowance is checked before journaling and again immediately before removal;
+it is never reset between artifacts. If time expires between those checks, the
+existing pruning intent remains conservative and no removal is dispatched.
+Other calls retain the Session default; service, prepare, verify and restore
+budgets do not change. Consumers without an enclosing cleanup deadline keep the
+Session default. The extended per-call API requires the separately qualified
+shared candidate; unit budget tests alone do not qualify a Windows removal.

@@ -482,6 +482,9 @@ class Provider:
 
 
 def main():
+    # The shared command-provider invocation has a 600-second ceiling. Capture
+    # before setup/lock acquisition; cleanup must not restart that budget.
+    invocation_deadline = time.monotonic()+600
     parser=argparse.ArgumentParser();parser.add_argument('--config',required=True)
     parser.add_argument('action',choices=('status','plan','apply','rollback','verify'));args=parser.parse_args()
     from contextlib import ExitStack
@@ -490,7 +493,8 @@ def main():
         backend=None
         if cfg.get('native_platform'):
             from installation_native import native_scope, NativeInstallation
-            backend=NativeInstallation(cfg,scope.enter_context(native_scope(cfg)))
+            backend=NativeInstallation(cfg,scope.enter_context(
+                native_scope(cfg,cleanup_deadline=invocation_deadline)))
         provider=Provider(cfg,backend=backend)
         scope.enter_context(installation_lock(provider.root/'installation.lock'))
         if args.action in ('status','plan'):result=getattr(provider,args.action)()

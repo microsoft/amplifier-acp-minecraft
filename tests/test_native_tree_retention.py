@@ -68,10 +68,11 @@ class TreePeer:
             return None
         return {'opaque_fixture_identity':path.stat().st_ino, 'profile':name}
 
-    def tree_remove(self, name, entry, expected):
+    def tree_remove(self, name, entry, expected, **kwargs):
         self.check()
         assert self.locked
         self.calls.append(('remove', name, entry, copy.deepcopy(expected)))
+        self.removal_timeout = kwargs.get('timeout')
         kind = {'stages':'stage','backups':'backup'}[name]
         record = read(Path(self.cfg['state'])/'artifact-receipts'/(kind+'-'+entry+'.json'))
         assert record['state'] == 'pruning' and record['expected_tree'] == expected
@@ -210,6 +211,33 @@ class NativeTreeRetentionTests(unittest.TestCase):
             bad = copy.deepcopy(base); bad['regenerable_trees']['stages'][key] = 'other'
             path.write_text(json.dumps(bad))
             with self.assertRaises(ValueError):validate_driver_mapping(self.cfg, path)
+
+    def test_cleanup_timeout_fits_remaining_invocation_without_changing_session(self):
+        peer, _ = self.native()
+        native = NativeIO(self.cfg, peer, cleanup_deadline=600)
+        expected = {'opaque':'identity'}
+        with patch('installation_native.time.monotonic',return_value=0):
+            self.assertEqual(native.tree_removal_timeout(),120)
+        with patch('installation_native.time.monotonic',return_value=450):
+            self.assertEqual(native.tree_removal_timeout(),90)
+        with patch('installation_native.time.monotonic',return_value=511):
+            with self.assertRaises(ContinuityError):native.tree_removal_timeout()
+        with patch.object(peer,'tree_remove',return_value={'absent':True}) as remove, \
+             patch('installation_native.time.monotonic',return_value=470):
+            native.tree_remove('stage',str(uuid.uuid4()),expected,timeout=90)
+            self.assertEqual(remove.call_args.kwargs,{'timeout':70})
+        self.assertIsNone(NativeIO(self.cfg,peer).tree_removal_timeout())
+
+    def test_exhausted_cleanup_budget_does_not_write_intent_or_dispatch(self):
+        plan = self.stage(); identifier = Path(plan['stage']).name
+        before = self.keep.owned('stage',identifier)
+        peer, _ = self.native(); native = NativeIO(self.cfg,peer,cleanup_deadline=600)
+        with owner_io(native),installation_lock(self.keep.root/'installation.lock'), \
+             patch('installation_native.time.monotonic',return_value=520):
+            with self.assertRaisesRegex(ContinuityError,'Insufficient provider time'):
+                self.keep.remove('stage',identifier,'defer')
+        self.assertEqual(self.keep.owned('stage',identifier),before)
+        self.assertFalse(any(c[0] in ('remove','write') for c in peer.calls))
 
 
 del _Fixture
