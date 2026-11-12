@@ -15,6 +15,7 @@ from installation_native import NativeIO,NativeInstallation,validate_driver_mapp
 from installation_guard import owner_io,installation_lock,durable_write,read,service_active,service_stopped
 from installation_participant import Participant
 from installation_connection import Connection
+from installation_native_exchange import NativeExchange
 
 def initial(path,value):
     path.write_text(json.dumps(value),encoding='utf-8');protect(path)
@@ -81,6 +82,12 @@ try:
    'headers':[{'name':'Authorization','value':'Bearer disposable-fixture-only'}]}]}
  initial(home/'endpoint.json',endpoint)
  initial(home/'session.json',{'session':'original-fixture-session','binding':hashlib.sha256(json.dumps(effective,sort_keys=True).encode()).hexdigest()})
+ (home/'venv').mkdir();protect(home/'venv');(home/'venv/original.txt').write_text('retained environment')
+ candidate=state/'candidate';candidate.mkdir();protect(candidate)
+ shutil.copytree(home/'app',candidate/'app');protect(candidate/'app')
+ (candidate/'app/candidate-marker.txt').write_text('reviewed candidate source')
+ (candidate/'venv').mkdir();protect(candidate/'venv');(candidate/'venv/candidate.txt').write_text('reviewed candidate environment')
+ targets={k:{'root':'state','path':'candidate/'+k} for k in ('app','venv')}
  original={p.name:p.read_bytes() for p in home.iterdir() if p.is_file()}
  script=root/'fixture.py';script.write_text(fixture);protect(script)
  drivercfg=root/'driver.json';ownercfg=root/'owner.json';ownercfg.write_text(json.dumps(cfg));protect(ownercfg)
@@ -102,6 +109,7 @@ try:
      'cwd':str(root),'description':'Disposable Minecraft lifecycle '+role,'autostart':False}
   applications[role]={'executable':sys.executable,'args':argv,'cwd':str(root),'identity_path':str(state/(role+'-identity.json'))}
  data={'version':1,'roots':{'home':str(home),'state':str(state)},'locks':{'installation':str(state/'installation.lock')},'services':service_map,'registrations':registrations,'service_applications':applications,'commands':{'session_endpoint':{'executable':endpoint['command'][0],'args':endpoint['command'][1:],'cwd':endpoint['cwd'],'timeout_seconds':200},'session_probe':{'executable':sys.executable,'args':[str(wrapper),'--home',str(home),'--result','{result}','--native-owner-config',str(ownercfg)],'cwd':str(root),'timeout_seconds':200,'result_root':'state'}}}
+ data['exchanges']={key:{'lock':'installation','profile':{'current':str(home/key),'roots':{'state':str(state)}}} for key in ('app','venv')}
  drivercfg.write_text(json.dumps(data));protect(drivercfg);validate_driver_mapping(cfg,drivercfg)
  with Session(DRIVER,drivercfg) as session:
   io=NativeIO(cfg,session);backend=NativeInstallation(cfg,session)
@@ -120,6 +128,16 @@ try:
      if p.prepare()['ready']:break
      time.sleep(.1)
     else:raise RuntimeError('Actual native prepare did not settle')
+    if components==['minecraft']:
+     exchange=NativeExchange(cfg,session,backend,env['plan']['transaction_id'],env['id'],targets)
+     assert exchange.apply()['applied']
+     assert (home/'app/candidate-marker.txt').read_text()=='reviewed candidate source'
+     assert exchange.apply()['applied']  # observes exact settled identities
+     assert exchange.rollback()['rolled_back']
+     assert (home/'venv/original.txt').read_text()=='retained environment'
+     assert not (home/'app/candidate-marker.txt').exists()
+     assert exchange.rollback()['rolled_back']
+     report['native_source_exchange']=read(exchange.path)
     assert p.verify('applied')['verified'];assert p.restore('applied')['restored']
     terminal=read(p.path);assert Participant(cfg,env,backend).restore('applied')['restored']
     assert {q.name:q.read_bytes() for q in home.iterdir() if q.is_file()}==original

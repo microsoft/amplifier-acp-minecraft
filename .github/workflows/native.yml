@@ -21,10 +21,12 @@ jobs:
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
       - uses: actions/checkout@v4
         with:
           repository: microsoft/amplifier-constellation
-          ref: 3a3c7f882b5fd865d50240f233785f0d350666c5
+          ref: 04b82b20c15c15105479bf3af09bfbcfd6d91caa
           path: native-shared
       - name: Build actual target shared driver
         shell: bash
