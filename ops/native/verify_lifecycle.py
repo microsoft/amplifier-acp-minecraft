@@ -8,7 +8,7 @@ SOURCE=args.source.resolve();BUNDLE=args.bundle.resolve();SHARED=args.shared.res
 manifest=json.loads((BUNDLE/'manifest.json').read_text())
 sys.path[:0]=[str(BUNDLE/'app'),str(SHARED/'support/python'),str(SHARED/'tests/native_python')]
 os.environ['CONSTELLATION_NATIVE_DRIVER']=str(DRIVER)
-from test_driver import protect as shared_protect, windows_user_sid
+from test_driver import protect as shared_protect
 # Explicit script directory is needed with the bundled interpreter -I flag.
 sys.path.insert(0,str(SOURCE/'ops/native'))
 from fixture_security import protect_fixture_path,fixture_application_identities
@@ -27,8 +27,7 @@ fixture_root=None
 
 def protect(path):
     if fixture_root is None:raise RuntimeError('Disposable root not initialized')
-    protect_fixture_path(path,fixture_root,shared_protect,windows=os.name=='nt',
-                         user_sid=windows_user_sid() if os.name=='nt' else None)
+    protect_fixture_path(path,fixture_root,shared_protect)
 
 def initial(path,value):
     path.write_text(json.dumps(value),encoding='utf-8');protect(path)
@@ -89,7 +88,7 @@ report={'source':manifest['source_commit'],'bundle_target':manifest['target'],
  'driver_sha256':hashlib.sha256(DRIVER.read_bytes()).hexdigest(),
  'production_operations':False,'model_prompts':0,'actual_os':sys.platform,'cycles':[],
  'cleanup_fixture_sha256':hashlib.sha256(cleanup_fixture.read_bytes()).hexdigest() if os.name=='nt' else None,
- 'fixture_protection':{'shared_dacl':True,'explicit_current_user_owner':os.name=='nt','scope':'Synthetic package/input files only; initial roots and driver config use production bootstrap'}}
+ 'fixture_protection':{'shared_owner_and_dacl':True,'domain_os_permission_commands':False,'scope':'Synthetic package/input files only; initial roots and driver config use production bootstrap'}}
 units=[];dispatched=[];temp=None
 try:
  temp=tempfile.TemporaryDirectory(prefix='minecraft-native-domain-');root=pathlib.Path(temp.name).resolve()/'installation';fixture_root=root
