@@ -110,7 +110,7 @@ def build(output, cache, *, browser=True):
                 continue
             path=app/name; path.parent.mkdir(parents=True,exist_ok=True)
             shutil.copy2(ROOT/name,path)
-        run([python,'-m','pip','install','--disable-pip-version-check','--no-compile','-r',app/'requirements.txt'],env=env)
+        run([python,'-m','pip','install','--disable-pip-version-check','--no-compile','--constraint',app/'ops/native/python-constraints.txt','-r',app/'requirements.txt'],env=env)
         direct = subprocess.check_output([str(python),'-c',
             "import importlib.metadata as m;print(m.distribution('agent-client-protocol').read_text('direct_url.json'))"],env=env).decode()
         sdk = json.loads(direct)
