@@ -765,3 +765,39 @@ test('planner limit cannot override explicit activity wait, completion, blocker,
   }finally{f.close();}
  }
 });
+
+for(const mode of ['known-clear','missing-cursor','undefined-cursor','false-cursor','undefined-output','undefined-grid','sparse-grid','short-grid','dirty-cursor','dirty-grid'])test('craft review raw inventory boundary: '+mode,async()=>{
+ const f=fixture({...optionalConfig,installation_callers:[{id:'voice',label:'Voice',token:'v'.repeat(40)}]});try{
+  const crypto=realRequire('node:crypto'),digest=v=>crypto.createHash('sha256').update(JSON.stringify(v)).digest('hex');
+  const {Vec3}=realRequire('vec3');f.bot.entity.position=new Vec3(0,64,0);
+  f.bot.inventory={slots:Array(46).fill(null),selectedItem:null};f.bot.currentWindow=null;
+  f.history.data.last_turn={activity:true,task_id:null,interrupted:false,budget_limited:true,started_at:'2026-11-12T20:04:40.276Z',actions:[{id:'legacy-craft',status:'uncertain'}]};
+  for(const kind of ['action_started','action_failed'])f.history.record({kind,action:'craft',action_id:'legacy-craft',time:'2026-11-12T20:05:18.380Z',arguments:{item:'stone_pickaxe',count:1},...(kind==='action_failed'?{error:'No recipe possible with current inventory and nearby crafting table; no movement performed'}:{})});
+  if(mode==='missing-cursor')delete f.bot.inventory.selectedItem;
+  if(mode==='undefined-cursor')f.bot.inventory.selectedItem=undefined;
+  if(mode==='false-cursor')f.bot.inventory.selectedItem=false;
+  if(mode==='undefined-output')f.bot.inventory.slots[0]=undefined;
+  if(mode==='undefined-grid')f.bot.inventory.slots[2]=undefined;
+  if(mode==='sparse-grid')delete f.bot.inventory.slots[2];
+  if(mode==='short-grid')f.bot.inventory.slots.length=4;
+  if(mode==='dirty-cursor')f.bot.inventory.selectedItem={name:'dirt',type:1,count:1};
+  if(mode==='dirty-grid')f.bot.inventory.slots[2]={name:'dirt',type:1,count:1};
+  const observation=await f.request('/installation-state');
+  const args={generation:(await f.request('/conversation')).generation,request_id:crypto.randomUUID(),expected_turn_sha256:digest(f.history.data.last_turn),expected_position:observation.position,expected_inventory_sha256:digest(observation.inventory),evidence_sha256:'a'.repeat(64),reviews:[{action_id:'legacy-craft',receipt_sha256:digest(f.history.data.events.at(-1)),outcome:'settled_failed_crafting_preparation',reason:'Exact retained source and terminal; only future work, no historical inventory delta.'}]};
+  const before=JSON.stringify(f.history.data);
+  if(mode==='known-clear'){
+   await f.request('/activity/review-settled-actions',args,401,'wrong');
+   await f.request('/activity/review-settled-actions',args,403,'v'.repeat(40));
+   await f.request('/activity/review-settled-actions',{...args,generation:args.generation+1},400);
+   f.bot.currentWindow={};await f.request('/activity/review-settled-actions',args,400);f.bot.currentWindow=null;
+   const result=await f.request('/activity/review-settled-actions',args);assert.equal(result.activity_allowed,true);assert.equal(result.future_work_only,true);
+   assert.equal((await f.request('/activity/review-settled-actions',args)).duplicate,true);
+   const copy=JSON.parse(JSON.stringify(f.history.data));delete copy.last_turn.effect_review;delete copy.last_turn.actions[0].review;assert.equal(JSON.stringify(copy),before);
+   await f.request('/turn',{activity:true,continuation:true},400);
+  }else{
+   await f.request('/activity/review-settled-actions',args,400);
+   assert.equal(JSON.stringify(f.history.data),before);
+   assert.equal(realRequire('./activity-policy.cjs').allowed(f.history,optionalConfig),false);
+  }
+ }finally{f.close();}
+});

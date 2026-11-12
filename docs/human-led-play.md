@@ -97,6 +97,8 @@ in its assessment, then supply fresh matching state: closed window, clear cursor
 and output/grid slots, idle body/lease/sequence, unchanged generation, position
 and full inventory. Timeouts, incomplete synchronization, partial recipe errors,
 other terminals, missing evidence and dirty/unknown current crafting state refuse.
+The endpoint checks raw cursor/output/grid values before inventory normalization;
+missing or undefined values cannot stand in for known-empty slots.
 Every uncertain action in the turn must be covered; the original statuses, task,
 input history and accounting remain intact. Only future independently admitted
 activity may proceed; the reviewed turn cannot automatically continue.
