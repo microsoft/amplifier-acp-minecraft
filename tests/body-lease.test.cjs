@@ -264,9 +264,15 @@ test('human-led mode removes local action pacing, while legacy cap and Stop rema
 });
 
 test('actual body accepts completion-bound work only after local helper discovery; lease and human reduction stay separate',async()=>{
- const dir=fs.mkdtempSync(path.join(os.tmpdir(),'body-helper-capabilities-')),command=path.join(dir,'runtime');
+ const dir=fs.mkdtempSync(path.join(os.tmpdir(),'body-helper-capabilities-')),command=path.join(dir,process.platform==='win32'?'runtime.exe':'runtime'),originalNodeOptions=process.env.NODE_OPTIONS;
  const capabilities={schema_version:1,helpers:{watch:{version:2,command:'watch-v2',bound_kinds:['finite','no_configured_bound'],watch_ttl_seconds:{minimum:30,maximum:1800}},continuation:{version:2,command:'continuation-v2',bound_kinds:['finite','no_configured_bound']}}};
- fs.writeFileSync(command,`#!/usr/bin/env node\nif(process.argv.slice(2).join(' ')!=='helper-capabilities')process.exit(1);process.stdout.write(${JSON.stringify(JSON.stringify(capabilities))});`,{mode:0o700});
+ if(process.platform==='win32'){
+  // execFile deliberately has no shell. Use a native fixture executable rather
+  // than pretending Windows can execute a Unix shebang or enabling cmd.exe.
+  fs.copyFileSync(process.execPath,command);const bootstrap=path.join(dir,'fixture.cjs');
+  fs.writeFileSync(bootstrap,`if(process.argv.slice(1).join(' ')!=='helper-capabilities')process.exit(1);process.stdout.write(${JSON.stringify(JSON.stringify(capabilities))});process.exit(0);`);
+  process.env.NODE_OPTIONS='--require '+JSON.stringify(bootstrap);
+ }else fs.writeFileSync(command,`#!/usr/bin/env node\nif(process.argv.slice(2).join(' ')!=='helper-capabilities')process.exit(1);process.stdout.write(${JSON.stringify(JSON.stringify(capabilities))});`,{mode:0o700});
  const f=fixture({incoming_chat_only:true,task_helpers:{command},human_engagement:{enabled:true},human_task_intake:{enabled:true,default_bound_mode:'completion_bound'}});
  try{
   await realRequire('./helper-capabilities.cjs').discover(command);f.history.data.task.status='budget_exhausted';const old=structuredClone(f.history.data.task);
@@ -293,7 +299,7 @@ test('actual body accepts completion-bound work only after local helper discover
   assert.equal(f.history.task().turns,1);assert.equal(f.history.task().status,'budget_exhausted');await f.request('/finish',{});
   await f.request('/turn',{continuation:true,renewable_lease:true},400);
   assert.equal((await f.request('/status')).action_lease.lease_id,null);
- }finally{f.close();fs.rmSync(dir,{recursive:true,force:true});}
+ }finally{f.close();if(originalNodeOptions===undefined)delete process.env.NODE_OPTIONS;else process.env.NODE_OPTIONS=originalNodeOptions;fs.rmSync(dir,{recursive:true,force:true});}
 });
 
 test('installation gate rejects fresh turns atomically without consuming inputs or renewing authority',async()=>{
