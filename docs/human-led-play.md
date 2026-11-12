@@ -85,6 +85,24 @@ New coordinate, gather-selection and container reach/argument checks run before
 effect admission and do not create an uncertain action. Later failures still
 retain uncertainty; this does not automatically classify errors or replay work.
 
+For a legacy craft failure, `settled_failed_crafting_preparation` accepts only
+the exact retained terminal `No recipe possible with current inventory and
+nearby crafting table; no movement performed`, with matching item/count and
+start/failure receipts. In that implementation the terminal follows awaited
+crafting preparation and any window close/resynchronization, before movement or
+recipe execution. Preparation may have moved cursor/grid items or changed the
+window. This outcome is not `no_effect`, an inventory delta, or a successful
+craft. The owner must bind the retained implementation and settled tool evidence
+in its assessment, then supply fresh matching state: closed window, clear cursor
+and output/grid slots, idle body/lease/sequence, unchanged generation, position
+and full inventory. Timeouts, incomplete synchronization, partial recipe errors,
+other terminals, missing evidence and dirty/unknown current crafting state refuse.
+The endpoint checks raw cursor/output/grid values before inventory normalization;
+missing or undefined values cannot stand in for known-empty slots.
+Every uncertain action in the turn must be covered; the original statuses, task,
+input history and accounting remain intact. Only future independently admitted
+activity may proceed; the reviewed turn cannot automatically continue.
+
 Hashes of JSON values use SHA-256 of JavaScript `JSON.stringify(value)`. Inspect
 the original implementation, terminal tool receipts and current physical state;
 an error string or final position alone cannot prove no effects. The endpoint

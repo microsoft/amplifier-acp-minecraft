@@ -764,6 +764,12 @@ const server=http.createServer(async(req,res)=>{
     else if(req.method==='POST'&&['/activity/review-settled-moves','/activity/review-settled-actions','/task/review-settled-actions'].includes(req.url)){
       const a=await json(req);
       if(!ready||busy||actionSequence.active||bot.currentWindow||Date.now()<turnUntil||a.generation!==generation)throw Error('Activity review superseded or player not idle');
+      if(Array.isArray(a.reviews)&&a.reviews.some(r=>r?.outcome==='settled_failed_crafting_preparation')){
+        // inventorySnapshot normalizes missing/falsy items to null. Require
+        // known empty raw state before that projection for this review only.
+        const inventory=bot.inventory;
+        if(inventory?.selectedItem!==null||!Array.isArray(inventory?.slots)||inventory.slots.length<5||![0,1,2,3,4].every(i=>inventory.slots[i]===null))throw Error('Craft review requires known empty raw cursor and output/grid');
+      }
       result=require('./activity-review.cjs').review(history,cfg,a,{position:{x:bot.entity.position.x,y:bot.entity.position.y,z:bot.entity.position.z},inventory:containers.inventorySnapshot(bot.inventory)},{taskEffects:req.url==='/task/review-settled-actions'});
     }
     else if(req.method==='POST'&&req.url==='/resume-reviewed'){const a=await json(req);if(!ready||busy||Date.now()<turnUntil||a.generation!==generation)throw Error('Recovery review superseded or player not idle');result=history.resumeReviewed(a);record('operator_recovery',{task_id:result.id,reason:a.reason});}
