@@ -409,6 +409,7 @@ async function operate(name,a={},sequenceId=null){
   if(name==='gather')gatherTargets(a);
   if(name==='dig'){const block=digTarget(coord(a),a.expected);spatial.digGuard(bot,block);spatial.harvestTool(bot,block);if(!bot.canDigBlock(block))throw Error('Target is out of reach; plan a safe standing position first');}
   if(name==='place'){const p=coord(a);placementTarget(p);spatial.placementSupport(bot,p,a.support_face,a.item);}
+  if(name==='craft')crafting.preflight(bot,a.item);
   if(name==='container')containers.preflight(bot,coord(a),a);
   if(name==='furnace')survival.furnacePreflight(bot,coord(a),a);
   if(name==='activate_control')new BlockControls(history).preflight(bot,coord(a),a);
@@ -521,7 +522,7 @@ async function operate(name,a={},sequenceId=null){
         if(bot.currentWindow){bot.closeWindow(bot.currentWindow);await refreshInventory(bot);check();}
         let table=null,recipe=bot.recipesFor(item.id,null,1,null)[0];
         if(!recipe){table=bot.findBlock({matching:b=>b.name==='crafting_table',maxDistance:24});recipe=bot.recipesFor(item.id,null,1,table)[0];}
-        if(!recipe)throw Error('No recipe possible with current inventory and nearby crafting table; no movement performed');
+        if(!recipe)throw Error('No recipe possible after crafting preparation; cursor/grid contents or window state may have changed. Inspect inventory and crafting state before retrying; no movement performed');
         if(table&&recipe.requiresTable)await go(table.position,2);
         const result=await crafting.craft(bot,item,a.count,table,check);
         return {...result,position:bot.entity.position.clone()};

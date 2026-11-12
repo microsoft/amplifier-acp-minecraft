@@ -177,6 +177,43 @@ class Client:
         return (isinstance(steering, dict) and steering.get('supported') is True
                 and steering.get('receiptsMethod') == '_session/input_receipts')
 
+    def _no_forward_binding(self, method, params):
+        """Freeze bounded request facts before the SDK sends the operation."""
+        def mapping(value):
+            return value if isinstance(value, dict) else {}
+
+        def identity(value):
+            try:
+                return isinstance(value, str) and 1 <= len(value.encode('utf-8')) <= 512
+            except UnicodeEncodeError:
+                return False
+
+        namespace = 'com.microsoft.amplifier.attention'
+        cap = mapping(mapping(mapping(self.info).get('_meta')).get(namespace))
+        if (method not in ('session/prompt', '_session/steering')
+                or type(cap.get('version')) is not int or cap['version'] != 1
+                or type(cap.get('noForwardRejectionVersion')) is not int
+                or cap['noForwardRejectionVersion'] != 1 or cap.get('promptMetadata') != namespace):
+            return None
+        params = mapping(params)
+        offer = mapping(mapping(params.get('_meta')).get(namespace))
+        sid, offer_id = params.get('sessionId'), offer.get('id')
+        return (sid, offer_id) if identity(sid) and sid == self.session and identity(offer_id) else None
+
+    def _no_forward_receipt(self, binding, data):
+        """Validate host evidence only after an SDK-correlated RequestError."""
+        if binding is None or not isinstance(data, dict):
+            return None
+        sid, offer_id = binding
+        receipt = data.get('com.microsoft.amplifier.attention')
+        if (not isinstance(receipt, dict) or sid != self.session
+                or type(receipt.get('version')) is not int or receipt['version'] != 1
+                or receipt.get('outcome') != 'not_forwarded'
+                or receipt.get('sessionId') != sid or receipt.get('id') != offer_id):
+            return None
+        # Do not retain arbitrary error data, messages or the offer's ticket.
+        return {'version': 1, 'id': offer_id, 'sessionId': sid, 'outcome': 'not_forwarded'}
+
     def _permission(self, session_id, update_call, options):
         call = {**self.tool_calls.get(update_call.get('toolCallId'), {}), **update_call}
         raw = call.get('rawInput') or {}
@@ -276,6 +313,13 @@ class Client:
             self.activity_at = started
         reported = started
         frames, size = self.frames, self.observed_bytes
+        no_forward_binding = self._no_forward_binding(method, params)
+        if no_forward_binding is not None:
+            # Send the same immutable IDs captured above even if a caller later
+            # mutates its dictionaries. Prompt content is not copied or changed.
+            namespace = 'com.microsoft.amplifier.attention'
+            params = {**params, '_meta': {**params['_meta'],
+                      namespace: dict(params['_meta'][namespace])}}
         operation = asyncio.create_task(self._invoke(method, params))
         drain = None
         try:
@@ -312,6 +356,14 @@ class Client:
             rejected.request_rejected = True
             rejected.request_method = method
             rejected.request_error_code = error.code
+            receipt = self._no_forward_receipt(no_forward_binding, error.data)
+            if receipt is not None:
+                rejected.no_forward_receipt = receipt
+                self.observe('attention_not_forwarded', method=method,
+                             session_id=receipt['sessionId'], offer_id=receipt['id'],
+                             request_error_code=error.code, effects_settled=False)
+            # Retain the existing error/authority path. This fact neither settles
+            # prior work nor grants replay, a new offer or another task turn.
             raise rejected from None
         except (ConnectionError, OSError) as error:
             self._fail(ProtocolError('ACP transport closed; delivery is unknown'))

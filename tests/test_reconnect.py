@@ -176,3 +176,19 @@ class Reconnect(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result['task']['turns'], 13)
         errors = [e for e in result['events'] if e['kind'] == 'adapter_error']
         self.assertEqual([e['phase'] for e in errors], ['connection_or_scheduling'])
+
+    async def test_known_no_forward_rejection_keeps_existing_effect_guard_and_no_replay(self):
+        result = await self.exercise('attention-rejected')
+        events = [e for e in result['events'] if e['kind'] == 'attention_not_forwarded']
+        self.assertEqual(len(events), 1)
+        self.assertEqual(events[0]['offer_id'], 'offer')
+        self.assertIs(events[0]['effects_settled'], False)
+        self.assertEqual(sum(v['method'] == 'session/prompt' for v in result['frames']), 2)
+        self.assertEqual(len(result['attention_posts']), 1)
+        self.assertEqual(result['reserved'], 2)
+        self.assertFalse(result['finishes'][0]['error'])
+        self.assertTrue(result['finishes'][1]['error'])
+        self.assertEqual(result['task']['turns'], 13)
+        self.assertEqual(result['task']['max_turns'], 45)
+        self.assertEqual(result['task']['deadline'], 9999999999999)
+        self.assertEqual(result['session']['session'], 'durable-session')
