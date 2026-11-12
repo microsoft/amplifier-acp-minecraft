@@ -24,6 +24,9 @@ for line in sys.stdin:
         if scenario.startswith('attention-'):
             result['_meta'] = {'com.microsoft.amplifier.attention': {
                 'version': 1, 'enabled': True, 'method': '_amplifier/attention'}}
+            if scenario == 'attention-rejected':
+                result['_meta']['com.microsoft.amplifier.attention'].update(
+                    promptMetadata='com.microsoft.amplifier.attention', noForwardRejectionVersion=1)
         send({'id': value['id'], 'result': result})
     elif method == 'session/new':
         send({'id': value['id'], 'result': {'sessionId': 'durable-session'}})
@@ -35,6 +38,11 @@ for line in sys.stdin:
     elif method == '_amplifier/attention':
         send({'id': value['id'], 'result': {'action': 'engage', 'id': 'offer', 'ticket': 'fixture-ticket'}})
     elif method == 'session/prompt':
+        if scenario == 'attention-rejected' and launch > 1:
+            send({'id': value['id'], 'error': {'code': -32002, 'message': 'private admission failure',
+                  'data': {'com.microsoft.amplifier.attention': {'version': 1, 'id': 'offer',
+                           'sessionId': 'durable-session', 'outcome': 'not_forwarded'}}}})
+            break
         if scenario == 'during-prompt':
             send({'method': 'session/update', 'params': {'sessionId': 'durable-session',
                   'update': {'sessionUpdate': 'tool_call', 'toolCallId': 'unfinished',
