@@ -26,7 +26,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           repository: microsoft/amplifier-constellation
-          ref: 581d437b454320338ea805e8144d1c523aace3d9
+          ref: 9649a7422029d914aef813fb2461c22ead51905c
           path: native-shared
       - name: Build actual target shared driver
         shell: bash

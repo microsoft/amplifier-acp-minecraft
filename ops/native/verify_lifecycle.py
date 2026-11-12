@@ -13,7 +13,7 @@ from test_driver import protect as shared_protect, windows_user_sid
 sys.path.insert(0,str(SOURCE/'ops/native'))
 from fixture_security import protect_fixture_path,fixture_application_identities
 from test_service import NativeServiceApplicationTests
-from constellation_native import Session
+from constellation_native import Session, Refused, initialize_root, initialize_config
 from installation_native import NativeIO,NativeInstallation,validate_driver_mapping,connection_backend
 from installation_guard import owner_io,installation_lock,durable_write,read,service_active,service_stopped
 from installation_participant import Participant
@@ -89,11 +89,20 @@ report={'source':manifest['source_commit'],'bundle_target':manifest['target'],
  'driver_sha256':hashlib.sha256(DRIVER.read_bytes()).hexdigest(),
  'production_operations':False,'model_prompts':0,'actual_os':sys.platform,'cycles':[],
  'cleanup_fixture_sha256':hashlib.sha256(cleanup_fixture.read_bytes()).hexdigest() if os.name=='nt' else None,
- 'fixture_protection':{'shared_dacl':True,'explicit_current_user_owner':os.name=='nt','scope':'Fresh disposable temp paths only; not production setup'}}
+ 'fixture_protection':{'shared_dacl':True,'explicit_current_user_owner':os.name=='nt','scope':'Synthetic package/input files only; initial roots and driver config use production bootstrap'}}
 units=[];dispatched=[];temp=None
 try:
- temp=tempfile.TemporaryDirectory(prefix='minecraft-native-domain-');root=pathlib.Path(temp.name).resolve();fixture_root=root;protect(root)
- home=root/'game';state=root/'state';home.mkdir();state.mkdir();protect(home);protect(state)
+ temp=tempfile.TemporaryDirectory(prefix='minecraft-native-domain-');root=pathlib.Path(temp.name).resolve()/'installation';fixture_root=root
+ home=root/'game';state=root/'state'
+ report['bootstrap']={'roots':{}}
+ for directory in (root,home,state):
+  created=initialize_root(DRIVER,directory)
+  assert created['created'] is True and pathlib.Path(created['path'])==directory,created
+  existing=initialize_root(DRIVER,directory)
+  assert existing['created'] is False,existing
+  report['bootstrap']['roots'][directory.name]={'created':created,'validated_existing':existing}
+ # Existing private directories alone are not unused-slot proof. This test owns
+ # the fresh temporary parent and the three newly-created empty children above.
  with socket.socket() as sock:sock.bind(('127.0.0.1',0));port=sock.getsockname()[1]
  cfg={'home':str(home),'state':str(state),'session_verification_seconds':12,
   'native_platform':{'version':1,'python':sys.executable,'services':{'body':'body','controller':'controller'},'driver':str(DRIVER),'config':str(root/'driver.json')},
@@ -154,7 +163,18 @@ try:
   applications[role]={'executable':sys.executable,'args':argv,'cwd':str(root),'identity_path':str(state/(role+'-identity.json'))}
  data={'version':1,'roots':{'home':str(home),'state':str(state)},'locks':{'installation':str(state/'installation.lock')},'services':service_map,'registrations':registrations,'service_applications':applications,'commands':{'session_endpoint':{'executable':endpoint['command'][0],'args':endpoint['command'][1:],'cwd':endpoint['cwd'],'timeout_seconds':200},'session_probe':{'executable':cfg['native_platform']['python'],'args':[str(wrapper),'--home',str(home),'--result','{result}','--native-owner-config',str(ownercfg)],'cwd':str(root),'timeout_seconds':200,'result_root':'state'}}}
  data['exchanges']={key:{'lock':'installation','profile':{'current':str(home/key),'roots':{'state':str(state)}}} for key in ('app','venv')}
- drivercfg.write_text(json.dumps(data));protect(drivercfg);validate_driver_mapping(cfg,drivercfg)
+ published=initialize_config(DRIVER,drivercfg,data)
+ assert published['created'] is True,published
+ original_config=drivercfg.read_bytes()
+ existing=initialize_config(DRIVER,drivercfg,data)
+ assert existing['created'] is False and drivercfg.read_bytes()==original_config,existing
+ changed=json.loads(json.dumps(data));changed['registrations']['body']['description']+=' changed'
+ try:initialize_config(DRIVER,drivercfg,changed)
+ except Refused:pass
+ else:raise AssertionError('Bootstrap replaced an existing different owner config')
+ assert drivercfg.read_bytes()==original_config
+ report['bootstrap'].update(config=published,validated_existing_config=existing,changed_config_refused=True)
+ validate_driver_mapping(cfg,drivercfg)
  preflight=subprocess.run([str(DRIVER),'--config',str(drivercfg),'serve'],
      input=json.dumps({'version':1,'id':'read-only-preflight','op':'describe'})+'\n',capture_output=True,text=True,timeout=20)
  report['driver_preflight']={'returncode':preflight.returncode,'stdout':preflight.stdout,'stderr':preflight.stderr}
