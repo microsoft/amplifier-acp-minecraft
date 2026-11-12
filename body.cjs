@@ -387,7 +387,7 @@ async function operate(name,a={},sequenceId=null){
   // Pure argument/reach checks precede effect admission. Recheck inside the
   // operation too: a later race or transport failure remains uncertain.
   try{
-  if(name==='move'){const p=coord(a);if(a.mode==='walk_only'){const route=walking.plan(bot,p,a.range??0);if(!route.reachable)throw Error(`No walk-only route (${route.status}); inspect the terrain. No movement performed.`);}}
+  if(name==='move'){const p=coord(a);if((a.range??0)===0){const stance=spatial.targetStance(bot,p);if(stance.exact_target_obstructed)throw Error(`Exact destination is obstructed: feet ${stance.feet.name}, head ${stance.head.name}. Coordinates identify player feet, not the supporting block. Inspect current clearance; no movement performed.`);}if(a.mode==='walk_only'){const route=walking.plan(bot,p,a.range??0);if(!route.reachable)throw Error(`No walk-only route (${route.status}); inspect the terrain. No movement performed.`);}}
   if(name==='gather')gatherTargets(a);
   if(name==='dig'){const block=bot.blockAt(coord(a));if(!block||block.name!==a.expected)throw Error('Target block changed; inspect before digging');spatial.digGuard(bot,block);spatial.harvestTool(bot,block);if(!bot.canDigBlock(block))throw Error('Target is out of reach; plan a safe standing position first');}
   if(name==='container')containers.preflight(bot,coord(a),a);
