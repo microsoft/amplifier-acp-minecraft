@@ -30,7 +30,7 @@ function context(cfg,history,live){
   const position=p=>p?Object.fromEntries(Object.entries(p).map(([k,v])=>[k,Math.floor(v)])):null;
   events.push({id:'environment:self',kind:'environment',source:'Direct current player observation',content:{position:position(live.position),health:live.health,inventory:live.inventory,inventory_counts}});
   events.push({id:'environment:peers',kind:'environment',source:'Visible game players',content:(live.players||[]).map(p=>({name:p.name,position:position(p.position)}))});
-  if(live.crops)events.push({id:'environment:crops',kind:'environment',source:'Loaded nearby crop and farmland block states',content:{...live.crops,by_position:Object.fromEntries((live.crops.blocks||[]).filter(b=>b.position&&['x','y','z'].every(k=>Number.isInteger(b.position[k]))).map(b=>[[b.position.x,b.position.y,b.position.z].join(','),b]))}});
+  if(live.crops)events.push({id:'environment:crops',kind:'environment',source:'Loaded nearby crop, farmland and mushroom block states',content:{...live.crops,by_position:Object.fromEntries((live.crops.blocks||[]).filter(b=>b.position&&['x','y','z'].every(k=>Number.isInteger(b.position[k]))).map(b=>[[b.position.x,b.position.y,b.position.z].join(','),b]))}});
  }
  return {scope:`${cfg.conversation_id||'minecraft:workshop'}:${cfg.username}`,
   task:task?{id:task.id,goal:task.goal,status:task.status,deadline_ms:task.bounds?bounds.get(task).deadline_ms:task.deadline,remaining_turns:task.bounds?bounds.remaining(task).remaining_turns:Math.max(0,task.max_turns-task.turns)}:null,events};

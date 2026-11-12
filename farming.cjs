@@ -6,7 +6,7 @@ const hoes=new Set(['wooden_hoe','stone_hoe','iron_hoe','golden_hoe','diamond_ho
 const cropBlocks=Object.freeze({wheat_seeds:'wheat',beetroot_seeds:'beetroots',
  melon_seeds:'melon_stem',pumpkin_seeds:'pumpkin_stem',carrot:'carrots',potato:'potatoes'});
 function plantedBlocks(item){return Object.hasOwn(cropBlocks,item)?[cropBlocks[item]]:[];}
-const observedCrops=new Set([...Object.values(cropBlocks),'farmland','nether_wart','cocoa','sweet_berry_bush','torchflower_crop','pitcher_crop']);
+const observedCrops=new Set([...Object.values(cropBlocks),'farmland','nether_wart','cocoa','sweet_berry_bush','torchflower_crop','pitcher_crop','red_mushroom','brown_mushroom']);
 function observeCrops(bot){
  // Read loaded chunk data only: no walking, growth acceleration or model call.
  // Stable ordering and no timestamp keep unchanged crops from waking a watch.
