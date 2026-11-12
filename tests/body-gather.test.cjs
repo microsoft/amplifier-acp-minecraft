@@ -5,7 +5,7 @@ const {EventEmitter}=require('node:events'),{createRequire}=require('node:module
 const {Vec3}=require('vec3');
 const root=path.resolve(__dirname,'..'),realRequire=createRequire(path.join(root,'body.cjs'));
 const xyz=p=>({x:p.x,y:p.y,z:p.z});
-function fixture({far=false,onMove,onEquip,onDig}={}){
+function fixture({far=false,onMove,onEquip,onDig,onDigGuard}={}){
  const home=fs.mkdtempSync(path.join(os.tmpdir(),'body-gather-'));
  const config=path.join(home,'config.json');fs.writeFileSync(config,JSON.stringify({username:'Builder',token:'fixture'}));
  const bot=new EventEmitter(),paver=new Vec3(1,63,0),quarry=new Vec3(3,64,0),second=new Vec3(4,64,0);
@@ -23,7 +23,7 @@ function fixture({far=false,onMove,onEquip,onDig}={}){
  const context=vm.createContext({require:name=>{
   if(name==='mineflayer')return {createBot:()=>bot};
   if(name==='node:http')return {createServer:()=>({listen(){},close(){}})};
-  if(name==='./spatial.cjs')return {...spatial,digGuard(){},harvestTool:()=>({name:'pickaxe'}),supported:()=>true,route:()=>({reachable:true}),localMap:()=>({}),
+  if(name==='./spatial.cjs')return {...spatial,digGuard(){onDigGuard?.();},harvestTool:()=>({name:'pickaxe'}),supported:()=>true,route:()=>({reachable:true}),localMap:()=>({}),
    gotoWithProgress:async(_bot,goal)=>{moves.push(goal);bot.entity.position=new Vec3(goal.x,goal.y,goal.z);near=true;onMove?.(blocks,quarry);}};
   return realRequire(name);
  },structuredClone,module:{exports:{}},console:{log(){}},Buffer,
@@ -134,5 +134,13 @@ test('unconfirmed block removal is still uncertain and cannot become a settled m
  const f=fixture({onDig(){}});try{
   const r=await f.run({targets:[xyz(f.quarry)]});assert.match(r.error,/did not confirm/);
   assert.equal(r.settled_failure,undefined);assert.equal(f.history.data.turn.actions[0].status,'uncertain');
+ }finally{f.close();}
+});
+
+test('supporting-player dig refusal happens before any admitted effect',async()=>{
+ const f=fixture({onDigGuard(){throw Error('Refusing to remove a block supporting a player; move to safe footing first');}});try{
+  await assert.rejects(f.operate('dig',{...xyz(f.quarry),expected:'stone'}),/supporting a player/);
+  assert.equal(f.dug.length,0);assert.equal(f.history.data.turn.actions.length,0);
+  assert.equal(f.history.data.events.at(-1).kind,'action_preflight_refused');assert.equal(f.history.data.events.at(-1).effect_attempted,false);
  }finally{f.close();}
 });

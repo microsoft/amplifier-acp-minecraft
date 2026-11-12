@@ -389,6 +389,7 @@ async function operate(name,a={},sequenceId=null){
   try{
   if(name==='move'){const p=coord(a);if(a.mode==='walk_only'){const route=walking.plan(bot,p,a.range??0);if(!route.reachable)throw Error(`No walk-only route (${route.status}); inspect the terrain. No movement performed.`);}}
   if(name==='gather')gatherTargets(a);
+  if(name==='dig'){const block=bot.blockAt(coord(a));if(!block||block.name!==a.expected)throw Error('Target block changed; inspect before digging');spatial.digGuard(bot,block);spatial.harvestTool(bot,block);if(!bot.canDigBlock(block))throw Error('Target is out of reach; plan a safe standing position first');}
   if(name==='container')containers.preflight(bot,coord(a),a);
   }catch(error){try{retryGuard.failed(bot,name,a,error);}catch{}record('action_preflight_refused',{action:name,arguments:a,error:error.message,effect_attempted:false});throw error;}
   if(++actions>24&&cfg.human_engagement?.enabled!==true)throw Error('This turn reached its 24-action budget; save progress with work_report');
@@ -728,10 +729,10 @@ const server=http.createServer(async(req,res)=>{
     else if(req.method==='POST'&&req.url==='/finish'){const a=await json(req);if(ready)history.checkpoint({position:bot.entity.position.clone(),health:bot.health,recent_actions:receipts.slice(-8)});history.finish(!!a.error||busy,!!a.budget_limited&&!busy);stop();result={stopped:true};}
     else if(req.method==='POST'&&req.url==='/wake'){if(!workAllowed())throw Error('Current mode/task cannot wake construction');const a=await json(req);if(a.generation!==generation||Date.now()<turnUntil)throw Error('Observation superseded or turn already active');result=history.wake(a.task_id);record('attention_wake',{task_id:a.task_id});}
     else if(req.method==='POST'&&req.url==='/activity/review-no-effect'){const a=await json(req);if(!ready||busy||Date.now()<turnUntil||a.generation!==generation)throw Error('Activity review superseded or player not idle');result=activityPolicy.reviewNoEffect(history,cfg,a);record('operator_activity_review',result);}
-    else if(req.method==='POST'&&['/activity/review-settled-moves','/activity/review-settled-actions'].includes(req.url)){
+    else if(req.method==='POST'&&['/activity/review-settled-moves','/activity/review-settled-actions','/task/review-settled-actions'].includes(req.url)){
       const a=await json(req);
       if(!ready||busy||actionSequence.active||bot.currentWindow||Date.now()<turnUntil||a.generation!==generation)throw Error('Activity review superseded or player not idle');
-      result=require('./activity-review.cjs').review(history,cfg,a,{position:{x:bot.entity.position.x,y:bot.entity.position.y,z:bot.entity.position.z},inventory:containers.inventorySnapshot(bot.inventory)});
+      result=require('./activity-review.cjs').review(history,cfg,a,{position:{x:bot.entity.position.x,y:bot.entity.position.y,z:bot.entity.position.z},inventory:containers.inventorySnapshot(bot.inventory)},{taskEffects:req.url==='/task/review-settled-actions'});
     }
     else if(req.method==='POST'&&req.url==='/resume-reviewed'){const a=await json(req);if(!ready||busy||Date.now()<turnUntil||a.generation!==generation)throw Error('Recovery review superseded or player not idle');result=history.resumeReviewed(a);record('operator_recovery',{task_id:result.id,reason:a.reason});}
     else if(req.method==='POST'&&req.url==='/stop'){stop();inbox.length=0;history.data.participation_pending=[];history.data.participation_proposals={};activityParticipation.clear();history.stop({activity:activityPolicy.enabled(cfg)});taskIntake.revokeSources();history.save();result={stopped:true};}
