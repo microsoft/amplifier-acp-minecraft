@@ -145,6 +145,14 @@ this prevents edge-overlap corrections during sprint-jumps onto full blocks.
 It does not relax server collision checks or grant new movement capabilities.
 For level activities that prohibit jumping, select `mode: "walk_only"` for both
 `plan_route` and `move`; ordinary pathfinding permits other traversal strategies.
+Normal movement's configured `maxDropDown=2` is measured by upstream pathfinding
+from the current feet to the landing **floor**. A dry full-block drop edge therefore
+permits one block of feet descent. This is not a one-block limit on the whole
+route: a longer descent needs multiple valid edges with head clearance and
+supported landings. Fluid, ladder and partial-block geometry is separate.
+Observations and normal `plan_route` results expose `movement_capabilities`
+from the active movement settings. Planning still cannot dig, build towers,
+parkour or place scaffolding; this reporting does not change those guards.
 Level routes report `current_feet` and reject a fractional-height start as
 `non_level_start` before moving. A clear center cell alone is not enough when
 the player's edge is resting on a neighboring slab.

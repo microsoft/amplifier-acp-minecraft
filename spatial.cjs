@@ -51,16 +51,25 @@ function targetStance(bot,p){
   meaning:'Target coordinates are feet, not the supporting block. Partial or unloaded geometry is not proof of clearance; no alternative destination is selected.'};
 }
 
+// Upstream getLandingBlock compares current feet y to the landing floor y.
+// This describes dry full-block drop edges, not a route's total elevation change
+// or the distinct fluid/climbing/partial-block mechanics.
+function movementCapabilities(bot){
+ const m=bot.pathfinder?.movements,drop=m?.maxDropDown;
+ return {normal:{max_dry_full_block_feet_drop_per_edge:Number.isFinite(drop)?Math.max(0,Math.floor(drop)-1):null,
+  scope:'Per dry full-block drop edge, not total route descent. Head clearance and landing support still required; fluids, ladders and partial blocks have separate geometry.',
+  can_dig:m?.canDig??null,parkour:m?.allowParkour??null,towers:m?.allow1by1towers??null},walk_only:{level_only:true}};
+}
 function footing(p,positions){return positions.some(v=>p.x>=Math.floor(v.x-.299)&&p.x<=Math.floor(v.x+.299)&&p.z>=Math.floor(v.z-.299)&&p.z<=Math.floor(v.z+.299)&&Math.floor(v.y-.001)===p.y);}
 class FeetGoal extends goals.GoalNear {
  isEnd(n){return n.y===this.y&&((n.x-this.x)**2+(n.z-this.z)**2)<=this.rangeSq;}
 }
 function route(bot,p,range=0){
- const target_stance=targetStance(bot,p);
- if(range===0&&target_stance.exact_target_obstructed)return {reachable:false,status:'target_obstructed',target:p,range,exact_feet_y:true,steps:[],target_stance,coverage:'Loaded exact destination is obstructed; no path search or movement performed'};
+ const target_stance=targetStance(bot,p),movement_capabilities=movementCapabilities(bot);
+ if(range===0&&target_stance.exact_target_obstructed)return {reachable:false,status:'target_obstructed',target:p,range,exact_feet_y:true,steps:[],target_stance,movement_capabilities,coverage:'Loaded exact destination is obstructed; no path search or movement performed'};
  const goal=new FeetGoal(p.x,p.y,p.z,range);
  const r=bot.pathfinder.getPathTo(bot.pathfinder.movements,goal,150);normalizePassages(bot,r);
- return {reachable:r.status==='success',status:r.status,target:p,range,target_stance,exact_feet_y:true,steps:(r.path||[]).map(n=>({x:n.x,y:n.y,z:n.z})).slice(0,64),coverage:'Loaded terrain only; a planned path is not proof of arrival'};
+ return {reachable:r.status==='success',status:r.status,target:p,range,target_stance,movement_capabilities,exact_feet_y:true,steps:(r.path||[]).map(n=>({x:n.x,y:n.y,z:n.z})).slice(0,64),coverage:'Loaded terrain only; a planned path is not proof of arrival'};
 }
 // Pathfinder's post-processing targets the top of collision shapes, including
 // the thin edge of an open door. Keep the waypoint in its clear lower passage.
@@ -140,4 +149,4 @@ async function gotoWithProgress(bot,goal,{stallMs=8000,pollMs=500,settleMs=1000}
  }finally{clearInterval(timer);clearTimeout(drainTimer);}
 }
 
-module.exports={alignPlayerCollision,survey,openPassage,SpatialMovements,cell,targetStance,supported,footing,FeetGoal,route,localMap,digGuard,harvestTool,gotoWithProgress,placementSupport,normalizePassages};
+module.exports={alignPlayerCollision,survey,openPassage,SpatialMovements,cell,targetStance,movementCapabilities,supported,footing,FeetGoal,route,localMap,digGuard,harvestTool,gotoWithProgress,placementSupport,normalizePassages};
