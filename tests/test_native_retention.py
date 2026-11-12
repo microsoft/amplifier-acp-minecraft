@@ -2,7 +2,7 @@
 from pathlib import Path
 import unittest
 import uuid
-from installation_guard import durable_write
+from installation_guard import durable_write,read
 from test_installation_retention import RetentionTests as _Fixture
 
 
@@ -31,6 +31,11 @@ class NativeRetentionTests(unittest.TestCase):
         plan=self.stage();self.age(plan);self.exchange(plan)
         (self.keep.root/'native-source'/str(uuid.uuid4())).mkdir()
         self.assertIn('held',self.provider.cleanup());self.assertTrue(Path(plan['stage']).exists())
+    def test_proven_partial_rollback_keeps_target_without_permanent_uncertain_hold(self):
+        plan=self.stage();self.age(plan);directory,_=self.exchange(plan,'rolled_back')
+        journal=self.keep.root/'native-source-receipts'/(directory.name+'.json')
+        value=read(journal);value['entries']={'app':{}};durable_write(journal,value)
+        self.assertNotIn('held',self.provider.cleanup());self.assertTrue(Path(plan['stage']).exists())
 
 # Do not rediscover the imported fixture's tests in this module.
 del _Fixture

@@ -155,7 +155,9 @@ class Retention:
             for operation,path in sorted(operations.items()):
                 if not canonical_id_or_false(operation):raise ContinuityError('Unknown native source operation')
                 value=document(path)
-                if value.get('phase') not in ('applied','rolled_back') or set(value.get('entries',{}))!={'app','venv'}:
+                phase=value.get('phase');keys=set(value.get('entries',{}))
+                if (phase not in ('applied','rolled_back') or not keys.issubset({'app','venv'})
+                        or (phase=='applied' and keys!={'app','venv'})):
                     raise ContinuityError('Native source exchange is unsettled')
                 transaction=value.get('transaction')
                 if not canonical_id_or_false(transaction):raise ContinuityError('Unknown native source transaction')
