@@ -12,7 +12,7 @@ function review(history,cfg,input,observation,{taskEffects=false}={}){
  if(!Number.isSafeInteger(input.generation)||!uuid(input.request_id)||!hash(input.expected_turn_sha256)||!hash(input.expected_inventory_sha256)||!hash(input.evidence_sha256)||!Object.values(input.expected_position).every(Number.isFinite)||!Array.isArray(input.reviews)||input.reviews.length<1||input.reviews.length>64)throw Error('Malformed activity review');
  for(const item of input.reviews){
   exact(item,['action_id','receipt_sha256','outcome','reason']);
-  if(typeof item.action_id!=='string'||!hash(item.receipt_sha256)||!['no_effect','settled_failed_movement','settled_failed_storage','settled_partial_gather','settled_partial_build','settled_failed_placement'].includes(item.outcome)||typeof item.reason!=='string'||!item.reason.trim()||item.reason.length>2000)throw Error('Each failed action needs concrete reviewed evidence');
+  if(typeof item.action_id!=='string'||!hash(item.receipt_sha256)||!['no_effect','settled_failed_movement','settled_failed_storage','settled_partial_gather','settled_partial_build','settled_failed_placement','settled_failed_crafting_preparation'].includes(item.outcome)||typeof item.reason!=='string'||!item.reason.trim()||item.reason.length>2000)throw Error('Each failed action needs concrete reviewed evidence');
  }
  const policy=require('./activity-policy.cjs'),turn=history.data.last_turn;
  if(!policy.enabled(cfg)||history.data.turn||!turn||!Array.isArray(turn.actions))throw Error('Exact idle action history required');
@@ -33,7 +33,16 @@ function review(history,cfg,input,observation,{taskEffects=false}={}){
   const events=history.data.events.filter(e=>e.action_id===item.action_id);
   const starts=events.filter(e=>e.kind==='action_started'),ends=events.filter(e=>['action_result','action_failed'].includes(e.kind));
   const start=starts[0],end=ends[0];
-  if(starts.length!==1||ends.length!==1||start.action!==end.action||!['move','container','gather',...(taskEffects?['dig']:['build','place'])].includes(start.action)||(start.action==='build'?end.kind!=='action_result':end.kind!=='action_failed')||end.timeout||end.operation_settled===false||!Number.isFinite(Date.parse(start.time))||!Number.isFinite(Date.parse(end.time))||!(Date.parse(start.time)>=Date.parse(turn.started_at))||Date.parse(end.time)<Date.parse(start.time)||digest(start.arguments)!==digest(end.arguments)||digest(end)!==item.receipt_sha256)throw Error('Exact retained terminal action receipt required');
+  if(starts.length!==1||ends.length!==1||start.action!==end.action||!['move','container','gather',...(taskEffects?['dig']:['build','place','craft'])].includes(start.action)||(start.action==='build'?end.kind!=='action_result':end.kind!=='action_failed')||end.timeout||end.operation_settled===false||!Number.isFinite(Date.parse(start.time))||!Number.isFinite(Date.parse(end.time))||!(Date.parse(start.time)>=Date.parse(turn.started_at))||Date.parse(end.time)<Date.parse(start.time)||digest(start.arguments)!==digest(end.arguments)||digest(end)!==item.receipt_sha256)throw Error('Exact retained terminal action receipt required');
+  if(start.action==='craft'){
+   // This exact legacy branch follows awaited preparation (each click has a
+   // server snapshot and pong barrier), before movement or recipe execution.
+   // Earlier cursor/grid/window effects remain historical; never infer a delta.
+   const a=start.arguments,inventory=observation.inventory;
+   const valid=a&&Object.keys(a).sort().join()===['count','item'].join()&&typeof a.item==='string'&&/^[a-z][a-z0-9_]*$/.test(a.item)&&Number.isSafeInteger(a.count)&&a.count>=1&&a.count<=8;
+   const clear=inventory?.cursor===null&&Array.isArray(inventory.slots)&&inventory.slots.length>=5&&[0,1,2,3,4].every(i=>inventory.slots[i]===null);
+   if(!valid||!clear||item.outcome!=='settled_failed_crafting_preparation'||end.error!=='No recipe possible with current inventory and nearby crafting table; no movement performed')throw Error('Craft review requires exact legacy post-preparation refusal and a currently clear cursor/grid');
+  }else if(item.outcome==='settled_failed_crafting_preparation')throw Error('Crafting preparation review is only for a craft action');
   if(start.action==='place'){
    // Explicit owner review only. Initial occupied-target refusal predates
    // movement/equip; missing support and post-preparation races do not.
