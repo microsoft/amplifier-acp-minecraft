@@ -17,7 +17,7 @@ import time
 import urllib.request
 from pathlib import Path
 
-from installation_guard import ContinuityError, digest, durable_write, installation_lock, read, enrollment_ids
+from installation_guard import ContinuityError, digest, durable_write, installation_lock, read, enrollment_ids, service_active, service_stopped
 from installation_retention import Retention
 
 REPOSITORY = 'microsoft/amplifier-acp-minecraft'
@@ -313,9 +313,9 @@ class Provider:
         services = backend.services()
         if rollback and receipt['phase'] in ('verifying_body','verified'):
             from installation_guard import continuity, require_idle
-            if services['controller']['ActiveState'] not in ('inactive','failed'):
+            if not service_stopped(services['controller']):
                 raise ContinuityError('Never roll back after listener restoration')
-            if services['body']['ActiveState']=='active':
+            if service_active(services['body']):
                 after=backend.capture();require_idle(after)
                 continuity(receipt['baseline'],after,body_restart=True)
                 # The participant owns this lifecycle action; source exchange
@@ -323,12 +323,12 @@ class Provider:
                 durable_write(self.root/'transactions'/(transaction+'.json'),{**receipt,'phase':'verifying_body'})
                 backend.action('body','stop')
                 end=time.monotonic()+8
-                while backend.services()['body']['ActiveState'] not in ('inactive','failed'):
+                while not service_stopped(backend.services()['body']):
                     if time.monotonic()>=end:raise ContinuityError('Rollback body did not settle')
                     time.sleep(.1)
             durable_write(self.root/'transactions'/(transaction+'.json'),{**receipt,'phase':'ready'})
             services=backend.services()
-        if any(v['ActiveState'] not in ('inactive','failed') or str(v['MainPID'])!='0' for v in services.values()):
+        if any(not service_stopped(v) for v in services.values()):
             raise ContinuityError('Source exchange requires both owned units stopped')
 
     def installed_marker(self, plan, stage):

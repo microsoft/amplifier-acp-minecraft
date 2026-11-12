@@ -13,7 +13,8 @@ from pathlib import Path
 
 from installation_guard import (ContinuityError, NotIdle, continuity, digest,
                                 durable_write, installation_lock, read,
-                                require_idle, restore_plan, snapshot, OBSERVATIONS, enrollment_ids)
+                                require_idle, restore_plan, snapshot, OBSERVATIONS, enrollment_ids,
+                                service_active, service_stopped, service_unavailable, service_process_identity)
 from update_admission import process_identity
 from connection_state import deferred as connection_deferred
 
@@ -81,7 +82,7 @@ class LocalInstallation:
         services = self.services()
         body = status = None
         before = read(self.home/'workshop.json')
-        if services['body']['ActiveState'] == 'active':
+        if service_active(services['body']):
             cfg = read(self.home/'config.json')
             def get(endpoint):
                 request = urllib.request.Request(f"http://127.0.0.1:{int(cfg['control_port'])}/{endpoint}",
@@ -194,7 +195,9 @@ class Participant:
             services = self.backend.services()
             # Validate captured restoration evidence before introducing any gate.
             restore_plan(services, services)
-            if any(s['ActiveState']=='active' and (s.get('LoadState')=='masked' or 'masked' in s.get('UnitFileState','')) for s in services.values()):
+            if service_active(services['controller']) and not service_process_identity(services['controller']):
+                raise ContinuityError('Controller generation is unavailable before admission closure')
+            if any(service_active(s) and service_unavailable(s) for s in services.values()):
                 raise NotIdle('Preserve an already-active masked unit; automatic stop cannot restore that state')
             self.save(context_hash=digest(self.envelope), config_hash=digest(self.c), transaction_id=self.tx,
                       phase='gating', original=services, game=self.game)
@@ -210,10 +213,10 @@ class Participant:
             services = self.backend.services()
             restore_plan(self.value['original'], services)
             old = self.value['original']['controller']
-            if old['ActiveState'] == 'active':
+            if service_active(old):
                 ack = self.home/'installation-updates/controller-idle.json'
-                expected = {'transaction_id':self.tx, **old['process_identity']}
-                if services['controller'].get('process_identity') != old['process_identity']:
+                expected = {'transaction_id':self.tx, **service_process_identity(old)}
+                if service_process_identity(services['controller']) != service_process_identity(old):
                     raise ContinuityError('Controller changed before settlement')
                 if not ack.exists() or read(ack) != expected:
                     return {'ready':False, 'reason':'busy'}
@@ -225,20 +228,20 @@ class Participant:
             self.save(phase='stopping_controller', baseline=baseline)
         if self.value['phase'] == 'stopping_controller':
             current = self.backend.services()['controller']
-            if current['ActiveState'] == 'active':
+            if service_active(current):
                 self.backend.action('controller', 'stop')
                 return {'ready':False, 'reason':'busy'}
-            if current['ActiveState'] not in ('inactive', 'failed') or str(current['MainPID']) != '0':
+            if not service_stopped(current):
                 return {'ready':False, 'reason':'busy'}
             middle = self.backend.capture()
             continuity(self.value['baseline'], middle)
             self.save(phase='stopping_body' if self.game else 'ready')
         if self.value['phase'] == 'stopping_body':
             current = self.backend.services()['body']
-            if current['ActiveState'] == 'active':
+            if service_active(current):
                 self.backend.action('body', 'stop')
                 return {'ready':False, 'reason':'busy'}
-            if current['ActiveState'] not in ('inactive', 'failed') or str(current['MainPID']) != '0':
+            if not service_stopped(current):
                 return {'ready':False, 'reason':'busy'}
             stopped = self.backend.capture()
             require_idle(stopped)
@@ -274,20 +277,20 @@ class Participant:
             self.save(phase='verified', outcome=outcome, untouched=True)
             return {'verified':True}
         if (outcome=='unchanged' and self.value['phase']=='stopping_controller'
-                and services['controller'].get('process_identity')==self.value['original']['controller'].get('process_identity')
-                and services['controller']['ActiveState']=='active'):
+                and service_process_identity(services['controller'])==service_process_identity(self.value['original']['controller'])
+                and service_active(services['controller'])):
             # Crash/failure before stop was issued: it is still the acknowledged
             # idle controller, behind our gate. No service needs restoration.
             continuity(self.value['baseline'],self.backend.capture())
             self.save(phase='verified',outcome=outcome,untouched=True)
             return {'verified':True}
-        if services['controller']['ActiveState'] == 'active':
+        if service_active(services['controller']):
             raise ContinuityError('Controller resumed before verification')
-        if self.value['original']['body']['ActiveState'] != 'active' and services['body']['ActiveState']=='active':
+        if not service_active(self.value['original']['body']) and service_active(services['body']):
             raise ContinuityError('Previously stopped body was started externally')
-        if self.game and self.value['original']['body']['ActiveState'] == 'active':
+        if self.game and service_active(self.value['original']['body']):
             self.save(phase='verifying_body')
-            if services['body']['ActiveState'] in ('inactive', 'failed'):
+            if service_stopped(services['body']):
                 self.backend.action('body', 'start')
         # Bounded observation only. Repeated verify never restarts an active body.
         end = time.monotonic()+15
@@ -337,11 +340,11 @@ class Participant:
             for kind in ('body', 'controller'):
                 services = self.backend.services()
                 restore_plan(self.value['original'], services)
-                if intentions[kind] == 'start' and services[kind]['ActiveState'] != 'active':
+                if intentions[kind] == 'start' and not service_active(services[kind]):
                     self.backend.action(kind, 'start')
                     # Worker can retry restoration after a transition; no rollback.
                     end = time.monotonic()+5
-                    while self.backend.services()[kind]['ActiveState'] != 'active':
+                    while not service_active(self.backend.services()[kind]):
                         if time.monotonic() >= end:
                             return {'restored':False}
                         time.sleep(.1)
