@@ -79,7 +79,7 @@ test('every advertised game tool has a matching scoped ACP permission',async()=>
   const [clientTransport,serverTransport]=InMemoryTransport.createLinkedPair();
   await server.connect(serverTransport);await client.connect(clientTransport);
   const tools=(await client.listTools()).tools.map(t=>t.name);
-  const allowed=new Set(JSON.parse(execFileSync('python3',['-c','import json; from acp_client import GAME_TOOLS; print(json.dumps(sorted(GAME_TOOLS)))'],{cwd:root,encoding:'utf8'})));
+  const allowed=new Set(JSON.parse(execFileSync(process.env.WORKSHOP_TEST_PYTHON||'python3',['-c','import json; from acp_client import GAME_TOOLS; print(json.dumps(sorted(GAME_TOOLS)))'],{cwd:root,encoding:'utf8'})));
   assert.ok(tools.includes('cancel_movement'));
   assert.deepEqual(tools.filter(t=>!allowed.has(t)),[],'Advertised game tools must not be silently denied by the ACP callback');
  }finally{await client.close();await server.close();f.close();}

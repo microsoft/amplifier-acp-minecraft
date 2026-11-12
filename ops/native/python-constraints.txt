@@ -1,0 +1,7 @@
+# Frozen build graph for the official SDK commit in requirements.txt.
+# Each native bundle also records the actual installed distributions and hashes.
+annotated-types==0.8.0
+pydantic==2.14.3
+pydantic-core==2.50.4
+typing-extensions==4.16.0
+typing-inspection==0.4.5

@@ -1,0 +1,57 @@
+name: Native Minecraft packages
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  package:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {target: linux-x64, runner: ubuntu-24.04}
+          - {target: linux-arm64, runner: ubuntu-24.04-arm}
+          - {target: macos-x64, runner: macos-15-intel}
+          - {target: macos-arm64, runner: macos-15}
+          - {target: windows-x64, runner: windows-2025}
+          - {target: windows-arm64, runner: windows-11-arm}
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Test package validation
+        run: python -m unittest discover -s ops/native -p test_*.py -v
+      - name: Build private native runtimes and dependencies
+        run: python ops/native/build_bundle.py --output bundle --cache runtime-cache
+      - name: Install Linux browser OS libraries on disposable runner
+        if: runner.os == 'Linux'
+        run: bundle/node/bin/node bundle/app/node_modules/playwright/cli.js install-deps chromium
+      - name: Verify packaged client and browser (Unix)
+        if: runner.os != 'Windows'
+        run: bundle/python/bin/python3 -I ops/native/verify_bundle.py --bundle bundle --source . --receipt native-result.json
+      - name: Verify packaged client and browser (Windows)
+        if: runner.os == 'Windows'
+        run: bundle/python/python.exe -I ops/native/verify_bundle.py --bundle bundle --source . --receipt native-result.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: minecraft-evidence-${{ matrix.target }}
+          path: |
+            native-result.json
+            bundle/manifest.json
+            bundle/python-packages.json
+          retention-days: 14
+      - name: Archive tested bundle
+        run: python -c "import shutil; shutil.make_archive('minecraft-${{ matrix.target }}','gztar','bundle')"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: minecraft-${{ matrix.target }}
+          path: |
+            minecraft-${{ matrix.target }}.tar.gz
+            native-result.json
+            bundle/manifest.json
+          retention-days: 7
