@@ -41,6 +41,7 @@ agent routes, explicit behavior policies, and separate transport and human check
 | What you want | Start here |
 | --- | --- |
 | Set up or upgrade a server and its players | [Setup skill](skills/minecraft-server-setup/SKILL.md) · [Installation requirements](docs/server-setup.md) |
+| Native packages for Linux, macOS and Windows | [Private runtimes and qualification status](docs/native-packages.md) |
 | Join from Xbox / Bedrock on LAN | [Gateway, discovery, authentication and verification](docs/xbox-lan.md) |
 | Responsive conversation and continuous action plans | [Human-led play](docs/human-led-play.md) |
 | Start/amend tasks naturally in chat | [Human task intake](docs/human-task-intake.md) |

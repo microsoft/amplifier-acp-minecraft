@@ -19,10 +19,21 @@ async def verify(root, source):
          'PLAYWRIGHT_BROWSERS_PATH':str(root/'browsers'),'RUN_SCREENSHOT_RENDER':'1',
          'WORKSHOP_TEST_PYTHON':str(python)}
     subprocess.run([str(python),'-I',str(root/'launch.py'),'doctor'],env=env,check=True)
+    subprocess.run([str(python),'-s',str(root/'app/adapter.py'),'--help'],env=env,check=True,timeout=30)
     sys.path.insert(0,str(root/'app'))
     from installation_session_probe import probe
     with tempfile.TemporaryDirectory(prefix='Minecraft package fixture ') as temporary:
         home=Path(temporary);(home/'app').mkdir()
+        # Exercise the fixed launcher in a spaced home without joining a server.
+        (home/'config.json').write_text('{}')
+        offline=home/'installation-connections';offline.mkdir()
+        intent={'schema':1,'phase':'disconnected','request_id':'preserved-fixture'}
+        (offline/'state.json').write_text(json.dumps(intent))
+        before_files={str(p.relative_to(home)):p.read_bytes() for p in home.rglob('*') if p.is_file()}
+        exited=subprocess.run([str(python),'-I',str(root/'launch.py'),'body','--home',str(home)],env=env,check=True,capture_output=True,text=True,timeout=90)
+        assert 'disconnected' in exited.stdout
+        assert {str(p.relative_to(home)):p.read_bytes() for p in home.rglob('*') if p.is_file()}==before_files
+
         for name in ('acp_client.py','prompt_lifecycle.py'):
             shutil.copy2(root/'app'/name,home/'app'/name)
         peer=home/'peer.py';shutil.copy2(source/'tests/session_probe_fixture.py',peer)
@@ -52,7 +63,7 @@ async def verify(root, source):
         shutil.rmtree(fixtures,ignore_errors=True)
     result={'target':manifest['target'],'source_commit':manifest['source_commit'],'official_sdk':manifest['sdk_commit'],
             'original_session_loaded':True,'unused_initialize_only':True,'game_server':False,'model_prompts':0,
-            'body_fixtures':True,'actual_packaged_browser':True,'native_service_lifecycle_verified':False}
+            'body_fixtures':True,'actual_packaged_browser':True,'controller_entrypoint_imports':True,'offline_body_launcher_no_join':True,'native_service_lifecycle_verified':False}
     print(json.dumps(result))
     return result
 
