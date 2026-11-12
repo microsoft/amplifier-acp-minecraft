@@ -150,6 +150,40 @@ class NativeEvidenceTests(unittest.TestCase):
             with self.assertRaisesRegex(ContinuityError,'generation'):p.prepare()
             self.assertFalse(p.gate.exists());self.assertFalse(p.path.exists());self.assertEqual(backend.actions,[])
 
+    def test_initial_active_disabled_service_refuses_before_update_admission(self):
+        for manager in ('systemd_user','launch_agent','scheduled_task'):
+            for role in ('body','controller'):
+                for component in ('instance','minecraft'):
+                    with self.subTest(manager=manager,role=role,component=component), tempfile.TemporaryDirectory() as tmp:
+                        home=Path(tmp)/'home';home.mkdir();backend=NativeFixture(home,manager)
+                        # Proved application generations ensure Windows reaches the
+                        # availability guard, rather than rejecting an engine PID.
+                        for index,state in enumerate(backend.units.values()):
+                            state['application']={'status':'running',
+                                'identity':{'pid':500+index,'generation':'original-child'},
+                                'supervisor':{'pid':400+index,'generation':'original-parent'},
+                                'manager_process':copy.deepcopy(state['processes'][0]),
+                                'profile_sha256':'a'*64}
+                        backend.units[role].update(active=True,enabled=False,start_allowed=False,masked=False)
+                        cfg={'home':str(home),'state':str(Path(tmp)/'state')}
+                        env={'id':str(uuid.uuid4()),'participant':'minecraft','plan':{'schema':1,
+                            'transaction_id':str(uuid.uuid4()),'operation':'apply','components':[component]}}
+                        original_services=backend.services();original_body=copy.deepcopy(backend.body)
+                        files={path:path.read_bytes() for path in home.iterdir() if path.is_file()}
+                        # A caller cannot proceed to shared drain without ready.
+                        # Retry/reload must not create a transaction or stop either role.
+                        for _ in range(2):
+                            p=Participant(cfg,env,backend)
+                            with self.assertRaisesRegex(NotIdle,'disabled.*unavailable'):
+                                p.prepare()
+                            self.assertIsNone(p.value)
+                            self.assertFalse(p.path.exists());self.assertFalse(p.gate.exists())
+                            self.assertFalse((p.root/'active.json').exists())
+                            self.assertEqual(backend.actions,[])
+                            self.assertEqual(backend.services(),original_services)
+                            self.assertEqual(backend.body,original_body)
+                            self.assertEqual({path:path.read_bytes() for path in home.iterdir() if path.is_file()},files)
+
     def test_saved_connection_quiescence_readiness_and_lost_ack_with_native_snapshots(self):
         for manager in ('systemd_user','launch_agent'):
             with self.subTest(manager=manager),tempfile.TemporaryDirectory() as tmp:

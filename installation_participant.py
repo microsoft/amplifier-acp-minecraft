@@ -205,7 +205,7 @@ class Participant:
             if service_active(services['controller']) and not service_process_identity(services['controller']):
                 raise ContinuityError('Controller generation is unavailable before admission closure')
             if any(service_active(s) and service_unavailable(s) for s in services.values()):
-                raise NotIdle('Preserve an already-active masked unit; automatic stop cannot restore that state')
+                raise NotIdle('Preserve an already-active masked, disabled, or otherwise unavailable service; automatic stop cannot restore that state')
             self.save(context_hash=digest(self.envelope), config_hash=digest(self.c), transaction_id=self.tx,
                       phase='gating', original=services, game=self.game)
             durable_write(active, {'transaction_id':self.tx})
