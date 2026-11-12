@@ -35,7 +35,8 @@ function fixture({ignoreCancel=false,cleanupMs=0,timeoutMs=10}={}){
    history.startTurn();turnUntil=Date.now()+240000;
    module.exports={operate,history,state:()=>({busy,generation,turnUntil,task:history.task()})};
  `,context,{filename:'body.cjs'});
- return {...context.module.exports,starts:()=>starts,release:()=>releaseMovement?.(),
+ return {...context.module.exports,starts:()=>starts,release:()=>releaseMovement?.(),fail:(settled=true)=>rejectMovement?.(Object.assign(Error('Fixture route failed'),{movementOperationSettled:settled})),
+  bot,
   close:()=>fs.rmSync(home,{recursive:true,force:true})};
 }
 test('a settled move timeout preserves the turn for observation/reporting, without replay or budget renewal',async()=>{
@@ -119,5 +120,25 @@ test('movement cancellation keeps unresolved workers exclusive and still obeys h
   await f.operate('stop');f.release();await failed;
   assert.equal(f.state().turnUntil,0);assert.equal(f.history.task().status,'stopped');
   await f.operate('cancel_movement');assert.equal(f.history.task().status,'stopped');
+ }finally{f.close();}
+});
+
+test('ordinary settled route failure records partial movement without freezing later activity',async()=>{
+ const f=fixture({timeoutMs:5000});try{
+  const move=f.operate('move',{x:2,y:64,z:0,mode:'normal'});
+  const failed=assert.rejects(move,/Fixture route failed/);await wait(5);f.bot.entity.position=new Vec3(1,64,0);f.fail();await failed;
+  const action=f.history.data.turn.actions[0],receipt=f.history.data.events.at(-1);
+  assert.equal(action.status,'failed_settled');assert.equal(action.outcome.reached,false);assert.equal(action.outcome.position.x,1);
+  assert.equal(receipt.kind,'action_failed');assert.equal(receipt.settled_failure.kind,'settled_failed_movement');
+  assert.equal(f.starts(),1);assert.equal(f.state().busy,false);
+ }finally{f.close();}
+});
+
+test('a route failure without terminal settlement remains uncertain',async()=>{
+ const f=fixture({timeoutMs:5000});try{
+  const move=f.operate('move',{x:2,y:64,z:0,mode:'normal'});
+  const failed=assert.rejects(move,/Fixture route failed/);await wait(5);f.fail(false);await failed;
+  assert.equal(f.history.data.turn.actions[0].status,'uncertain');
+  assert.equal(f.history.data.events.at(-1).settled_failure,undefined);
  }finally{f.close();}
 });

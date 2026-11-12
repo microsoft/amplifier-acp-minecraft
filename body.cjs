@@ -386,13 +386,17 @@ async function operate(name,a={},sequenceId=null){
   if(name==='place')validatePlacementFacing(a.item,a.facing);
   // Pure argument/reach checks precede effect admission. Recheck inside the
   // operation too: a later race or transport failure remains uncertain.
-  if(name==='move')coord(a);
+  try{
+  if(name==='move'){const p=coord(a);if(a.mode==='walk_only'){const route=walking.plan(bot,p,a.range??0);if(!route.reachable)throw Error(`No walk-only route (${route.status}); inspect the terrain. No movement performed.`);}}
   if(name==='gather')gatherTargets(a);
   if(name==='container')containers.preflight(bot,coord(a),a);
+  }catch(error){try{retryGuard.failed(bot,name,a,error);}catch{}record('action_preflight_refused',{action:name,arguments:a,error:error.message,effect_attempted:false});throw error;}
   if(++actions>24&&cfg.human_engagement?.enabled!==true)throw Error('This turn reached its 24-action budget; save progress with work_report');
   busy=true;activeAction=name;const epoch=generation;const actionId=crypto.randomUUID();history.actionStarted(actionId);record('action_started',{action_id:actionId,action:name,arguments:a});let unfinished;
   const check=()=>{if(epoch!==generation||Date.now()>turnUntil)throw Error('Action cancelled');};
-  const go=async(p,r=2,exactHeight=false)=>{check();const goal=exactHeight?new spatial.FeetGoal(p.x,p.y,p.z,r):new goals.GoalNear(p.x,p.y,p.z,r);await spatial.gotoWithProgress(bot,goal);await delay(250);check();if(!goal.isEnd(bot.entity.position.floored()))throw Error('Movement ended without reaching the requested destination; inspect current position');};
+  const movementFailures=new WeakMap();
+  const movementFailure=(error,before,settled)=>{if(settled&&epoch===generation&&ready&&Date.now()<turnUntil&&!error.actionTimeout)movementFailures.set(error,{kind:'settled_failed_movement',before,position:{x:bot.entity.position.x,y:bot.entity.position.y,z:bot.entity.position.z},reached:false,replayed:false});return error;};
+  const go=async(p,r=2,exactHeight=false)=>{check();const before={x:bot.entity.position.x,y:bot.entity.position.y,z:bot.entity.position.z};const goal=exactHeight?new spatial.FeetGoal(p.x,p.y,p.z,r):new goals.GoalNear(p.x,p.y,p.z,r);let settled=false;try{await spatial.gotoWithProgress(bot,goal);settled=true;await delay(250);check();if(!goal.isEnd(bot.entity.position.floored()))throw Error('Movement ended without reaching the requested destination; inspect current position');}catch(error){throw movementFailure(error,before,settled||error.movementOperationSettled===true);}};
   async function place(p,item,supportFace,facing){
     check();const target=bot.blockAt(p);if(!target||!['air','cave_air','short_grass','tall_grass','snow'].includes(target.name))throw Error('Target is not empty');
     const directions={north:[0,-1],south:[0,1],east:[1,0],west:[-1,0]};
@@ -437,7 +441,7 @@ async function operate(name,a={},sequenceId=null){
       if(name==='container')return containers.container(bot,coord(a),a,check,{beforeTransfer:()=>conversation.guard(a.conversation_revision)});
       if(name==='till')return farming.till(bot,coord(a),a,check);
       if(name==='tell')return speech(name,a);
-      if(name==='move'){const p=coord(a),before=bot.entity.position.clone();if(a.mode==='walk_only')return walking.move(bot,p,a.range??0,check);await go(p,a.range??0,true);return {mode:'normal',position:bot.entity.position.clone(),feet_block:bot.entity.position.floored(),before,before_feet_block:before.floored(),target:p,reached:true,exact_feet_y:true};}
+      if(name==='move'){const p=coord(a),before=bot.entity.position.clone();if(a.mode==='walk_only'){try{return await walking.move(bot,p,a.range??0,check);}catch(error){throw movementFailure(error,{x:before.x,y:before.y,z:before.z},true);}}await go(p,a.range??0,true);return {mode:'normal',position:bot.entity.position.clone(),feet_block:bot.entity.position.floored(),before,before_feet_block:before.floored(),target:p,reached:true,exact_feet_y:true};}
       if(name==='write_sign')return signs.write(bot,coord(a),a,check);
       if(name==='activate_control')return new BlockControls(history).use(bot,coord(a),a,check);
       if(name==='set_open'){const p=coord(a),block=bot.blockAt(p);if(!block||!/(?:_door|_trapdoor|_fence_gate)$/.test(block.name))throw Error('Only doors, trapdoors and fence gates can be opened here');if(p.distanceTo(bot.entity.position)>4)throw Error('Move within reach first');if(block.getProperties().open!==a.open){await bot.activateBlock(block);await delay(300);check();}const actual=bot.blockAt(p)?.getProperties().open;if(actual!==a.open)throw Error('Server did not confirm the requested open state');return {position:p,name:block.name,open:actual,verified:true};}
@@ -455,7 +459,8 @@ async function operate(name,a={},sequenceId=null){
         // Resource names do not establish ownership. Never choose a nearby
         // building block on behalf of the caller, or substitute a new target.
         const {count,targets}=gatherTargets(a);
-        const before=snapshot().inventory,removed=[];let blocked=null,error=null;
+        const before=snapshot().inventory,removed=[];let blocked=null,error=null,movement=null;
+        const gatherMove=async(p)=>{try{await go(p,0,true);return true;}catch(e){movement=movementFailures.get(e);if(!movement)throw e;blocked=e.message;return false;}};
         const target=p=>{const b=bot.blockAt(p);if(!b||b.name!==a.block)throw Error('Selected target changed or is unloaded; inspect it before choosing more resources');spatial.digGuard(bot,b);spatial.harvestTool(bot,b);return b;};
         for(const p of targets.slice(0,count)){
           check();let block;
@@ -466,7 +471,7 @@ async function operate(name,a={},sequenceId=null){
             }
             spots.sort((a,b)=>a.distanceTo(bot.entity.position)-b.distanceTo(bot.entity.position));
             const spot=spots.slice(0,12).find(p=>spatial.route(bot,p).reachable);
-            if(!spot){blocked='No confirmed safe route to a standing cell within the planning budget';break;}await go(spot,0,true);
+            if(!spot){blocked='No confirmed safe route to a standing cell within the planning budget';break;}if(!await gatherMove(spot))break;
           }
           check();try{block=target(p);}catch(e){blocked=e.message;break;}
           const tool=spatial.harvestTool(bot,block);if(tool)await bot.equip(tool,'hand');
@@ -478,10 +483,10 @@ async function operate(name,a={},sequenceId=null){
           removed.push({position:p,before:a.block,after});
           const drop=Object.values(bot.entities).filter(e=>e.name==='item'&&e.position.distanceTo(block.position)<5).sort((a,b)=>a.position.distanceTo(bot.entity.position)-b.position.distanceTo(bot.entity.position))[0];
           const pickup=drop?.position.floored();
-          if(pickup&&spatial.supported(bot,pickup)&&spatial.route(bot,pickup).reachable){await go(pickup,0,true);await delay(700);}
+          if(pickup&&spatial.supported(bot,pickup)&&spatial.route(bot,pickup).reachable){if(!await gatherMove(pickup))break;await delay(700);}
         }
         const inventory=snapshot().inventory,totals=items=>items.reduce((out,i)=>{out[i.name]=(out[i.name]||0)+i.count;return out;},{}),old=totals(before);
-        return {mined:removed.length,removed,collected:Object.entries(totals(inventory)).map(([name,count])=>({name,count:count-(old[name]||0)})).filter(i=>i.count>0),inventory,blocked,...(error?{error}:{}),warning:'Only selected coordinates are considered. Block type cannot prove natural origin or ownership. Broken blocks are not necessarily collected; inspect collected/inventory. Pickup never walks onto unsupported ground.'};
+        return {mined:removed.length,removed,collected:Object.entries(totals(inventory)).map(([name,count])=>({name,count:count-(old[name]||0)})).filter(i=>i.count>0),inventory,blocked,...(movement?{settled_failure:{...movement,kind:'settled_partial_gather',removed:structuredClone(removed)}}:{}),...(error?{error}:{}),warning:'Only selected coordinates are considered. Block type cannot prove natural origin or ownership. Broken blocks are not necessarily collected; inspect collected/inventory. Pickup never walks onto unsupported ground.'};
       }
       if(name==='craft'){
         const item=bot.registry.itemsByName[a.item];if(!item)throw Error('Unknown item');
@@ -507,8 +512,8 @@ async function operate(name,a={},sequenceId=null){
     },{timeoutMs:Math.max(1,Math.min(60000,turnUntil-Date.now())),cancel:()=>{if(name==='move')cancelAction();else stop();},
       onUnsettled:completion=>{unfinished=completion;stop();}});
     if(['move','follow'].includes(name))check();
-    history.actionSettled(actionId,!result?.error);const r=record('action_result',{action_id:actionId,action:name,arguments:a,result});receipts.push(r);if(receipts.length>100)receipts.shift();return result;
-  }catch(e){try{retryGuard.failed(bot,name,a,e);}catch{}let repair;try{repair=repairs.explain(bot,name,a,e);}catch{}if(repair)e.details={...(e.details||{}),repair};history.actionSettled(actionId,false);record('action_failed',{action_id:actionId,action:name,arguments:a,error:e.message,...(repair?{repair}:{}),
+    if(result?.settled_failure&&!result?.error)history.actionFailedSettled(actionId,result.settled_failure);else history.actionSettled(actionId,!result?.error);const r=record('action_result',{action_id:actionId,action:name,arguments:a,result});receipts.push(r);if(receipts.length>100)receipts.shift();return result;
+  }catch(e){try{retryGuard.failed(bot,name,a,e);}catch{}let repair;try{repair=repairs.explain(bot,name,a,e);}catch{}if(repair)e.details={...(e.details||{}),repair};const settled=name==='move'?movementFailures.get(e):null;if(settled){e.details={...(e.details||{}),settled_failure:settled};history.actionFailedSettled(actionId,settled);}else history.actionSettled(actionId,false);record('action_failed',{action_id:actionId,action:name,arguments:a,error:e.message,...(repair?{repair}:{}),...(settled?{settled_failure:settled}:{}),
     ...(e.actionTimeout?{timeout:true,operation_settled:e.operationSettled,turn_preserved:Date.now()<turnUntil}: {})});throw e;}
   finally{const settled=()=>{busy=false;activeAction=null;};if(unfinished)unfinished.then(settled);else settled();}
 }

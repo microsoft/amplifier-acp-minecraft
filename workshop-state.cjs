@@ -87,6 +87,7 @@ class WorkshopState {
  }
  actionStarted(id){if(this.data.turn){this.data.turn.actions.push({id,status:'pending'});this.save();}}
  actionSettled(id,success){const a=this.data.turn?.actions?.find(a=>a.id===id);if(a){a.status=success?'succeeded':'uncertain';this.save();}}
+ actionFailedSettled(id,evidence){const a=this.data.turn?.actions?.find(a=>a.id===id);if(a){a.status='failed_settled';a.outcome=structuredClone(evidence);this.save();}}
  recoveryFacts(){
   const task=this.task(),turn=this.data.last_turn;
   return {status:task?.status||'none',...(task?.bounds?bounds.remaining(task):{remaining_ms:Math.max(0,(task?.deadline||0)-Date.now()),remaining_turns:Math.max(0,(task?.max_turns||0)-(task?.turns||0))}),minimum_turn_ms:120000,

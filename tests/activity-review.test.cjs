@@ -53,6 +53,7 @@ test('disk failure rolls back every review and policy remains held',t=>{
  assert.throws(()=>review(h,cfg,input,observation),/disk full/);assert.equal(JSON.stringify(h.data),before);assert.equal(fs.readFileSync(h.file,'utf8'),disk);assert.equal(policy.reason(h,cfg),'unresolved_activity_effects');
 });
 for(const [action,args,error,outcome='no_effect'] of [
+ ['gather',{block:'wheat',count:2,targets:[{x:1,y:64,z:0},{x:2,y:64,z:0}]},'Movement ended without reaching the requested destination; inspect current position','settled_partial_gather'],
  ['gather',{block:'stone',count:3,targets:[{x:1,y:64,z:0}]},'Gather count must be 1–8 and no greater than the target selection'],
  ['container',{operation:'withdraw',count:1},'Transfer needs an exact item name and count from 1 to 64'],
  ['container',{operation:'withdraw',item:'wooden_pickaxe',count:1},'Named, enchanted, or component-bearing items need explicit selection: inspect, then supply source_slot and source_item_revision','settled_failed_storage'],
@@ -78,5 +79,16 @@ test('an opened storage inspection is not falsely reviewed as no effect',t=>{
  const {h,input,observation}=fixture(t);
  for(const e of h.data.events.filter(e=>e.action_id==='partial')){e.action='container';e.arguments={operation:'withdraw',item:'wooden_pickaxe',count:1};if(e.kind==='action_failed')e.error='Named, enchanted, or component-bearing items need explicit selection: inspect, then supply source_slot and source_item_revision';}
  input.reviews[1].outcome='no_effect';input.reviews[1].receipt_sha256=digest(h.data.events.find(e=>e.action_id==='partial'&&e.kind==='action_failed'));
+ const before=JSON.stringify(h.data);assert.throws(()=>review(h,cfg,input,observation));assert.equal(JSON.stringify(h.data),before);
+});
+
+for(const [error,outcome] of [
+ ['Movement ended without reaching the requested destination; inspect current position','no_effect'],
+ ['Server did not confirm block removal','settled_partial_gather'],
+ ['Movement stalled without position progress','settled_partial_gather']
+])test('legacy gather review preserves unknown effects and partial-harvest distinction '+error+' '+outcome,t=>{
+ const {h,input,observation}=fixture(t);
+ for(const e of h.data.events.filter(e=>e.action_id==='partial')){e.action='gather';e.arguments={block:'wheat',count:1,targets:[{x:1,y:64,z:0}]};if(e.kind==='action_failed')e.error=error;}
+ input.reviews[1].outcome=outcome;input.reviews[1].receipt_sha256=digest(h.data.events.find(e=>e.action_id==='partial'&&e.kind==='action_failed'));
  const before=JSON.stringify(h.data);assert.throws(()=>review(h,cfg,input,observation));assert.equal(JSON.stringify(h.data),before);
 });

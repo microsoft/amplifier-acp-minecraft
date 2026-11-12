@@ -26,7 +26,7 @@ function fixture({far=false,onMove,onEquip,onDig}={}){
   if(name==='./spatial.cjs')return {...spatial,digGuard(){},harvestTool:()=>({name:'pickaxe'}),supported:()=>true,route:()=>({reachable:true}),localMap:()=>({}),
    gotoWithProgress:async(_bot,goal)=>{moves.push(goal);bot.entity.position=new Vec3(goal.x,goal.y,goal.z);near=true;onMove?.(blocks,quarry);}};
   return realRequire(name);
- },module:{exports:{}},console:{log(){}},Buffer,
+ },structuredClone,module:{exports:{}},console:{log(){}},Buffer,
  process:{argv:['node','body.cjs',config],on(){},exit(){assert.fail('Unexpected exit');}},
  setTimeout:(fn,ms)=>setTimeout(fn,[200,250,350,700].includes(ms)?1:ms),clearTimeout});
  vm.runInContext(fs.readFileSync(path.join(root,'body.cjs'),'utf8')+`
@@ -112,5 +112,27 @@ test('actual body blocks repeated unchanged occupied placement before another ac
   f.blocks.set(f.quarry.toString(),'air');
   await assert.rejects(f.operate('place',a),e=>!e.details?.retry_guard);
   assert.equal(f.history.data.events.filter(e=>e.kind==='action_started').length,3,'changed terrain reaches original live checks');
+ }finally{f.close();}
+});
+
+test('settled pickup-route failure retains confirmed harvest and permits fresh planning without claiming success',async()=>{
+ const f=fixture({onMove(){throw Object.assign(Error('Fixture route refused after partial movement'),{movementOperationSettled:true});}});try{
+  f.bot.entities={1:{name:'item',position:f.quarry.offset(1,0,0)}};
+  const r=await f.run({targets:[xyz(f.quarry),xyz(f.second)],count:2});
+  assert.equal(r.mined,1);assert.deepEqual(f.dug,[xyz(f.quarry)]);assert.equal(f.blocks.get(f.second.toString()),'stone');
+  assert.equal(r.settled_failure.kind,'settled_partial_gather');assert.equal(r.settled_failure.reached,false);
+  assert.match(r.blocked,/partial movement/);assert.equal(r.error,undefined);
+  assert.equal(f.history.data.turn.actions[0].status,'failed_settled');
+  f.history.data.turn.activity=true;f.history.data.turn.task_id=null;
+  f.history.data.turn.activity_report={status:'running'};f.history.finish();
+  const policy=require('../activity-policy.cjs'),cfg={human_engagement:{enabled:true,task_optional:true}};
+  assert.equal(policy.allowed(f.history,cfg),true);assert.equal(policy.canContinue(f.history,cfg),true);
+  assert.equal(f.dug.length,1,'settlement never retries the remaining targets');
+ }finally{f.close();}
+});
+test('unconfirmed block removal is still uncertain and cannot become a settled movement failure',async()=>{
+ const f=fixture({onDig(){}});try{
+  const r=await f.run({targets:[xyz(f.quarry)]});assert.match(r.error,/did not confirm/);
+  assert.equal(r.settled_failure,undefined);assert.equal(f.history.data.turn.actions[0].status,'uncertain');
  }finally{f.close();}
 });

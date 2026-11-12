@@ -32,7 +32,7 @@ test('only an opened door with clear center counts as a passage',()=>{
 test('stalled navigation releases controls and permits another attempt',async()=>{
  const {gotoWithProgress}=require('../spatial.cjs');let cancelled=0,cleared=0;
  const bot={entity:{position:new Vec3(0,0,0)},pathfinder:{goto:()=>new Promise(()=>{}),setGoal:g=>{assert.equal(g,null);cancelled++;}},clearControlStates:()=>cleared++};
- await assert.rejects(gotoWithProgress(bot,{}, {stallMs:30,pollMs:10}),/Movement stalled/);
+ await assert.rejects(gotoWithProgress(bot,{}, {stallMs:30,pollMs:10,settleMs:5}),e=>/Movement stalled/.test(e.message)&&e.movementOperationSettled===false);
  assert.equal(cancelled,1);assert.equal(cleared,1);
  bot.pathfinder.goto=async()=>{bot.entity.position=new Vec3(2,0,0);};
  await gotoWithProgress(bot,{}, {stallMs:30,pollMs:10});
@@ -85,4 +85,10 @@ test('head obstruction is exact; partial, unknown and unloaded targets are not d
   bot.blockAt=()=>b;assert.equal(route(bot,p).status,'partial');
  }
  assert.equal(searches,4);
+});
+
+test('stalled navigation distinguishes acknowledged cancellation from a merely stopped goal',async()=>{
+ const {gotoWithProgress}=require('../spatial.cjs');let reject;
+ const bot={entity:{position:new Vec3(0,0,0)},pathfinder:{goto:()=>new Promise((_,r)=>{reject=r;}),setGoal(){reject(Error('cancelled'));}},clearControlStates(){}};
+ await assert.rejects(gotoWithProgress(bot,{}, {stallMs:10,pollMs:5,settleMs:20}),e=>e.movementOperationSettled===true);
 });

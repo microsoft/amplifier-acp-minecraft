@@ -324,3 +324,20 @@ Minecraft player or made public. The unchanged waiting task ID, revision and
 remaining bounds must still match. Stop, expiry and interrupted-task review still
 refuse; duplicate acknowledgments return the saved result without another change.
 Resumption only schedules existing work and does not itself execute game effects.
+
+### Settled route failures
+
+A route can fail after the player moved. When the movement worker has actually
+settled and controls are cleared, the receipt records `failed_settled`, the
+observed position and `reached: false`. This is not arrival or successful work.
+It allows the agent to inspect and choose a new action without treating every
+route failure as an unknown world mutation. Stop, lost authority, transport
+uncertainty and unacknowledged cancellation retain their existing guards.
+
+Gathering stops its batch if a settled approach or pickup route fails. It
+returns the confirmed removed blocks, observed inventory delta and partial
+failure instead of losing those results. Unconfirmed removal remains uncertain.
+The owner-only historical review also accepts the exact legacy post-movement
+arrival-check failure as `settled_partial_gather`; it preserves the original
+receipt and does not infer how many blocks were harvested or collected. As with
+other historical reviews, this permits fresh planning only, never replay.
