@@ -1,5 +1,11 @@
 const test=require('node:test'),assert=require('node:assert/strict');
 const {Vec3}=require('vec3'),{RetryGuard}=require('../retry-guard.cjs');
+test('unchanged observed dig mismatch refuses repetition but changed terrain permits a fresh check',()=>{
+ const {bot,blocks}=fixture(),g=new RetryGuard(),a={x:2,y:64,z:0,expected:'stone'},e=Error('Dig target mismatch: expected stone, observed air at (2, 64, 0); inspect the actual block before digging.');
+ blocks.set('(2, 64, 0)','air');g.failed(bot,'dig',a,e);g.failed(bot,'dig',a,e);
+ assert.throws(()=>g.check(bot,'dig',a),/Unchanged failed action/);g.check(bot,'inspect',a);
+ blocks.set('(2, 64, 0)','stone');g.check(bot,'dig',a);
+});
 function fixture(){const blocks=new Map();const bot={entity:{position:new Vec3(.5,64,.5)},inventory:{items:()=>[{name:'oak_planks',count:4}]},players:{},blockAt:p=>({name:blocks.get(p.toString())||'stone',getProperties:()=>({}),shapes:[[0,0,0,1,1,1]]})};return {bot,blocks};}
 test('two identical known preconditions block the next execution, not authority or read tools',()=>{
  const {bot}=fixture(),guard=new RetryGuard(),args={x:2,y:64,z:0,item:'oak_planks'},error=Error('Target is not empty');

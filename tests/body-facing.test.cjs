@@ -70,6 +70,25 @@ test('ordinary placement keeps its default behavior without an explicit facing',
   const r=await f.run();assert.equal(r.properties.facing,'west');assert.equal(f.observation().ordinary,1);assert.equal(f.observation().look,null);
  }finally{f.close();}
 });
+for(const race of ['target','support'])test('placement '+race+' changing during preparation is not a legacy no-effect refusal',async()=>{
+ const f=fixture('cobblestone',{});try{
+  const read=f.bot.blockAt,equip=f.bot.equip;let prepared=false;
+  f.bot.equip=async item=>{await equip(item);prepared=true;};
+  f.bot.blockAt=p=>prepared&&((race==='target'&&p.equals(new Vec3(0,64,0)))||(race==='support'&&p.equals(new Vec3(0,63,0))))?
+   {position:p,name:race==='target'?'stone':'air',boundingBox:race==='target'?'block':'empty',getProperties:()=>({})}:read(p);
+  await assert.rejects(f.run(),race==='target'?/changed during preparation/:/supporting block/);
+  assert.equal(f.observation().sends,0);assert.equal(f.history.data.turn.actions[0].status,'uncertain');
+  assert.notEqual(f.history.data.events.at(-1).error,'Target is not empty');
+ }finally{f.close();}
+});
+test('initial occupied placement leaves no effect receipt and a changed empty target can be placed once',async()=>{
+ const f=fixture('cobblestone',{});try{
+  const read=f.bot.blockAt;let occupied=true;
+  f.bot.blockAt=p=>occupied&&p.equals(new Vec3(0,64,0))?{position:p,name:'stone',boundingBox:'block',getProperties:()=>({})}:read(p);
+  await assert.rejects(f.run(),/Target is not empty/);assert.equal(f.observation().sends,0);assert.equal(f.history.data.turn.actions.length,0);
+  occupied=false;const result=await f.run();assert.equal(result.verified,true);assert.equal(f.observation().sends,1);
+ }finally{f.close();}
+});
 test('unsupported explicit facing is rejected before inventory effects or movement',async()=>{
  for(const item of ['stone','oak_hanging_sign']){
   const f=fixture(item);try{

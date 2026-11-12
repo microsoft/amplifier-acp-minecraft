@@ -95,6 +95,35 @@ function fixture(configOverride={},walkingOverride=null,bridgeOverride=null){
   let status,text;await handle(req,{writeHead:x=>status=x,end:x=>text=x});assert.equal(status,code,text);return text?JSON.parse(text):null;
  },advance(ms){current+=ms;for(const t of [...timers])if(t.at<=current){timers.delete(t);t.fn();}},close(){fs.rmSync(home,{recursive:true,force:true});}};
 }
+test('inspect separates an air target from the stone above its standing space',async()=>{
+ const f=fixture();try{
+  const {Vec3}=realRequire('vec3');f.bot.entity.position=new Vec3(.5,64,.5);
+  f.bot.blockAt=p=>({position:p,name:p.y===65?'stone':'air',boundingBox:p.y===65?'block':'empty',shapes:p.y===65?[[0,0,0,1,1,1]]:[],getProperties:()=>({})});
+  const r=await f.operate('inspect',{x:1,y:64,z:0});
+  assert.equal(r.name,'air');assert.equal(r.solid,false);assert.equal(r.occupancy,'#');
+  assert.equal(r.standing_context.feet.name,'air');assert.equal(r.standing_context.head.name,'stone');assert.equal(r.standing_context.head.position.y,65);
+  assert.match(r.occupancy_scope,/not the selected block type/);assert.equal(f.history.data.turn,null);
+ }finally{f.close();}
+});
+test('stale dig target returns actual block and separate head evidence without an admitted effect',async()=>{
+ const f=fixture();try{
+  const {Vec3}=realRequire('vec3');f.bot.entity.position=new Vec3(.5,64,.5);
+  f.bot.blockAt=p=>({position:p,name:p.y===65?'stone':'air',boundingBox:p.y===65?'block':'empty',shapes:p.y===65?[[0,0,0,1,1,1]]:[],getProperties:()=>({})});
+  await f.request('/turn',{renewable_lease:true,continuation:true});const before=JSON.stringify(f.history.data.turn.actions);
+  await assert.rejects(f.operate('dig',{x:1,y:64,z:0,expected:'stone'}),e=>/expected stone, observed air/.test(e.message)&&e.details.target.observed==='air'&&e.details.standing_context.head.name==='stone');
+  assert.equal(JSON.stringify(f.history.data.turn.actions),before);assert.equal(f.history.data.events.at(-1).effect_attempted,false);
+ }finally{f.close();}
+});
+for(const failure of ['occupied','unsupported'])test('initial '+failure+' placement refuses before action, inventory, movement or equip',async()=>{
+ const f=fixture();try{
+  const {Vec3}=realRequire('vec3');f.bot.entity.position=new Vec3(.5,64,.5);let effects=0;
+  f.bot.blockAt=p=>({position:p,name:failure==='occupied'?'stone':'air',boundingBox:failure==='occupied'?'block':'empty',getProperties:()=>({})});
+  f.bot.inventory={items:()=>[{name:'cobblestone',count:2}]};f.bot.supportFeature=()=>{effects++;throw Error('unexpected inventory refresh');};f.bot.equip=async()=>{effects++;};f.bot.pathfinder.goto=async()=>{effects++;};
+  await f.request('/turn',{renewable_lease:true,continuation:true});const before=JSON.stringify(f.history.data.turn.actions);
+  await assert.rejects(f.operate('place',{x:1,y:64,z:0,item:'cobblestone',support_face:'up'}),failure==='occupied'?/Target is not empty/:/supporting block/);
+  assert.equal(effects,0);assert.equal(JSON.stringify(f.history.data.turn.actions),before);assert.equal(f.history.data.events.at(-1).kind,'action_preflight_refused');
+ }finally{f.close();}
+});
 test('exact blocked destination is a no-effect refusal and changed clearance permits fresh movement',async()=>{
  for(const obstruction of ['feet','head'])for(const mode of ['normal','walk_only']){
   let moves=0,searches=0,solid=true;const f=fixture({}, {move:async()=>{moves++;return {reached:true};}});try{

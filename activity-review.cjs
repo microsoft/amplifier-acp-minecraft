@@ -35,11 +35,13 @@ function review(history,cfg,input,observation,{taskEffects=false}={}){
   const start=starts[0],end=ends[0];
   if(starts.length!==1||ends.length!==1||start.action!==end.action||!['move','container','gather',...(taskEffects?['dig']:['build','place'])].includes(start.action)||(start.action==='build'?end.kind!=='action_result':end.kind!=='action_failed')||end.timeout||end.operation_settled===false||!Number.isFinite(Date.parse(start.time))||!Number.isFinite(Date.parse(end.time))||!(Date.parse(start.time)>=Date.parse(turn.started_at))||Date.parse(end.time)<Date.parse(start.time)||digest(start.arguments)!==digest(end.arguments)||digest(end)!==item.receipt_sha256)throw Error('Exact retained terminal action receipt required');
   if(start.action==='place'){
-   // Explicit owner review only. The exact Mineflayer terminal comes after
-   // ordered server updates; earlier movement/equip may still have occurred.
-   // This is not a historical inventory-delta or no-cost assertion.
+   // Explicit owner review only. Initial occupied-target refusal predates
+   // movement/equip; missing support and post-preparation races do not.
+   // Server-refusal review still retains its possible earlier preparation effects.
    const a=start.arguments,valid=['x','y','z'].every(k=>Number.isSafeInteger(a?.[k]))&&typeof a?.item==='string'&&/^[a-z][a-z0-9_]*$/.test(a.item);
-   if(item.outcome!=='settled_failed_placement'||!valid||end.error!==`Server refused to place ${a.item} at (${a.x}, ${a.y}, ${a.z}): the block is still air`)throw Error('Placement review requires exact retained server refusal and original selected item/position');
+   const occupied=valid&&item.outcome==='no_effect'&&end.error==='Target is not empty';
+   const refused=valid&&item.outcome==='settled_failed_placement'&&end.error===`Server refused to place ${a.item} at (${a.x}, ${a.y}, ${a.z}): the block is still air`;
+   if(!occupied&&!refused)throw Error('Placement review requires exact initial occupied-target refusal or retained server refusal and original selected item/position');
   }else if(item.outcome==='settled_failed_placement')throw Error('Placement review is only for a single place action');
   if(start.action==='build'){
    const r=end.result,blocks=start.arguments?.blocks,itemName=start.arguments?.item,p=r?.failed_at;

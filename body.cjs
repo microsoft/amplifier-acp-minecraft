@@ -192,6 +192,23 @@ async function watchOperation(action){
  return watchBridge.invoke(taskHelperCommand,path.dirname(process.argv[2]),{...watchContext(),action});
 }
 function coord(a){const p=new Vec3(a.x,a.y,a.z);if(![p.x,p.y,p.z].every(Number.isInteger)||p.y< -64||p.y>319||p.distanceTo(bot.entity.position)>64)throw Error('Coordinates must be whole blocks within 64 blocks of this player');return p;}
+function digTarget(p,expected){
+ const block=bot.blockAt(p);
+ if(!block||block.name!==expected){
+  const error=Error(block?`Dig target mismatch: expected ${expected}, observed ${block.name} at ${p}; inspect the actual block before digging.`:`Dig target is unloaded at ${p}; inspect loaded terrain before digging.`);
+  error.details={target:{position:p,expected,observed:block?.name??null,loaded:!!block},standing_context:spatial.targetStance(bot,p)};throw error;
+ }
+ return block;
+}
+function placementTarget(p,prepared=false){
+ const block=bot.blockAt(p);
+ if(!block||!['air','cave_air','short_grass','tall_grass','snow'].includes(block.name)){
+  // Keep the historical initial refusal distinct from a later preparation race:
+  // movement/equip may already have happened in the latter case.
+  const error=Error(prepared?'Placement target changed during preparation; inspect before retrying':'Target is not empty');
+  error.details={target:{position:p,observed:block?.name??null,loaded:!!block}};throw error;
+ }
+}
 function actionsRemaining(){return cfg.human_engagement?.enabled===true?null:Math.max(0,24-actions);}
 let speechTurn=null, speechReceipts=new Map();
 function speechIdentity(text){
@@ -315,7 +332,7 @@ async function operate(name,a={},sequenceId=null){
   if(name==='conversation')return a.query||a.queries?conversation.search(a):conversation.expose();
   if(name==='entities')return survival.entities(bot,a);
   if(name==='inventory'){if(busy)throw Error('Wait for the current action before refreshing inventory');return refreshInventory(bot);}
-  if(name==='inspect'){const p=coord(a);const b=bot.blockAt(p);return {position:p,name:b?.name,solid:b?.boundingBox==='block',properties:b?.getProperties(),block_revision:blockRevision(b),occupancy:spatial.cell(bot,p),safe_standing_cell:spatial.supported(bot,p),...(signs.isSign(b)?{sign:signs.read(bot,p)}:{})};}
+  if(name==='inspect'){const p=coord(a);const b=bot.blockAt(p);return {position:p,name:b?.name,solid:b?.boundingBox==='block',properties:b?.getProperties(),block_revision:blockRevision(b),occupancy:spatial.cell(bot,p),safe_standing_cell:spatial.supported(bot,p),standing_context:spatial.targetStance(bot,p),occupancy_scope:'Feet/head/support clearance at this position, not the selected block type. name and solid describe only the selected block.',...(signs.isSign(b)?{sign:signs.read(bot,p)}:{})};}
   if(name==='read_sign')return signs.read(bot,coord(a));
   if(name==='survey')return spatial.survey(bot,a.radius);
   if(name==='map')return spatial.localMap(bot,a.radius);
@@ -389,7 +406,8 @@ async function operate(name,a={},sequenceId=null){
   try{
   if(name==='move'){const p=coord(a);if((a.range??0)===0){const stance=spatial.targetStance(bot,p);if(stance.exact_target_obstructed)throw Error(`Exact destination is obstructed: feet ${stance.feet.name}, head ${stance.head.name}. Coordinates identify player feet, not the supporting block. Inspect current clearance; no movement performed.`);}if(a.mode==='walk_only'){const route=walking.plan(bot,p,a.range??0);if(!route.reachable)throw Error(`No walk-only route (${route.status}); inspect the terrain. No movement performed.`);}}
   if(name==='gather')gatherTargets(a);
-  if(name==='dig'){const block=bot.blockAt(coord(a));if(!block||block.name!==a.expected)throw Error('Target block changed; inspect before digging');spatial.digGuard(bot,block);spatial.harvestTool(bot,block);if(!bot.canDigBlock(block))throw Error('Target is out of reach; plan a safe standing position first');}
+  if(name==='dig'){const block=digTarget(coord(a),a.expected);spatial.digGuard(bot,block);spatial.harvestTool(bot,block);if(!bot.canDigBlock(block))throw Error('Target is out of reach; plan a safe standing position first');}
+  if(name==='place'){const p=coord(a);placementTarget(p);spatial.placementSupport(bot,p,a.support_face,a.item);}
   if(name==='container')containers.preflight(bot,coord(a),a);
   if(name==='activate_control')new BlockControls(history).preflight(bot,coord(a),a);
   }catch(error){try{retryGuard.failed(bot,name,a,error);}catch{}record('action_preflight_refused',{action:name,arguments:a,error:error.message,effect_attempted:false});throw error;}
@@ -400,7 +418,7 @@ async function operate(name,a={},sequenceId=null){
   const movementFailure=(error,before,settled)=>{if(settled&&epoch===generation&&ready&&Date.now()<turnUntil&&!error.actionTimeout)movementFailures.set(error,{kind:'settled_failed_movement',before,position:{x:bot.entity.position.x,y:bot.entity.position.y,z:bot.entity.position.z},reached:false,replayed:false});return error;};
   const go=async(p,r=2,exactHeight=false)=>{check();const before={x:bot.entity.position.x,y:bot.entity.position.y,z:bot.entity.position.z};const goal=exactHeight?new spatial.FeetGoal(p.x,p.y,p.z,r):new goals.GoalNear(p.x,p.y,p.z,r);let settled=false;try{await spatial.gotoWithProgress(bot,goal);settled=true;await delay(250);check();if(!goal.isEnd(bot.entity.position.floored()))throw Error('Movement ended without reaching the requested destination; inspect current position');}catch(error){throw movementFailure(error,before,settled||error.movementOperationSettled===true);}};
   async function place(p,item,supportFace,facing){
-    check();const target=bot.blockAt(p);if(!target||!['air','cave_air','short_grass','tall_grass','snow'].includes(target.name))throw Error('Target is not empty');
+    check();placementTarget(p);
     const directions={north:[0,-1],south:[0,1],east:[1,0],west:[-1,0]};
     const {furnaceFacing,stairsFacing,pistonFacing}=validatePlacementFacing(item,facing);
     if(facing){
@@ -414,7 +432,7 @@ async function operate(name,a={},sequenceId=null){
     const stack=bot.inventory.items().find(i=>i.name===item);if(!stack)throw Error('Item is not in inventory');
     await go(p,3);check();await bot.equip(stack,'hand');await refreshInventory(bot);check();
     if(bot.heldItem?.name!==item)throw Error('Server did not confirm the requested held item; refresh inventory before retrying');
-    const support=spatial.placementSupport(bot,p,supportFace,item);
+    placementTarget(p,true);const support=spatial.placementSupport(bot,p,supportFace,item);
     const placementAttempt=async send=>{try{return await require('./placement-receipt.cjs').attempt(bot,support.block,p,item,send);}catch(error){
       const receipt=require('./placement-receipt.cjs').refusal(error);
       if(receipt&&epoch===generation&&ready&&Date.now()<turnUntil&&!error.actionTimeout)placementFailures.set(error,{kind:'settled_failed_placement',receipt,position:{x:bot.entity.position.x,y:bot.entity.position.y,z:bot.entity.position.z},replayed:false});
@@ -452,7 +470,7 @@ async function operate(name,a={},sequenceId=null){
       if(name==='write_sign')return signs.write(bot,coord(a),a,check);
       if(name==='activate_control')return new BlockControls(history).use(bot,coord(a),a,check);
       if(name==='set_open'){const p=coord(a),block=bot.blockAt(p);if(!block||!/(?:_door|_trapdoor|_fence_gate)$/.test(block.name))throw Error('Only doors, trapdoors and fence gates can be opened here');if(p.distanceTo(bot.entity.position)>4)throw Error('Move within reach first');if(block.getProperties().open!==a.open){await bot.activateBlock(block);await delay(300);check();}const actual=bot.blockAt(p)?.getProperties().open;if(actual!==a.open)throw Error('Server did not confirm the requested open state');return {position:p,name:block.name,open:actual,verified:true};}
-      if(name==='dig'){const block=bot.blockAt(coord(a));if(!block||block.name!==a.expected)throw Error('Target block changed; inspect before digging');spatial.digGuard(bot,block);const tool=spatial.harvestTool(bot,block);if(tool)await bot.equip(tool,'hand');check();if(!bot.canDigBlock(block))throw Error('Target is out of reach; plan a safe standing position first');await bot.dig(block);check();await delay(200);const after=bot.blockAt(block.position)?.name;if(after===a.expected)throw Error('Server did not confirm removal');return {position:block.position,before:a.expected,after,tool:tool?.name||'hand',inventory:snapshot().inventory};}
+      if(name==='dig'){const block=digTarget(coord(a),a.expected);spatial.digGuard(bot,block);const tool=spatial.harvestTool(bot,block);if(tool)await bot.equip(tool,'hand');check();if(!bot.canDigBlock(block))throw Error('Target is out of reach; plan a safe standing position first');await bot.dig(block);check();await delay(200);const after=bot.blockAt(block.position)?.name;if(after===a.expected)throw Error('Server did not confirm removal');return {position:block.position,before:a.expected,after,tool:tool?.name||'hand',inventory:snapshot().inventory};}
       if(name==='follow'){
         if(a.player&&a.entity_id!==undefined)throw Error('Choose a player or an entity, not both');
         const target=a.player?bot.players[a.player]?.entity:bot.entities[a.entity_id];
@@ -566,7 +584,7 @@ const definitions={
   activate_control:['Press a nearby button once, set a lever powered state, set repeater delay (1–4 redstone ticks), or comparator mode (compare/subtract). Supply only the matching target with fresh inspect block_revision and unique operation_id. Configuration can use up to three server-confirmed clicks; intermediate states can affect a live circuit. Settled duplicates return the receipt; uncertain operations never resume or replay. Verify circuit behavior separately.',{...xyz,operation:z.enum(['press','set']),powered:z.boolean().optional(),delay:z.number().int().min(1).max(4).optional(),mode:z.enum(['compare','subtract']).optional(),block_revision:z.string().min(1),operation_id:z.string().min(8).max(100)}],
   set_open:['Set a nearby door, trapdoor or fence gate open/closed and verify its state.',{...xyz,open:z.boolean()}],
   dig:['Remove one exact block, checking its expected type, reach, harvesting tool and player footing. Does not walk automatically or collect drops. Use gather with explicitly selected resource targets when you need inventory items. Preserve player builds unless authorized.',{...xyz,expected:z.string().min(1).max(80)}],
-  inspect:['Inspect one nearby block, including empty spaces and support faces.',xyz],
+  inspect:['Inspect one nearby block, including empty spaces and support faces. name/solid describe the selected block; occupancy/standing_context describe feet, head and support clearance for standing there.',xyz],
   find:['Find up to twelve loaded blocks of an exact type near you.',{block:z.string(),radius:z.number().int().min(1).max(48).default(24)}],
   chat:['Reply to the current audience: private installation caller, game whisper, or public game. Private replies are recorded for the original caller; they are not spoken in game. Only select audience=game for an explicitly requested game publication. Pass the latest conversation_revision for game speech; reconsider newer public evidence before sending. When answering a queued human correction seen during this turn, optionally pass its exact source_fact in reply_to. This records a response only, not completed work; leave unanswered inputs pending. The connector splits a completed utterance into ordered packets; do not count characters or resend a partial/unknown submission. No slash commands.',{conversation_revision:revision,text:z.string().min(1).max(4000),audience:z.enum(['reply','game']).default('reply'),reply_to:replySources}],
   move:['Coordinates name a block, not a rounded raw position. Use observed feet_block (floor on all axes) to save a starting block; verify final feet_block before claiming return. reached verifies the chosen target only. Move to exact feet height. mode=walk_only uses level cardinal walking with no jumping/climbing/swimming or wall shortcuts and verifies the observed height. Rechecks terrain and stops on obstruction, lost footing or Stop. Normal mode may jump/climb. Range is horizontal only; use 0 for a precise destination.',{...xyz,range:z.number().int().min(0).max(3).default(0),mode:z.enum(['normal','walk_only']).default('normal')}],

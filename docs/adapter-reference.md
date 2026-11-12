@@ -148,10 +148,22 @@ For level activities that prohibit jumping, select `mode: "walk_only"` for both
 Level routes report `current_feet` and reject a fractional-height start as
 `non_level_start` before moving. A clear center cell alone is not enough when
 the player's edge is resting on a neighboring slab.
+`inspect.name` and `solid` describe the selected block. Its `occupancy` marker
+summarizes a potential standing position; `#` can mean an overhead obstruction
+while the selected block is air. `standing_context` identifies the feet, head
+and support blocks separately. A stale `dig.expected` returns the actual observed
+block and this stance evidence before any effect is admitted.
 Digging checks footing and adjacent liquids. Crafting and placement refresh the
 server inventory. Sign writes verify the server's text echo and can reject stale
 edits with `expected_lines`. Item drops remain physical world interactions:
 another nearby player may collect them, so verify the recipient's inventory.
+Single-block placement checks initial occupancy and support before movement or
+inventory preparation, then rechecks before placement. A changed target after
+preparation remains distinct from an initial no-effect refusal. Authenticated
+owner review can record an exact retained initial `Target is not empty` failure
+as no effect; this preserves the original uncertain receipt and task rather than
+replaying the request. Missing support after preparation and unknown transport
+outcomes do not qualify for that historical review.
 
 `place.facing` selects a cardinal direction for ordinary signs (text front), beds
 (foot toward head), stairs (uphill direction), and furnaces, blast furnaces or
