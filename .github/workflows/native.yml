@@ -26,7 +26,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           repository: microsoft/amplifier-constellation
-          ref: 5b270368b9193a7d9b8c38fc80bb1c458defeb83
+          ref: 55b31e066a89a18c525974bd2ed229ae471ee01c
           path: native-shared
       - uses: actions/setup-python@v5
         with:
@@ -97,6 +97,12 @@ jobs:
       - name: Verify packaged native retention (Windows)
         if: runner.os == 'Windows'
         run: bundle/python/python.exe -I ops/native/verify_retention.py --bundle bundle --driver bundle/native/constellation-native-driver.exe --receipt native-retention-result.json
+      - name: Verify packaged scoped tree recovery (Unix)
+        if: runner.os != 'Windows'
+        run: bundle/python/bin/python3 -I ops/native/verify_tree_recovery.py --bundle bundle --driver bundle/native/constellation-native-driver --receipt native-tree-recovery-result.json
+      - name: Verify packaged scoped tree recovery (Windows)
+        if: runner.os == 'Windows'
+        run: bundle/python/python.exe -I ops/native/verify_tree_recovery.py --bundle bundle --driver bundle/native/constellation-native-driver.exe --receipt native-tree-recovery-result.json
       - name: Install Linux browser OS libraries on disposable runner
         if: runner.os == 'Linux'
         run: bundle/node/bin/node bundle/app/node_modules/playwright/cli.js install-deps chromium
@@ -113,6 +119,7 @@ jobs:
           path: |
             native-driver-inspection.json
             native-retention-result.json
+            native-tree-recovery-result.json
             native-lifecycle-result.json
             native-result.json
             bundle/manifest.json
@@ -128,6 +135,7 @@ jobs:
             minecraft-${{ matrix.target }}.tar.gz.json
             native-driver-inspection.json
             native-retention-result.json
+            native-tree-recovery-result.json
             native-lifecycle-result.json
             native-result.json
             bundle/manifest.json

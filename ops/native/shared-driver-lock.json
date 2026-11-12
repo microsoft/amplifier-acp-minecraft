@@ -1,5 +1,5 @@
 {
   "repository": "microsoft/amplifier-constellation",
-  "commit": "5b270368b9193a7d9b8c38fc80bb1c458defeb83",
-  "status": "merged shared source; composed Minecraft qualification pending; no live enrollment"
+  "commit": "55b31e066a89a18c525974bd2ed229ae471ee01c",
+  "status": "qualified shared candidate; root acceptance and composed recovery qualification pending; no live enrollment"
 }
