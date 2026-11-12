@@ -247,6 +247,10 @@ class Provider:
     def plan(self):
         if not self.c.get('shared_plans'):
             raise ContinuityError('Enroll shared_plans before automatic source checks')
+        native_errors = ()
+        if self.c.get('native_platform'):
+            from constellation_native import DriverError
+            native_errors = (DriverError,)
         previous = self.status()['version']
         revision, checks = self.candidate()
         if revision == previous:
@@ -274,6 +278,12 @@ class Provider:
                 durable_write(stage/'manifest.json',manifest)
                 self.retention.mark('stage', stage.name, state='ready', last_offered=time.time(),
                                     manifest_hash=digest(manifest))
+            except native_errors:
+                # Transport loss invalidates every lock in this Session even
+                # while its Python with-block remains entered. Preserve the
+                # primary error and unwind; recovery must reacquire ownership
+                # and inspect the existing journal, never replay this build.
+                raise
             except Exception as error:
                 self.retention.mark('stage', stage.name, state='failed', error_type=type(error).__name__)
                 self.cleanup(failed=stage.name)
