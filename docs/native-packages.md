@@ -138,11 +138,15 @@ There is no connector fallback to platform deletion commands.
 A lost transport or unknown removal outcome leaves the intent unresolved. Unwind
 the Session before any recovery write, then acquire a fresh lock for read-only
 inspection. Neither a remaining tree nor a replacement authorizes redispatch.
-The current optional inspection API returns null for absence without exposing the
-original root identity, so this consumer conservatively retains an unresolved
-pruning intent even when the leaf is absent. It does not automatically reconcile
-that case or resume collection. This limitation is separate from successful
-observed removal and awaits an explicit root-bound recovery guarantee.
+When the driver explicitly advertises `regenerable_tree_observation: 1` and
+`tree.observe`, Minecraft records the complete observed scope and exact profile
+name/entry in the same pruning intent before removal. A later invocation may
+settle only that intent when a fresh locked observation has exactly the same
+scope and an absent entry, with current reference and transaction guards still
+passing. It records `same_scope_absence`; it never repeats removal. Changed
+root/profile/lock mapping, a remaining or replaced entry, unknown observations,
+and legacy intents without the saved scope remain unresolved. Older drivers
+still support removal, but their bare-null inspection cannot establish recovery.
 
 The shared cleanup candidate and combined six-platform consumer tests must be
 qualified before enrollment. Local contract tests or a disposable Linux run alone

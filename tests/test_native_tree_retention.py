@@ -242,3 +242,103 @@ class NativeTreeRetentionTests(unittest.TestCase):
 
 del _Fixture
 if __name__ == '__main__':unittest.main()
+
+class ObservingTreePeer(TreePeer):
+    def __init__(self, cfg):
+        super().__init__(cfg)
+        self.scope_revision = 'a' * 64
+        self.root_generation = 'original'
+        self.observe_error = None
+
+    def describe(self):
+        value = super().describe()
+        value['regenerable_tree_observation'] = 1
+        value['operations'].append('tree.observe')
+        return value
+
+    def tree_observe(self, name, entry):
+        self.check()
+        assert self.locked
+        if self.observe_error:raise self.observe_error
+        return {'scope':{'schema':1, 'profile_sha256':self.scope_revision,
+                         'root':str(Path(self.cfg['state'])/name),
+                         'root_identity':{'fixture_generation':self.root_generation}},
+                'entry':self.tree_inspect(name, entry)}
+
+
+class NativeTreeObservationTests(unittest.TestCase):
+    setUp = NativeTreeRetentionTests.setUp
+    tearDown = NativeTreeRetentionTests.tearDown
+    def lost_intent(self, *, removed=True):
+        identifier = str(uuid.uuid4());path = self.keep.path('stage',identifier)
+        path.mkdir(parents=True);(path/'partial').write_text('regenerable')
+        self.keep.mark('stage',identifier,state='failed',created_at=1)
+        self.cfg['native_platform']={'version':1,'regenerable_tree_removal':1}
+        peer=ObservingTreePeer(self.cfg);peer.unknown=True
+        if removed:peer.on_remove=lambda:shutil.rmtree(path)
+        with self.assertRaises(LostReply),owner_io(NativeIO(self.cfg,peer)),installation_lock(self.keep.root/'installation.lock'):
+            self.provider.cleanup(failed=identifier)
+        record=self.keep.owned('stage',identifier)
+        self.assertEqual(record['state'],'pruning')
+        self.assertEqual(record['tree_observation']['entry'],identifier)
+        self.assertEqual(sum(c[0]=='remove' for c in peer.calls),1)
+        return identifier,record,peer
+
+    def reconcile(self, peer):
+        with owner_io(NativeIO(self.cfg,peer)),installation_lock(self.keep.root/'installation.lock'):
+            return self.provider.cleanup()
+
+    def test_committed_lost_reply_reconciles_same_intent_once_without_remove(self):
+        identifier,record,old=self.lost_intent()
+        with self.assertRaises(AssertionError):old.tree_observe('stages',identifier)
+        fresh=ObservingTreePeer(self.cfg);result=self.reconcile(fresh)
+        self.assertEqual(result,{'pruned':[],'reconciled':['stage/'+identifier]})
+        current=self.keep.owned('stage',identifier)
+        for key in ('tree_observation','expected_tree','reason','pruned_at'):
+            self.assertEqual(current[key],record[key])
+        self.assertEqual(current['reconciliation'],'same_scope_absence')
+        self.assertEqual(self.reconcile(ObservingTreePeer(self.cfg)),{'pruned':[]})
+        self.assertFalse(any(c[0]=='remove' for c in fresh.calls))
+
+    def test_root_or_profile_change_cannot_settle_absent_entry(self):
+        for field,value in [('root_generation','replacement'),('scope_revision','b'*64)]:
+            with self.subTest(field=field):
+                identifier,record,_=self.lost_intent();fresh=ObservingTreePeer(self.cfg);setattr(fresh,field,value)
+                self.assertIn('held',self.reconcile(fresh));self.assertEqual(self.keep.owned('stage',identifier),record)
+                self.assertFalse(any(c[0]=='remove' for c in fresh.calls))
+                # Isolate the next test intent without claiming it settled.
+                self.keep.record_path('stage',identifier).unlink()
+
+    def test_present_or_replaced_leaf_never_retries_removal(self):
+        for replaced in (False,True):
+            identifier,record,_=self.lost_intent(removed=False)
+            if replaced:
+                path=self.keep.path('stage',identifier);shutil.rmtree(path);path.mkdir();(path/'new').write_text('preserve')
+            fresh=ObservingTreePeer(self.cfg);self.assertIn('held',self.reconcile(fresh))
+            self.assertEqual(self.keep.owned('stage',identifier),record)
+            self.assertFalse(any(c[0]=='remove' for c in fresh.calls))
+            self.keep.record_path('stage',identifier).unlink()
+
+    def test_legacy_missing_scope_and_changed_entry_binding_remain_held(self):
+        for change in (None,{'name':'stages','entry':str(uuid.uuid4()),'scope':{}}):
+            identifier,_,_=self.lost_intent();record=self.keep.mark('stage',identifier,tree_observation=change)
+            self.assertIn('held',self.reconcile(ObservingTreePeer(self.cfg)))
+            self.assertEqual(self.keep.owned('stage',identifier),record)
+            self.keep.record_path('stage',identifier).unlink()
+
+    def test_currently_referenced_intent_cannot_be_reconciled(self):
+        identifier,record,_=self.lost_intent()
+        self.cfg['app']=str(self.keep.path('stage',identifier)/'app')
+        self.assertIn('held',self.reconcile(ObservingTreePeer(self.cfg)))
+        self.assertEqual(self.keep.owned('stage',identifier),record)
+
+    def test_unknown_observation_propagates_without_journal_write(self):
+        identifier,record,_=self.lost_intent();peer=ObservingTreePeer(self.cfg);peer.observe_error=LostReply('read timeout')
+        with self.assertRaises(LostReply):self.reconcile(peer)
+        self.assertEqual(self.keep.owned('stage',identifier),record)
+        self.assertFalse(any(c[0] in ('remove','write') for c in peer.calls))
+
+    def test_current_intent_cannot_reconcile_after_capability_disappears(self):
+        identifier,record,_=self.lost_intent()
+        self.assertIn('held',self.reconcile(TreePeer(self.cfg)))
+        self.assertEqual(self.keep.owned('stage',identifier),record)

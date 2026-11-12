@@ -80,7 +80,7 @@ class Retention:
             if canonical_id(identifier):return identifier
         return None
 
-    def references(self):
+    def references(self, *, allow_pruning=False):
         """Unknown journals, links or transaction outcomes disable collection."""
         plans = Path(self.cfg['shared_plans'])
         if not plans.is_absolute() or plans.resolve() != plans or not plans.is_dir():
@@ -139,7 +139,8 @@ class Retention:
                     if transaction.get('phase') != 'restored':
                         raise ContinuityError('Source restoration is unsettled')
         for identifier in self.stage_ids():
-            if self.owned('stage', identifier).get('state') in ('building', 'pruning'):
+            state = self.owned('stage', identifier).get('state')
+            if state == 'building' or (state == 'pruning' and not allow_pruning):
                 raise ContinuityError('Artifact operation is unsettled')
         for key in ('app','venv'):
             identifier = self.stage_reference(self.cfg[key])
@@ -221,11 +222,14 @@ class Retention:
             raise ContinuityError('Existing pruning intent requires read-only reconciliation')
         native = self.native_trees()
         if native is not None:
-            expected = native.tree_inspect(kind, identifier)
+            observation = native.tree_observe(kind, identifier)
+            expected = observation['entry'] if observation is not None else native.tree_inspect(kind, identifier)
             timeout = native.tree_removal_timeout() if expected is not None else None
             self.mark(kind, identifier, state='pruning', reason=reason,
                       pruned_at=time.time(), removal_backend='native',
-                      expected_tree=expected, removal_timeout_seconds=timeout)
+                      expected_tree=expected, removal_timeout_seconds=timeout,
+                      tree_observation=({'name':native.tree_profile(kind),'entry':identifier,
+                                         'scope':observation['scope']} if observation is not None else None))
             if expected is not None:
                 # No catch: transport loss invalidates ALL Session locks.
                 # Preserve this intent and unwind before any recovery write.
@@ -240,11 +244,45 @@ class Retention:
         self.mark(kind, identifier, state='pruned')
         return True
 
+    def reconcile_pruning(self):
+        """Settle only a retained native intent; never submit another removal."""
+        native = self.native_trees()
+        if native is None:return []
+        reconciled = []
+        # Recheck current/baseline/rollback and uncertain transactions before
+        # changing a journal, even though reconciliation itself deletes nothing.
+        refs = self.references(allow_pruning=True)
+        for kind in ('stage', 'backup'):
+            for path in sorted(self.records.glob(kind+'-*.json')):
+                identifier = path.name[len(kind)+1:-len('.json')]
+                if not canonical_id_or_false(identifier):continue
+                record = self.owned(kind, identifier)
+                if not record or record.get('state') != 'pruning':continue
+                binding = record.get('tree_observation')
+                if (record.get('removal_backend') != 'native' or not isinstance(binding, dict)
+                        or set(binding) != {'name','entry','scope'}
+                        or binding['name'] != native.tree_profile(kind) or binding['entry'] != identifier
+                        or not isinstance(binding['scope'], dict)):
+                    raise ContinuityError('Pruning intent lacks original scoped observation')
+                if identifier in refs[0 if kind == 'stage' else 1]:
+                    raise ContinuityError('Pruning intent is currently referenced')
+                observation = native.tree_observe(kind, identifier)
+                if (observation is None or observation['scope'] != binding['scope']
+                        or observation['entry'] is not None):
+                    raise ContinuityError('Pruning outcome remains unresolved')
+                if self.references(allow_pruning=True) != refs or self.owned(kind, identifier) != record:
+                    raise ContinuityError('Pruning references or intent changed')
+                self.mark(kind, identifier, state='pruned', reconciled_at=time.time(),
+                          reconciliation='same_scope_absence')
+                reconciled.append(kind+'/'+identifier)
+        return reconciled
+
     def prune(self, fingerprint, *, failed=None):
         if not self.cfg.get('shared_plans'):
             return {'pruned':[], 'held':'shared_plans_not_enrolled'}
         removed = []
         try:
+            reconciled = self.reconcile_pruning()
             stages, plans, signature = self.references()
             # Only obsolete managed backup LINKS may be discarded. Real original
             # app/venv directories and unknown added files are baseline/user data.
@@ -274,7 +312,7 @@ class Retention:
                 if self.references() != (stages, plans, signature):raise ContinuityError('References changed during cleanup')
                 self.remove('stage', identifier, 'failed_build_unreferenced' if identifier == failed else 'unreferenced_after_grace')
                 removed.append('stage/'+identifier)
-            return {'pruned':removed}
+            return {'pruned':removed, **({'reconciled':reconciled} if reconciled else {})}
         except (OSError, ValueError, KeyError, TypeError, AttributeError, ContinuityError) as error:
             return {'pruned':removed, 'held':type(error).__name__}
 
