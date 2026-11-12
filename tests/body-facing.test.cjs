@@ -134,3 +134,16 @@ for(const confirmed of [true,false])test('actual partial build '+(confirmed?'ret
   assert.equal(f.bot.eventNames().filter(n=>String(n).startsWith('blockUpdate:')).length,0);
  }finally{f.close();}
 });
+
+test('geometry clarity accompanies a verified production placement without another effect or authority change',async()=>{
+ const f=fixture('cobblestone',{});try{
+  const read=f.bot.blockAt;
+  f.bot.blockAt=p=>{const b=read(p);return {...b,shapes:b.name!=='air'?[[0,0,0,1,1,1]]:[]};};
+  const before=JSON.stringify(f.history.task()),result=await f.run();
+  assert.equal(result.verified,true);assert.equal(result.position.y,64);
+  assert.equal(result.placement_geometry.block.name,'cobblestone');
+  assert.equal(result.placement_geometry.stance_above_full_block.feet.position.y,65);
+  assert.equal(result.placement_geometry.stance_above_full_block.exact_target_obstructed,true,'fixture overhead is stone, not a safe destination');
+  assert.equal(f.observation().sends,1);assert.equal(JSON.stringify(f.history.task()),before);
+ }finally{f.close();}
+});

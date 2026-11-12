@@ -116,3 +116,41 @@ test('route reports its movement limits without rejecting a larger total descent
  assert.equal(r.movement_capabilities.normal.max_dry_full_block_feet_drop_per_edge,1);
  assert.equal(r.movement_capabilities.normal.can_dig,false);
 });
+
+// Reproduce the physical rule through the pinned upstream neighbor generator,
+// not a duplicate approximation of its jump algorithm.
+test('geometry clarity rise limit agrees with actual upstream full-block jump and clearance',()=>{
+ const {Movements}=require('mineflayer-pathfinder');const {movementCapabilities}=require('../spatial.cjs');
+ for(const height of [1,2])for(const overhead of [false,true]){
+  const m={maxDropDown:2,canDig:false,allowParkour:false,allow1by1towers:false,scafoldingBlocks:[],
+   getNumEntitiesAt:()=>0,safeOrBreak:b=>b.physical?1000:0,
+   getBlock(node,dx,dy,dz){const p=new Vec3(node.x+dx,node.y+dy,node.z+dz);
+    const solid=(p.x===0&&p.y===53)||(p.x===1&&p.y>=54&&p.y<54+height)||(overhead&&p.x===0&&p.y===56);
+    return {position:p,physical:solid,height:p.y+(solid?1:0),replaceable:!solid};}};
+  const neighbors=[];Movements.prototype.getMoveJumpUp.call(m,{x:0,y:54,z:0,remainingBlocks:0},{x:1,z:0},neighbors);
+  assert.equal(neighbors.length,height===1&&!overhead?1:0);
+  if(neighbors.length){assert.equal(neighbors[0].y,55);assert.deepEqual(neighbors[0].toBreak,[]);assert.deepEqual(neighbors[0].toPlace,[]);}
+  const facts=movementCapabilities({pathfinder:{movements:m}}).normal;
+  assert.equal(facts.max_dry_full_block_feet_rise_per_edge,1);assert.equal(facts.scaffolding_configured,false);
+ }
+ assert.equal(movementCapabilities({}).normal.max_dry_full_block_feet_rise_per_edge,null);
+ assert.equal(movementCapabilities({}).normal.scaffolding_configured,null);
+});
+test('geometry clarity places a full cube below feet and exposes blocked head without claiming reachability',()=>{
+ const {placementGeometry}=require('../spatial.cjs'),p=new Vec3(-530,55,-547);
+ const cube=name=>({name,shapes:[[0,0,0,1,1,1]],boundingBox:'block'});
+ for(const blocked of [false,true]){
+  const bot={blockAt:q=>q.equals(p)?cube('cobblestone'):q.equals(p.offset(0,2,0))&&blocked?cube('stone'):{name:'air',shapes:[],boundingBox:'empty'}};
+  const result=placementGeometry(bot,p),stance=result.stance_above_full_block;
+  assert.equal(result.coordinate_role,'block');assert.equal(result.block.position.y,55);
+  assert.equal(stance.feet.position.y,56);assert.equal(stance.head.position.y,57);assert.equal(stance.support.position.y,55);
+  assert.equal(stance.support.name,'cobblestone');assert.equal(stance.exact_target_obstructed,blocked);
+  assert.equal(result.reachable,undefined);assert.equal(result.safe,undefined);
+ }
+});
+test('geometry clarity does not invent standing height for partial or missing placement geometry',()=>{
+ const {placementGeometry}=require('../spatial.cjs');
+ for(const b of [null,{name:'stone_slab',shapes:[[0,0,0,1,.5,1]]},{name:'cobblestone'},{name:'air',shapes:[]}]){
+  const result=placementGeometry({blockAt:()=>b},new Vec3(1,55,2));assert.equal(result.stance_above_full_block,null);
+ }
+});
