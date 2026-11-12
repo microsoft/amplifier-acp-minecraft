@@ -121,16 +121,23 @@ function harvestTool(bot,block){
  if(block.canHarvest(null))return null;
  throw Error(`A suitable harvesting tool is required for ${block.name}; mining it now would not collect its normal drop`);
 }
-async function gotoWithProgress(bot,goal,{stallMs=8000,pollMs=500}={}){
- let timer,finished=false,last=bot.entity.position.clone(),lastMoved=Date.now();
+async function gotoWithProgress(bot,goal,{stallMs=8000,pollMs=500,settleMs=1000}={}){
+ let timer,drainTimer,settled=false,last=bot.entity.position.clone(),lastMoved=Date.now();
+ const operation=Promise.resolve().then(()=>bot.pathfinder.goto(goal));
+ const completion=operation.then(()=>{settled=true;},()=>{settled=true;});
  try{
-  await Promise.race([bot.pathfinder.goto(goal),new Promise((_,reject)=>{
+  await Promise.race([operation,new Promise((_,reject)=>{
    timer=setInterval(()=>{
     const p=bot.entity.position;
     if(p.distanceTo(last)>.2){last=p.clone();lastMoved=Date.now();}
     else if(Date.now()-lastMoved>=stallMs)reject(Error('Movement stalled without position progress; inspect nearby blocks and choose a different route. This turn remains available.'));
    },pollMs);
-  })]);finished=true;
- }finally{clearInterval(timer);if(!finished){bot.pathfinder.setGoal(null);bot.clearControlStates();}}
+  })]);
+ }catch(error){
+  let cancelled=true;try{bot.pathfinder.setGoal(null);bot.clearControlStates();}catch{cancelled=false;}
+  await Promise.race([completion,new Promise(resolve=>{drainTimer=setTimeout(resolve,settleMs);})]);
+  error.movementOperationSettled=settled&&cancelled;throw error;
+ }finally{clearInterval(timer);clearTimeout(drainTimer);}
 }
+
 module.exports={alignPlayerCollision,survey,openPassage,SpatialMovements,cell,targetStance,supported,footing,FeetGoal,route,localMap,digGuard,harvestTool,gotoWithProgress,placementSupport,normalizePassages};

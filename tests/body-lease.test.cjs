@@ -86,7 +86,7 @@ function fixture(configOverride={},walkingOverride=null,bridgeOverride=null){
  const bot=new EventEmitter();Object.assign(bot,{username:'Builder',players:{},loadPlugin(){},pathfinder:{setGoal(){}},clearControlStates(){},stopDigging(){},entity:{position:{clone:()=>({x:0,y:64,z:0})}},health:20});
  let handle,current=now;const timers=new Set();
  class Clock extends Date{static now(){return current;}}
- const ctx=vm.createContext({require:n=>n==='./watch-bridge.cjs'&&bridgeOverride?bridgeOverride:n==='./walking.cjs'&&walkingOverride?walkingOverride:n==='mineflayer'?{createBot:()=>bot}:n==='node:http'?{createServer:h=>{handle=h;return {listen(){},close(){}};}}:realRequire(n),
+ const ctx=vm.createContext({require:n=>n==='./watch-bridge.cjs'&&bridgeOverride?bridgeOverride:n==='./walking.cjs'&&walkingOverride?{plan:()=>({reachable:true}),...walkingOverride}:n==='mineflayer'?{createBot:()=>bot}:n==='node:http'?{createServer:h=>{handle=h;return {listen(){},close(){}};}}:realRequire(n),
  module:{exports:{}},console:{log(){}},Date:Clock,Buffer,process:{argv:['node','body.cjs',config],on(){},exit(){}},
  setTimeout:(fn,ms)=>{const t={fn,at:current+ms,unref(){}};timers.add(t);return t;},clearTimeout:t=>timers.delete(t)});
  vm.runInContext(fs.readFileSync(path.join(root,'body.cjs'),'utf8')+'\nready=true;module.exports={history,operate,actionsRemaining};',ctx);
