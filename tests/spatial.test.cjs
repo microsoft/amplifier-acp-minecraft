@@ -92,3 +92,94 @@ test('stalled navigation distinguishes acknowledged cancellation from a merely s
  const bot={entity:{position:new Vec3(0,0,0)},pathfinder:{goto:()=>new Promise((_,r)=>{reject=r;}),setGoal(){reject(Error('cancelled'));}},clearControlStates(){}};
  await assert.rejects(gotoWithProgress(bot,{}, {stallMs:10,pollMs:5,settleMs:20}),e=>e.movementOperationSettled===true);
 });
+
+test('reported dry drop bound matches actual upstream landing-floor semantics',()=>{
+ const {Movements}=require('mineflayer-pathfinder');const {movementCapabilities}=require('../spatial.cjs');
+ for(const limit of [2,3]){
+  const m={maxDropDown:limit,canDig:false,allowParkour:false,allow1by1towers:false,bot:{game:{minY:-64}}};
+  const bot={pathfinder:{movements:m}};
+  assert.equal(movementCapabilities(bot).normal.max_dry_full_block_feet_drop_per_edge,limit-1);
+  for(const descent of [1,2,3]){
+   const floor=64-descent-1;
+   m.getBlock=(node,dx,dy,dz)=>{const p=new Vec3(node.x+dx,node.y+dy,node.z+dz);return {position:p,physical:p.y===floor,safe:true,liquid:false};};
+   const landing=Movements.prototype.getLandingBlock.call(m,new Vec3(0,64,0),{x:1,z:0});
+   assert.equal(landing?.position.y??null,descent<limit?64-descent:null);
+  }
+ }
+ assert.equal(movementCapabilities({}).normal.max_dry_full_block_feet_drop_per_edge,null);
+});
+test('route reports its movement limits without rejecting a larger total descent',()=>{
+ const {route}=require('../spatial.cjs');let searches=0;
+ const bot=world({});bot.pathfinder={movements:{maxDropDown:2,canDig:false,allowParkour:false,allow1by1towers:false},getPathTo(){searches++;return {status:'success',path:[new Vec3(1,63,0),new Vec3(2,62,0),new Vec3(3,61,0)]};}};
+ const r=route(bot,new Vec3(3,61,0));
+ assert.equal(r.reachable,true);assert.equal(searches,1);assert.equal(r.steps.length,3);
+ assert.equal(r.movement_capabilities.normal.max_dry_full_block_feet_drop_per_edge,1);
+ assert.equal(r.movement_capabilities.normal.can_dig,false);
+});
+
+// Reproduce the physical rule through the pinned upstream neighbor generator,
+// not a duplicate approximation of its jump algorithm.
+test('geometry clarity rise limit agrees with actual upstream full-block jump and clearance',()=>{
+ const {Movements}=require('mineflayer-pathfinder');const {movementCapabilities}=require('../spatial.cjs');
+ for(const height of [1,2])for(const overhead of [false,true]){
+  const m={maxDropDown:2,canDig:false,allowParkour:false,allow1by1towers:false,scafoldingBlocks:[],
+   getNumEntitiesAt:()=>0,safeOrBreak:b=>b.physical?1000:0,
+   getBlock(node,dx,dy,dz){const p=new Vec3(node.x+dx,node.y+dy,node.z+dz);
+    const solid=(p.x===0&&p.y===53)||(p.x===1&&p.y>=54&&p.y<54+height)||(overhead&&p.x===0&&p.y===56);
+    return {position:p,physical:solid,height:p.y+(solid?1:0),replaceable:!solid};}};
+  const neighbors=[];Movements.prototype.getMoveJumpUp.call(m,{x:0,y:54,z:0,remainingBlocks:0},{x:1,z:0},neighbors);
+  assert.equal(neighbors.length,height===1&&!overhead?1:0);
+  if(neighbors.length){assert.equal(neighbors[0].y,55);assert.deepEqual(neighbors[0].toBreak,[]);assert.deepEqual(neighbors[0].toPlace,[]);}
+  const facts=movementCapabilities({pathfinder:{movements:m}}).normal;
+  assert.equal(facts.max_dry_full_block_feet_rise_per_edge,1);assert.equal(facts.scaffolding_configured,false);
+ }
+ assert.equal(movementCapabilities({}).normal.max_dry_full_block_feet_rise_per_edge,null);
+ assert.equal(movementCapabilities({}).normal.scaffolding_configured,null);
+});
+test('geometry clarity places a full cube below feet and exposes blocked head without claiming reachability',()=>{
+ const {placementGeometry}=require('../spatial.cjs'),p=new Vec3(-530,55,-547);
+ const cube=name=>({name,shapes:[[0,0,0,1,1,1]],boundingBox:'block'});
+ for(const blocked of [false,true]){
+  const bot={blockAt:q=>q.equals(p)?cube('cobblestone'):q.equals(p.offset(0,2,0))&&blocked?cube('stone'):{name:'air',shapes:[],boundingBox:'empty'}};
+  const result=placementGeometry(bot,p),stance=result.stance_above_full_block;
+  assert.equal(result.coordinate_role,'block');assert.equal(result.block.position.y,55);
+  assert.equal(stance.feet.position.y,56);assert.equal(stance.head.position.y,57);assert.equal(stance.support.position.y,55);
+  assert.equal(stance.support.name,'cobblestone');assert.equal(stance.exact_target_obstructed,blocked);
+  assert.equal(result.reachable,undefined);assert.equal(result.safe,undefined);
+ }
+});
+test('geometry clarity does not invent standing height for partial or missing placement geometry',()=>{
+ const {placementGeometry}=require('../spatial.cjs');
+ for(const b of [null,{name:'stone_slab',shapes:[[0,0,0,1,.5,1]]},{name:'cobblestone'},{name:'air',shapes:[]}]){
+  const result=placementGeometry({blockAt:()=>b},new Vec3(1,55,2));assert.equal(result.stance_above_full_block,null);
+ }
+});
+
+test('jump clearance route sample reports current overhead without rejecting or claiming a route',()=>{
+ const {route}=require('../spatial.cjs');let searches=0;
+ const bot={entity:{position:new Vec3(.5,54,.5)},blockAt:p=>({name:p.x===0&&p.y===56?'stone':'air',shapes:p.x===0&&p.y===56?[[0,0,0,1,1,1]]:[]}),
+  pathfinder:{movements:{maxDropDown:2},getPathTo:()=>{searches++;return {status:'noPath',path:[]};}}};
+ const r=route(bot,new Vec3(1,55,0));assert.equal(searches,1);assert.equal(r.status,'noPath');
+ assert.equal(r.target_stance.exact_target_obstructed,false);
+ assert.equal(r.source_jump_clearance.source_ceiling.geometry,'full_block');assert.equal(r.source_jump_clearance.source_feet.y,54);
+ assert.match(r.source_jump_clearance.coverage,/does not prove prior failure/);
+});
+test('jump clearance keeps partial unloaded and absent source facts distinct',()=>{
+ const {jumpClearance}=require('../spatial.cjs');
+ for(const [block,geometry] of [[null,'unloaded'],[{name:'oak_slab',shapes:[[0,0,0,1,.5,1]]},'partial'],[{name:'stone'},'unknown']]){
+  const r=jumpClearance({entity:{position:new Vec3(.5,54,.5)},blockAt:()=>block});assert.equal(r.source_ceiling.geometry,geometry);
+ }
+ assert.equal(jumpClearance({}),null);
+});
+test('jump clearance documentation preserves upstream same-column and liquid exceptions',()=>{
+ const {Movements}=require('mineflayer-pathfinder');let climbable=false;
+ const m={canDig:false,allow1by1towers:false,infiniteLiquidDropdownDistance:true,maxDropDown:2,entityCost:1,bot:{game:{minY:-64}},
+  getNumEntitiesAt:()=>0,safeOrBreak:b=>b.physical?1000:0,
+  getBlock(node,dx,dy,dz){const p=new Vec3(node.x+dx,node.y+dy,node.z+dz);return {position:p,physical:false,climbable:p.y===54&&climbable,liquid:p.y===50,safe:true};}};
+ m.getLandingBlock=(node,dir)=>Movements.prototype.getLandingBlock.call(m,node,dir);
+ const source={x:0,y:54,z:0,remainingBlocks:0},up=[];
+ Movements.prototype.getMoveUp.call(m,source,up);assert.equal(up.length,0,'clear overhead alone cannot support same-column ascent');
+ climbable=true;Movements.prototype.getMoveUp.call(m,source,up);assert.equal(up[0].y,55,'existing climbable ascent remains distinct');
+ const drop=[];Movements.prototype.getMoveDropDown.call(m,source,{x:1,z:0},drop);assert.equal(drop[0].y,50,'safe liquid branch is not the dry solid-floor cap');
+ m.infiniteLiquidDropdownDistance=false;const capped=[];Movements.prototype.getMoveDropDown.call(m,source,{x:1,z:0},capped);assert.equal(capped.length,0);
+});

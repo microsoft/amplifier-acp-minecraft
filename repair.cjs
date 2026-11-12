@@ -1,6 +1,7 @@
 // Explanations of existing movement guards, never permission to bypass them.
 const {createHash}=require('node:crypto');
 const {Vec3}=require('vec3');
+const {jumpClearance}=require('./spatial.cjs');
 const rules=[
  [/Target is out of reach/,'out_of_reach','Use map and plan_route to choose a supported standing cell within reach. Verify arrival before retrying; changing the target coordinates without moving does not improve reach.'],
  [/Target is not empty/,'occupied_target','Inspect the existing target block. It may already match your intended result. Do not place again or remove it merely to repeat placement; preserve existing builds.'],
@@ -16,7 +17,7 @@ const rules=[
  [/no_path|NoPath/,'no_path','Use map and inspect to locate clearance or a safe adjacent standing cell, then plan_route. A failed search is not permission to jump, dig or remove player structures.'],
  [/search_limit|path_too_long|Took too? long to decide path to goal/,'search_limit','Inspect the current position first; the failed search may have included movement. Choose a nearer waypoint in loaded terrain and plan_route again. A bounded search is not proof that no route exists.'],
  [/unloaded/,'unloaded','The route includes unknown terrain. Inspect loaded surroundings and choose a nearer confirmed waypoint; do not assume unknown blocks are empty.'],
- [/arrival did not match|without reaching/,'arrival_mismatch','Use the returned current feet position. Inspect the intended feet/head/floor and plan a short exact-height route; the earlier movement did not prove arrival.'],
+ [/arrival did not match|without reaching/,'arrival_mismatch','Use the returned current feet position. Inspect intended feet/head/floor and source_jump_clearance (current feet+2 for a normal jump); a clear target alone is insufficient. Plan a short exact-height route; the earlier movement did not prove arrival.'],
  [/Walk-only time limit/,'time_limit','Inspect the actual current position and completed progress before planning a shorter route. Do not replay the original route automatically.']
 ];
 // Center-cell observations miss contacts along the player's edges. These are
@@ -71,10 +72,10 @@ class RepairHints {
   const position=bot.entity.position.clone(),feet=position.floored();
   const block=p=>{const b=bot.blockAt(p);return {position:p,name:b?.name||'unloaded',properties:b?.getProperties?.()||{}};};
   const target=[args.x,args.y,args.z].every(Number.isInteger)?new Vec3(args.x,args.y,args.z):null;
-  const observed={position,feet:block(feet),head:block(feet.offset(0,1,0)),floor:block(feet.offset(0,-1,0)),footprint:footprint(bot,position),
+  const observed={position,feet:block(feet),head:block(feet.offset(0,1,0)),floor:block(feet.offset(0,-1,0)),...(['move','follow'].includes(action)||['stalled','no_path','search_limit','arrival_mismatch'].includes(rule[1])?{source_jump_clearance:jumpClearance(bot)}:{}),footprint:footprint(bot,position),
    ...(target?{target_feet:block(target),target_head:block(target.offset(0,1,0)),target_floor:block(target.offset(0,-1,0)),target_player_overlaps:targetPlayers(bot,target)}:{})};
   // Include observed geometry so a changed route resets the repetition signal.
-  const fingerprint=createHash('sha256').update(JSON.stringify({code:rule[1],action,target,mode:args.mode,range:args.range,expected:args.expected,feet:observed.feet,head:observed.head,floor:observed.floor,footprint:observed.footprint,target_feet:observed.target_feet,target_head:observed.target_head,target_floor:observed.target_floor,target_player_overlaps:observed.target_player_overlaps})).digest('hex');
+  const fingerprint=createHash('sha256').update(JSON.stringify({code:rule[1],action,target,mode:args.mode,range:args.range,expected:args.expected,feet:observed.feet,head:observed.head,floor:observed.floor,source_jump_clearance:observed.source_jump_clearance,footprint:observed.footprint,target_feet:observed.target_feet,target_head:observed.target_head,target_floor:observed.target_floor,target_player_overlaps:observed.target_player_overlaps})).digest('hex');
   const repeated=(this.failures.get(fingerprint)||0)+1;
   this.failures.delete(fingerprint);this.failures.set(fingerprint,repeated);
   if(this.failures.size>32)this.failures.delete(this.failures.keys().next().value);

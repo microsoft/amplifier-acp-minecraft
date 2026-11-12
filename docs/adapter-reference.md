@@ -145,6 +145,27 @@ this prevents edge-overlap corrections during sprint-jumps onto full blocks.
 It does not relax server collision checks or grant new movement capabilities.
 For level activities that prohibit jumping, select `mode: "walk_only"` for both
 `plan_route` and `move`; ordinary pathfinding permits other traversal strategies.
+Normal movement's configured `maxDropDown=2` is measured by upstream pathfinding
+from the current feet to the landing **floor**. A dry full-block drop edge therefore
+permits one block of feet descent. This is not a one-block limit on the whole
+route: a longer descent needs multiple valid edges with head clearance and
+supported landings. Normal dry full-block walking/jump edges likewise rise at
+most one block of feet height, not an arbitrary vertical jump to a clear target.
+A normal jump also checks the **source ceiling at current feet+2**, beyond the
+source's standing feet/head and the destination feet/head/support. Clearing a
+destination does not clear the jump arc. `plan_route` and movement repair results
+include `source_jump_clearance` from the current loaded position, not a claim
+about a prior failure or a guarantee of a valid route. Empty space overhead
+alone does not enable same-column ascent without a climbable route; towers
+remain disabled.
+
+Fluid, ladder and partial-block geometry is separate. In particular, upstream
+safe-liquid landings can bypass the dry solid-floor drop distance check when
+`infiniteLiquidDropdownDistance` is enabled; the dry one-block figure is not a
+universal fluid/ladder cap or permission to take an unsafe drop.
+Observations and normal `plan_route` results expose `movement_capabilities`
+from the active movement settings. Planning still cannot dig, build towers,
+parkour or place scaffolding; this reporting does not change those guards.
 Level routes report `current_feet` and reject a fractional-height start as
 `non_level_start` before moving. A clear center cell alone is not enough when
 the player's edge is resting on a neighboring slab.
@@ -157,6 +178,17 @@ Digging checks footing and adjacent liquids. Crafting and placement refresh the
 server inventory. Sign writes verify the server's text echo and can reject stale
 edits with `expected_lines`. Item drops remain physical world interactions:
 another nearby player may collect them, so verify the recipient's inventory.
+
+`place` coordinates identify the block being filled; `move` and `plan_route`
+coordinates identify player feet. A full cube placed at `(x,y,z)` occupies that
+cell. Feet above it would be `(x,y+1,z)` and head `(x,y+2,z)`, subject to
+clearance, hazards and a reachable route. A two-block-high stack does not make
+its top reachable in one jump from two blocks below. Verified placement results
+retain `position` and add `placement_geometry`: the observed block and, only
+for a full cube, the observed stance above it. This is geometry evidence, not
+a safe destination recommendation or route. Partial/unloaded geometry does
+not assert a standing height; inspect the actual shape and use `plan_route`.
+
 Single-block placement checks initial occupancy and support before movement or
 inventory preparation, then rechecks before placement. A changed target after
 preparation remains distinct from an initial no-effect refusal. Authenticated

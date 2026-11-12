@@ -39,28 +39,59 @@ function cell(bot,p){
 function supported(bot,p){return cell(bot,p)==='.';}
 // Loaded facts only. A full cube proves an exact feet/head cell is blocked;
 // partial shapes, climbable blocks and unknown geometry remain planner decisions.
+function blockGeometry(bot,position){
+ const b=bot.blockAt(position);if(!b)return {position,name:null,geometry:'unloaded'};
+ const shapes=b.shapes;
+ const full=Array.isArray(shapes)&&shapes.some(s=>s.length===6&&s[0]===0&&s[1]===0&&s[2]===0&&s[3]===1&&s[4]===1&&s[5]===1);
+ return {position,name:b.name,geometry:full?'full_block':Array.isArray(shapes)?shapes.length?'partial':'empty':'unknown'};
+}
 function targetStance(bot,p){
- const sample=(position)=>{
-  const b=bot.blockAt(position);if(!b)return {position,name:null,geometry:'unloaded'};
-  const shapes=b.shapes;
-  const full=Array.isArray(shapes)&&shapes.some(s=>s.length===6&&s[0]===0&&s[1]===0&&s[2]===0&&s[3]===1&&s[4]===1&&s[5]===1);
-  return {position,name:b.name,geometry:full?'full_block':Array.isArray(shapes)?shapes.length?'partial':'empty':'unknown'};
- };
+ const sample=position=>blockGeometry(bot,position);
  const feet=sample(p),head=sample(p.offset(0,1,0)),support=sample(p.offset(0,-1,0));
  return {feet,head,support,exact_target_obstructed:[feet,head].some(b=>b.geometry==='full_block'),
   meaning:'Target coordinates are feet, not the supporting block. Partial or unloaded geometry is not proof of clearance; no alternative destination is selected.'};
 }
 
+// Current loaded observation only: the jump arc needs more room than the
+// standing body. It does not diagnose a past route or establish a safe edge.
+function jumpClearance(bot){
+ const p=bot.entity?.position;if(!p||![p.x,p.y,p.z].every(Number.isFinite))return null;
+ const feet=new Vec3(Math.floor(p.x),Math.floor(p.y),Math.floor(p.z));
+ return {source_feet:feet,source_ceiling:blockGeometry(bot,feet.offset(0,2,0)),
+  coverage:'Current full-block jump reference: source feet+2 must permit the jump as well as target feet/head and transit clearance. This sample does not prove prior failure cause or route safety; partial/unloaded geometry remains unresolved. Clearing overhead does not create support for a same-column upward destination.'};
+}
+
+// A placement coordinate names the occupied block. Only a loaded full cube
+// supports the simple y+1 feet relationship; this observation is not a route
+// or a safety verdict (hazards and transit clearance still matter).
+function placementGeometry(bot,p){
+ const placed=blockGeometry(bot,p);
+ return {coordinate_role:'block',block:placed,
+  stance_above_full_block:placed.geometry==='full_block'?targetStance(bot,p.offset(0,1,0)):null,
+  meaning:'PLACE fills the block cell. Above a full cube, feet are at block y+1 and head at y+2, not inside the placed block. Observed stance is not proof of safety or reachability; inspect and plan_route check clearance and transit. Partial/unloaded blocks do not establish that standing height.'};
+}
+
+// Upstream getLandingBlock compares current feet y to the landing floor y.
+// This describes dry full-block drop edges, not a route's total elevation change
+// or the distinct fluid/climbing/partial-block mechanics. Upstream jump-up
+// edges rise one full block (surface-height difference capped at 1.2); the
+// adapter does not alter that rule.
+function movementCapabilities(bot){
+ const m=bot.pathfinder?.movements,drop=m?.maxDropDown;
+ return {normal:{max_dry_full_block_feet_rise_per_edge:m?1:null,max_dry_full_block_feet_drop_per_edge:Number.isFinite(drop)?Math.max(0,Math.floor(drop)-1):null,
+  scope:'Per dry full-block walking/jump/drop edge, not total route elevation change. Head clearance and landing support still required; fluids, ladders and partial blocks have separate geometry.',
+  can_dig:m?.canDig??null,parkour:m?.allowParkour??null,towers:m?.allow1by1towers??null,scaffolding_configured:Array.isArray(m?.scafoldingBlocks)?m.scafoldingBlocks.length>0:null},walk_only:{level_only:true}};
+}
 function footing(p,positions){return positions.some(v=>p.x>=Math.floor(v.x-.299)&&p.x<=Math.floor(v.x+.299)&&p.z>=Math.floor(v.z-.299)&&p.z<=Math.floor(v.z+.299)&&Math.floor(v.y-.001)===p.y);}
 class FeetGoal extends goals.GoalNear {
  isEnd(n){return n.y===this.y&&((n.x-this.x)**2+(n.z-this.z)**2)<=this.rangeSq;}
 }
 function route(bot,p,range=0){
- const target_stance=targetStance(bot,p);
- if(range===0&&target_stance.exact_target_obstructed)return {reachable:false,status:'target_obstructed',target:p,range,exact_feet_y:true,steps:[],target_stance,coverage:'Loaded exact destination is obstructed; no path search or movement performed'};
+ const target_stance=targetStance(bot,p),movement_capabilities=movementCapabilities(bot),source_jump_clearance=jumpClearance(bot);
+ if(range===0&&target_stance.exact_target_obstructed)return {reachable:false,status:'target_obstructed',target:p,range,exact_feet_y:true,steps:[],target_stance,movement_capabilities,source_jump_clearance,coverage:'Loaded exact destination is obstructed; no path search or movement performed'};
  const goal=new FeetGoal(p.x,p.y,p.z,range);
  const r=bot.pathfinder.getPathTo(bot.pathfinder.movements,goal,150);normalizePassages(bot,r);
- return {reachable:r.status==='success',status:r.status,target:p,range,target_stance,exact_feet_y:true,steps:(r.path||[]).map(n=>({x:n.x,y:n.y,z:n.z})).slice(0,64),coverage:'Loaded terrain only; a planned path is not proof of arrival'};
+ return {reachable:r.status==='success',status:r.status,target:p,range,target_stance,movement_capabilities,source_jump_clearance,exact_feet_y:true,steps:(r.path||[]).map(n=>({x:n.x,y:n.y,z:n.z})).slice(0,64),coverage:'Loaded terrain only; a planned path is not proof of arrival'};
 }
 // Pathfinder's post-processing targets the top of collision shapes, including
 // the thin edge of an open door. Keep the waypoint in its clear lower passage.
@@ -140,4 +171,4 @@ async function gotoWithProgress(bot,goal,{stallMs=8000,pollMs=500,settleMs=1000}
  }finally{clearInterval(timer);clearTimeout(drainTimer);}
 }
 
-module.exports={alignPlayerCollision,survey,openPassage,SpatialMovements,cell,targetStance,supported,footing,FeetGoal,route,localMap,digGuard,harvestTool,gotoWithProgress,placementSupport,normalizePassages};
+module.exports={alignPlayerCollision,survey,openPassage,SpatialMovements,cell,targetStance,jumpClearance,placementGeometry,movementCapabilities,supported,footing,FeetGoal,route,localMap,digGuard,harvestTool,gotoWithProgress,placementSupport,normalizePassages};
