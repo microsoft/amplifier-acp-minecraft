@@ -81,6 +81,32 @@ class NativeIO:
             raise ContinuityError('Native artifact must use its canonical UUID')
         return self.session.tree_inspect(self.tree_profile(kind), identifier)
 
+    def tree_observe(self, kind, identifier):
+        """Optional scoped observation; None means unsupported, not absence."""
+        from installation_retention import canonical_id_or_false
+        if not canonical_id_or_false(identifier):
+            raise ContinuityError('Native artifact must use its canonical UUID')
+        profile = self.tree_profile(kind)
+        description = self.session.describe()
+        if (type(description.get('regenerable_tree_observation')) is not int
+                or description['regenerable_tree_observation'] != 1
+                or 'tree.observe' not in description.get('operations', [])):
+            return None
+        value = self.session.tree_observe(profile, identifier)
+        scope = value.get('scope') if isinstance(value, dict) else None
+        if (not isinstance(value, dict) or set(value) != {'scope','entry'}
+                or not isinstance(scope, dict)
+                or set(scope) != {'schema','profile_sha256','root','root_identity'}
+                or type(scope['schema']) is not int or scope['schema'] != 1
+                or not isinstance(scope['profile_sha256'], str)
+                or len(scope['profile_sha256']) != 64
+                or any(c not in '0123456789abcdef' for c in scope['profile_sha256'])
+                or not isinstance(scope['root'], str) or not Path(scope['root']).is_absolute()
+                or not isinstance(scope['root_identity'], dict) or not scope['root_identity']
+                or (value['entry'] is not None and not isinstance(value['entry'], dict))):
+            raise ContinuityError('Native tree observation is malformed')
+        return copy.deepcopy(value)
+
     def tree_removal_timeout(self):
         if self.cleanup_deadline is None:
             return None  # Existing Session default; no hidden timeout increase.

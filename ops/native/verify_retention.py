@@ -65,8 +65,8 @@ def main():
    checks.append('actual driver removes one unreferenced failed stage after durable expected identity; outside link target preserved')
    assert (state/'stages'/retained_id).exists() and (state/'stages'/current_id).exists()
    checks.append('retained shared plan and current app stage protected')
-   # Same prior pruning intent remains unresolved, including observed absence.
-   keep.mark('stage',stage_id,state='pruning')
+   # A legacy scope-less intent remains unresolved, including observed absence.
+   keep.mark('stage',stage_id,state='pruning',tree_observation=None)
    assert session.tree_inspect('stages',stage_id) is None
    assert 'held' in keep.prune(fingerprint)
    checks.append('absent uncertain pruning record blocks collection; no automatic replay or false recovery')
