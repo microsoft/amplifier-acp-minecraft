@@ -2,7 +2,7 @@
 // an uncertain-effect retry policy and never retries or changes task authority.
 const {createHash}=require('node:crypto');
 const {Vec3}=require('vec3');
-const proven=/^(Target is not empty|Target is out of reach; plan a safe standing position first|Requested support face has no solid supporting block|Refusing to remove a block supporting a player|No walk-only route \((?:unsafe_start|non_level_start|different_elevation)\))/;
+const proven=/^(Target is not empty|Dig target mismatch:|Target is out of reach; plan a safe standing position first|Requested support face has no solid supporting block|Refusing to remove a block supporting a player|No walk-only route \((?:unsafe_start|non_level_start|different_elevation)\))/;
 const digest=x=>createHash('sha256').update(JSON.stringify(x)).digest('hex');
 function observation(bot,args){
  const p=bot.entity.position;

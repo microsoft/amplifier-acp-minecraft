@@ -53,6 +53,7 @@ test('disk failure rolls back every review and policy remains held',t=>{
  assert.throws(()=>review(h,cfg,input,observation),/disk full/);assert.equal(JSON.stringify(h.data),before);assert.equal(fs.readFileSync(h.file,'utf8'),disk);assert.equal(policy.reason(h,cfg),'unresolved_activity_effects');
 });
 for(const [action,args,error,outcome='no_effect'] of [
+ ['place',{x:1,y:64,z:0,item:'cobblestone',support_face:'up'},'Target is not empty'],
  ['gather',{block:'wheat',count:2,targets:[{x:1,y:64,z:0},{x:2,y:64,z:0}]},'Movement ended without reaching the requested destination; inspect current position','settled_partial_gather'],
  ['gather',{block:'stone',count:3,targets:[{x:1,y:64,z:0}]},'Gather count must be 1–8 and no greater than the target selection'],
  ['container',{operation:'withdraw',count:1},'Transfer needs an exact item name and count from 1 to 64'],
@@ -78,6 +79,12 @@ for(const operation of ['deposit','withdraw','recover','inspect'])test('storage 
 test('an opened storage inspection is not falsely reviewed as no effect',t=>{
  const {h,input,observation}=fixture(t);
  for(const e of h.data.events.filter(e=>e.action_id==='partial')){e.action='container';e.arguments={operation:'withdraw',item:'wooden_pickaxe',count:1};if(e.kind==='action_failed')e.error='Named, enchanted, or component-bearing items need explicit selection: inspect, then supply source_slot and source_item_revision';}
+ input.reviews[1].outcome='no_effect';input.reviews[1].receipt_sha256=digest(h.data.events.find(e=>e.action_id==='partial'&&e.kind==='action_failed'));
+ const before=JSON.stringify(h.data);assert.throws(()=>review(h,cfg,input,observation));assert.equal(JSON.stringify(h.data),before);
+});
+for(const error of ['Requested support face has no solid supporting block','Placement target changed during preparation; inspect before retrying','Target is not empty after movement','Connection closed'])test('placement preparation or unknown failure is not initial no-effect review: '+error,t=>{
+ const {h,input,observation}=fixture(t);
+ for(const e of h.data.events.filter(e=>e.action_id==='partial')){e.action='place';e.arguments={x:1,y:64,z:0,item:'cobblestone',support_face:'up'};if(e.kind==='action_failed')e.error=error;}
  input.reviews[1].outcome='no_effect';input.reviews[1].receipt_sha256=digest(h.data.events.find(e=>e.action_id==='partial'&&e.kind==='action_failed'));
  const before=JSON.stringify(h.data);assert.throws(()=>review(h,cfg,input,observation));assert.equal(JSON.stringify(h.data),before);
 });
