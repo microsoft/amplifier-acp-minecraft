@@ -30,7 +30,8 @@ async def verify(root, source):
         intent={'schema':1,'phase':'disconnected','request_id':'preserved-fixture'}
         (offline/'state.json').write_text(json.dumps(intent))
         before_files={str(p.relative_to(home)):p.read_bytes() for p in home.rglob('*') if p.is_file()}
-        exited=subprocess.run([str(python),'-I',str(root/'launch.py'),'body','--home',str(home)],env=env,check=True,capture_output=True,text=True,timeout=90)
+        exited=subprocess.run([str(python),'-I',str(root/'launch.py'),'body','--home',str(home)],env=env,check=False,capture_output=True,text=True,timeout=90)
+        assert exited.returncode==0, {'code':exited.returncode,'stdout':exited.stdout,'stderr':exited.stderr}
         assert 'disconnected' in exited.stdout
         assert {str(p.relative_to(home)):p.read_bytes() for p in home.rglob('*') if p.is_file()}==before_files
 

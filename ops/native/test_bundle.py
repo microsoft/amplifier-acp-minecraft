@@ -2,6 +2,8 @@ import hashlib
 import importlib.util
 import json
 import tempfile
+import sys
+import os
 import unittest
 import zipfile
 from pathlib import Path
@@ -21,6 +23,11 @@ class BundleTests(unittest.TestCase):
         (self.root/'runtime').write_bytes(b'private executable')
         data={'schema':1,'commands':{'python':'runtime','node':'runtime'},'files':self.build.inventory(self.root)}
         (self.root/'manifest.json').write_text(json.dumps(data));return data
+
+    def test_windows_cli_preserves_spaced_argv_and_exit_status(self):
+        script=self.root/'fixed child with spaces.py'
+        script.write_text("import sys; assert sys.argv[1:] == ['home with spaces', 'literal&argument']; raise SystemExit(7)")
+        self.assertEqual(self.launch.run_windows([sys.executable,str(script),'home with spaces','literal&argument'],dict(os.environ)),7)
 
     def test_all_six_runtime_artifacts_are_pinned(self):
         lock=json.loads(Path(__file__).with_name('runtime-lock.json').read_text())

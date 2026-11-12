@@ -61,6 +61,22 @@ def doctor(root):
             'game_connected':False,'session_created':False}
 
 
+def run_windows(argv, env):
+    # Windows exec* does not provide Unix process replacement/argv semantics.
+    # Use subprocess's native argument quoting, without a shell. The native
+    # service owner must supervise the process tree; this is the interactive CLI.
+    child=subprocess.Popen(argv, env=env)
+    try:
+        return child.wait()
+    finally:
+        if child.poll() is None:
+            child.terminate()
+            try:
+                child.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                child.kill();child.wait()
+
+
 def main():
     parser=argparse.ArgumentParser(description='Minecraft connector with private Node, Python and official ACP SDK')
     commands=parser.add_subparsers(dest='command',required=True)
@@ -79,6 +95,8 @@ def main():
         argv=[str(ROOT/manifest['commands']['node']),str(ROOT/'app/body.cjs'),str(home/'config.json')]
     else:
         argv=[str(ROOT/manifest['commands']['python']),'-s',str(ROOT/'app/adapter.py'),'--home',str(home)]
+    if os.name=='nt':
+        raise SystemExit(run_windows(argv,env))
     os.execve(argv[0],argv,env)
 
 
