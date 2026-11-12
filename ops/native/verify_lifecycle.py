@@ -78,7 +78,7 @@ class FixtureCleanup(NativeServiceApplicationTests):
   return fixture_application_identities(receipt,self.fixture_service)
 
 if os.name=='nt':
- cleanup_fixture=SHARED/'crates/native-platform/target/debug/examples/windows_service_fixture.exe'
+ cleanup_fixture=pathlib.Path(os.environ.get('NATIVE_SERVICE_FIXTURE',str(SHARED/'crates/native-platform/target/debug/examples/windows_service_fixture.exe')))
  if not cleanup_fixture.is_file():raise RuntimeError('Build the shared disposable Windows cleanup fixture first')
  os.environ['NATIVE_SERVICE_FIXTURE']=str(cleanup_fixture)
  os.environ['CONSTELLATION_INSTALLATION_SMOKE']='1'
