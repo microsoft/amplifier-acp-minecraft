@@ -28,7 +28,9 @@ for scenario in ('same-scope','replaced-root','changed-profile','legacy-missing-
   (shared/'state.json').write_text(json.dumps({'state':'succeeded','transaction':None}))
   protected=home/'session.json';protected.write_text('{"original":"unchanged"}')
   cfg={'home':str(home),'state':str(state),'app':str(home/'app'),'venv':str(home/'venv'),'shared_plans':str(plans),'native_platform':{'version':1,'regenerable_tree_removal':1}}
-  conf=base/'driver.json';doc={'version':1,'roots':{'home':str(home),'state':str(state)},'locks':{'installation':str(state/'installation.lock')},'regenerable_trees':{n:{'root':'state','path':n,'lock':'installation'} for n in ('stages','backups')}}
+  # Publish inside the production-initialized owner root, not the disposable
+  # harness parent (which may be Administrators-owned on Windows runners).
+  conf=state/'driver.json';doc={'version':1,'roots':{'home':str(home),'state':str(state)},'locks':{'installation':str(state/'installation.lock')},'regenerable_trees':{n:{'root':'state','path':n,'lock':'installation'} for n in ('stages','backups')}}
   initialize_config(DRIVER,conf,doc);ident=str(uuid.uuid4());keep=Retention(cfg);old_count=LostAcknowledgment.deletions
   with LostAcknowledgment(DRIVER,conf) as session:
    try:
@@ -42,7 +44,7 @@ for scenario in ('same-scope','replaced-root','changed-profile','legacy-missing-
   if scenario=='replaced-root':
    (state/'stages').rename(state/'retained-original-stages');initialize_root(DRIVER,state/'stages')
   if scenario=='changed-profile':
-   doc['locks']['installation']=str(state/'different-installation.lock');conf=base/'second-driver.json';initialize_config(DRIVER,conf,doc)
+   doc['locks']['installation']=str(state/'different-installation.lock');conf=state/'second-driver.json';initialize_config(DRIVER,conf,doc)
   with Session(DRIVER,conf) as session,owner_io(NativeIO(cfg,session)),installation_lock(state/'installation.lock'):
    if scenario=='legacy-missing-scope':record=keep.mark('stage',ident,tree_observation=None)
    result=keep.prune(fingerprint)
