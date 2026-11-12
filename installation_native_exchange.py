@@ -105,6 +105,17 @@ class NativeExchange:
         self.value['phase']='applied';self.save()
         return {'applied':True,'receipt':str(self.path)}
 
+    def verify(self,outcome):
+        if outcome not in ('applied','rolled_back') or not self.value or self.value.get('phase')!=outcome:
+            raise ContinuityError('Native source exchange is not terminal')
+        for key,row in self.value['entries'].items():
+            expected=row['prepared'] if outcome=='applied' else row['before']
+            if self.session.exchange_inspect(key)!=expected:
+                raise ContinuityError('Native installed source identity differs')
+            if outcome=='applied' and self.session.exchange_inspect(key,self.targets[key])!=row['target']:
+                raise ContinuityError('Native source target identity differs')
+        return {'verified':True,'outcome':outcome}
+
     def rollback(self):
         self.closed()
         if not self.value:raise ContinuityError('No source exchange receipt to roll back')

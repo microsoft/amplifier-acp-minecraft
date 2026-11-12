@@ -16,6 +16,8 @@ from installation_guard import owner_io,installation_lock,durable_write,read,ser
 from installation_participant import Participant
 from installation_connection import Connection
 from installation_native_exchange import NativeExchange
+from installation_source_provider import Provider,fingerprint,verify_sdk
+from installation_guard import digest
 
 def initial(path,value):
     path.write_text(json.dumps(value),encoding='utf-8');protect(path)
@@ -82,12 +84,19 @@ try:
    'headers':[{'name':'Authorization','value':'Bearer disposable-fixture-only'}]}]}
  initial(home/'endpoint.json',endpoint)
  initial(home/'session.json',{'session':'original-fixture-session','binding':hashlib.sha256(json.dumps(effective,sort_keys=True).encode()).hexdigest()})
- (home/'venv').mkdir();protect(home/'venv');(home/'venv/original.txt').write_text('retained environment')
- candidate=state/'candidate';candidate.mkdir();protect(candidate)
+ shutil.copytree(BUNDLE/'python',home/'venv',symlinks=True);protect(home/'venv')
+ (home/'venv/original.txt').write_text('retained environment')
+ (state/'stages').mkdir();protect(state/'stages')
+ candidate=state/'stages'/str(uuid.uuid4());candidate.mkdir();protect(candidate)
  shutil.copytree(home/'app',candidate/'app');protect(candidate/'app')
  (candidate/'app/candidate-marker.txt').write_text('reviewed candidate source')
- (candidate/'venv').mkdir();protect(candidate/'venv');(candidate/'venv/candidate.txt').write_text('reviewed candidate environment')
- targets={k:{'root':'state','path':'candidate/'+k} for k in ('app','venv')}
+ shutil.copytree(BUNDLE/'python',candidate/'venv',symlinks=True);protect(candidate/'venv')
+ (candidate/'venv/candidate.txt').write_text('reviewed candidate environment')
+ targets={k:{'root':'state','path':(candidate/k).relative_to(state).as_posix()} for k in ('app','venv')}
+ environment_python='python.exe' if os.name=='nt' else 'bin/python3'
+ cfg['native_platform'].update(python=str(home/'venv'/environment_python),environment_python=environment_python)
+ cfg.update(app=str(home/'app'),venv=str(home/'venv'),python=sys.executable,node=str(BUNDLE/manifest['commands']['node']),npm_cli=str(BUNDLE/'app/package.json'),channel='latest-passing-development',required_checks=['disposable-boundary'])
+ initial(home/'app-source.json',{'revision':'a'*40,'fixture':True})
  original={p.name:p.read_bytes() for p in home.iterdir() if p.is_file()}
  script=root/'fixture.py';script.write_text(fixture);protect(script)
  drivercfg=root/'driver.json';ownercfg=root/'owner.json';ownercfg.write_text(json.dumps(cfg));protect(ownercfg)
@@ -108,7 +117,7 @@ try:
   registrations[role]={'executable':str(DRIVER),'args':['--config',str(drivercfg),'service-run','--service',role],
      'cwd':str(root),'description':'Disposable Minecraft lifecycle '+role,'autostart':False}
   applications[role]={'executable':sys.executable,'args':argv,'cwd':str(root),'identity_path':str(state/(role+'-identity.json'))}
- data={'version':1,'roots':{'home':str(home),'state':str(state)},'locks':{'installation':str(state/'installation.lock')},'services':service_map,'registrations':registrations,'service_applications':applications,'commands':{'session_endpoint':{'executable':endpoint['command'][0],'args':endpoint['command'][1:],'cwd':endpoint['cwd'],'timeout_seconds':200},'session_probe':{'executable':sys.executable,'args':[str(wrapper),'--home',str(home),'--result','{result}','--native-owner-config',str(ownercfg)],'cwd':str(root),'timeout_seconds':200,'result_root':'state'}}}
+ data={'version':1,'roots':{'home':str(home),'state':str(state)},'locks':{'installation':str(state/'installation.lock')},'services':service_map,'registrations':registrations,'service_applications':applications,'commands':{'session_endpoint':{'executable':endpoint['command'][0],'args':endpoint['command'][1:],'cwd':endpoint['cwd'],'timeout_seconds':200},'session_probe':{'executable':cfg['native_platform']['python'],'args':[str(wrapper),'--home',str(home),'--result','{result}','--native-owner-config',str(ownercfg)],'cwd':str(root),'timeout_seconds':200,'result_root':'state'}}}
  data['exchanges']={key:{'lock':'installation','profile':{'current':str(home/key),'roots':{'state':str(state)}}} for key in ('app','venv')}
  drivercfg.write_text(json.dumps(data));protect(drivercfg);validate_driver_mapping(cfg,drivercfg)
  preflight=subprocess.run([str(DRIVER),'--config',str(drivercfg),'serve'],
@@ -134,15 +143,27 @@ try:
      time.sleep(.1)
     else:raise RuntimeError('Actual native prepare did not settle')
     if components==['minecraft']:
-     exchange=NativeExchange(cfg,session,backend,env['plan']['transaction_id'],env['id'],targets)
-     assert exchange.apply()['applied']
+     provider=Provider(cfg,backend=backend)
+     marker=read(home/'app-source.json')
+     frozen={'revision':manifest['source_commit'],'sdk':verify_sdk(candidate/'venv',candidate/'app'),
+         'fingerprints':{k:fingerprint(candidate/k) for k in ('app','venv')},
+         'python_sha256':hashlib.sha256(pathlib.Path(sys.executable).read_bytes()).hexdigest()}
+     initial(candidate/'manifest.json',frozen)
+     plan={'stage':str(candidate),'config_hash':digest(cfg),'manifest_hash':digest(frozen),'version':manifest['source_commit'],
+         'previous':'a'*40,'source_marker':marker,'source_marker_version':2,
+         'before':{k:fingerprint(home/k) for k in ('app','venv')}}
+     envelope={'id':env['id'],'component':'minecraft','plan':plan}
+     assert provider.apply(envelope,env['plan']['transaction_id'])['verified']
      assert (home/'app/candidate-marker.txt').read_text()=='reviewed candidate source'
-     assert exchange.apply()['applied']  # observes exact settled identities
-     assert exchange.rollback()['rolled_back']
+     assert provider.apply(envelope,env['plan']['transaction_id'])['verified']
+     # Verify actual candidate SDK before restoring source, without opening a
+     # conversation or accepting any model work.
+     assert backend.session(12)['saved_session_loaded']
+     assert provider.rollback(envelope,env['plan']['transaction_id'])['verified']
      assert (home/'venv/original.txt').read_text()=='retained environment'
      assert not (home/'app/candidate-marker.txt').exists()
-     assert exchange.rollback()['rolled_back']
-     report['native_source_exchange']=read(exchange.path)
+     assert provider.rollback(envelope,env['plan']['transaction_id'])['verified']
+     report['native_source_exchange']=read(state/'native-source-receipts'/(env['id']+'.json'))
     assert p.verify('applied')['verified'];assert p.restore('applied')['restored']
     terminal=read(p.path);assert Participant(cfg,env,backend).restore('applied')['restored']
     assert {q.name:q.read_bytes() for q in home.iterdir() if q.is_file()}==original
@@ -166,7 +187,7 @@ try:
    report['connection']={'disconnected':disconnected,'connected':read(conn().path),'quiescence_seen':quiescence_seen,'readiness_seen':readiness_seen}
    assert {q.name:q.read_bytes() for q in home.iterdir() if q.is_file()}==original
   report['acp_events']=[json.loads(line) for line in log.read_text().splitlines()]
-  assert report['acp_events']==[{'action':'initialize'},{'action':'load','session':'original-fixture-session'}]*3
+  assert report['acp_events']==[{'action':'initialize'},{'action':'load','session':'original-fixture-session'}]*4
  report['passed']=True
 finally:
  cleanup=NativeServiceApplicationTests()

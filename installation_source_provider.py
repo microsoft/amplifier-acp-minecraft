@@ -68,6 +68,7 @@ def verify_sdk(venv, app):
     commit=sdk_pin(app)
     # Read installed metadata directly, without importing packages or prompting.
     metadata = list(venv.glob('lib/python*/site-packages/agent_client_protocol-*.dist-info/direct_url.json'))
+    metadata += list(venv.glob('Lib/site-packages/agent_client_protocol-*.dist-info/direct_url.json'))
     if len(metadata) != 1:
         raise ContinuityError('One official SDK installation required')
     direct = read(metadata[0]);vcs = direct.get('vcs_info',{})
@@ -112,7 +113,7 @@ class Provider:
         revision = source.get('revision')
         if not re.fullmatch('[0-9a-f]{40}', revision or ''):
             raise ContinuityError('Installed exact source revision is missing')
-        if self.paths['app'].is_symlink():
+        if self.paths['app'].is_symlink() or (self.c.get('native_platform') and getattr(self.paths['app'],'is_junction',lambda:False)()):
             stage=self.paths['app'].resolve().parent
             if stage.parent==self.root/'stages':
                 manifest=read(stage/'manifest.json')
@@ -151,6 +152,8 @@ class Provider:
         return revision, {k:{'id':by_name[k]['id'],'conclusion':'success'} for k in self.c['required_checks']}
 
     def build(self, revision, previous, stage):
+        if self.c.get('native_platform'):
+            raise ContinuityError('Native staging requires a verified target package; no Linux build fallback')
         cache = self.root/'source.git'
         if not cache.exists():
             run(['git','clone','--bare','https://github.com/'+REPOSITORY+'.git',str(cache)],stderr=subprocess.DEVNULL)
@@ -332,8 +335,11 @@ class Provider:
             raise ContinuityError('Source exchange requires both owned units stopped')
 
     def installed_marker(self, plan, stage):
+        relative=(self.c.get('native_platform') or {}).get('environment_python','bin/python')
+        if relative not in ('bin/python','bin/python3','python.exe','Scripts/python.exe'):
+            raise ContinuityError('Unrecognized private environment interpreter path')
         marker={**plan['source_marker'],'revision':plan['version'],
-                'python':str(self.paths['venv']/'bin/python')}
+                'python':str(self.paths['venv']/relative)}
         # Old retained plans preserve their original verification/rollback
         # contract. New plans replace the stale copied inventory with actual
         # frozen installed application bytes, including built UI assets.
@@ -346,7 +352,51 @@ class Provider:
             marker['files_scope']='installed_app_excluding_node_modules_and_python_caches'
         return marker
 
+    def native_exchange(self,envelope,transaction,stage):
+        from installation_native_exchange import NativeExchange
+        if not self.backend or not hasattr(self.backend,'native'):
+            raise ContinuityError('Explicit native source backend is required')
+        targets={key:{'root':'state','path':(stage/key).relative_to(self.root).as_posix()} for key in self.paths}
+        return NativeExchange(self.c,self.backend.native,self.backend,transaction,envelope['id'],targets)
+
+    def native_source(self,action,envelope,transaction):
+        plan,stage,path=self.frozen(envelope,candidate=action=='apply')
+        self.require_prepared(transaction,rollback=action=='rollback')
+        exchange=self.native_exchange(envelope,transaction,stage)
+        marker=read(self.home/'app-source.json')
+        if path.exists():
+            receipt=read(path)
+            if receipt['transaction_id']!=transaction:raise ContinuityError('Source transaction changed')
+            if receipt['state']==('applied' if action=='apply' else 'rolled_back'):
+                return self.verify(envelope)
+        else:
+            if marker!=plan['source_marker'] or any(fingerprint(p)!=plan['before'][k] for k,p in self.paths.items()):
+                raise ContinuityError('Original native source changed after planning')
+            if action=='rollback':
+                durable_write(path,{'state':'rolled_back','transaction_id':transaction,'untouched':True})
+                return self.verify(envelope)
+        if action=='apply':
+            if marker not in (plan['source_marker'],self.installed_marker(plan,stage)):
+                raise ContinuityError('Native source marker changed independently')
+            durable_write(path,{'state':'applying','transaction_id':transaction})
+            exchange.apply()
+            durable_write(self.home/'app-source.json',self.installed_marker(plan,stage))
+            durable_write(path,{'state':'applied','transaction_id':transaction})
+        else:
+            durable_write(path,{'state':'rolling_back','transaction_id':transaction})
+            if exchange.value is None:
+                if any(fingerprint(p)!=plan['before'][k] for k,p in self.paths.items()):
+                    raise ContinuityError('Missing native exchange evidence with changed source')
+            else:exchange.rollback()
+            if any(fingerprint(p)!=plan['before'][k] for k,p in self.paths.items()):
+                raise ContinuityError('Previous native source differs after rollback')
+            durable_write(self.home/'app-source.json',plan['source_marker'])
+            durable_write(path,{'state':'rolled_back','transaction_id':transaction})
+        return self.verify(envelope)
+
     def apply(self, envelope, transaction):
+        if self.c.get('native_platform'):
+            return self.native_source('apply',envelope,transaction)
         plan,stage,path = self.frozen(envelope)
         self.require_prepared(transaction)
         if path.exists():
@@ -372,6 +422,8 @@ class Provider:
         return self.verify(envelope)
 
     def rollback(self,envelope,transaction):
+        if self.c.get('native_platform'):
+            return self.native_source('rollback',envelope,transaction)
         plan,stage,path = self.frozen(envelope,candidate=False)
         self.require_prepared(transaction,rollback=True)
         if not path.exists():
@@ -403,7 +455,9 @@ class Provider:
             raise ContinuityError('Source exchange has not settled')
         if state=='applied':
             self.frozen(envelope)
-            for key,target in self.paths.items():
+            if self.c.get('native_platform'):
+                self.native_exchange(envelope,read(path)['transaction_id'],stage).verify('applied')
+            for key,target in ({} if self.c.get('native_platform') else self.paths).items():
                 if not target.is_symlink() or os.readlink(target)!=str(stage/key):
                     raise ContinuityError('Installed source pointer mismatch')
             expected=self.installed_marker(plan,stage)
@@ -417,8 +471,15 @@ class Provider:
 def main():
     parser=argparse.ArgumentParser();parser.add_argument('--config',required=True)
     parser.add_argument('action',choices=('status','plan','apply','rollback','verify'));args=parser.parse_args()
-    os.umask(0o077);provider=Provider(read(args.config))
-    with installation_lock(provider.root/'installation.lock'):
+    from contextlib import ExitStack
+    os.umask(0o077);cfg=read(args.config)
+    with ExitStack() as scope:
+        backend=None
+        if cfg.get('native_platform'):
+            from installation_native import native_scope, NativeInstallation
+            backend=NativeInstallation(cfg,scope.enter_context(native_scope(cfg)))
+        provider=Provider(cfg,backend=backend)
+        scope.enter_context(installation_lock(provider.root/'installation.lock'))
         if args.action in ('status','plan'):result=getattr(provider,args.action)()
         else:
             envelope=read(os.environ['CONSTELLATION_UPDATE_PLAN'])
