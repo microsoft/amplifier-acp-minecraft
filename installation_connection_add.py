@@ -83,9 +83,9 @@ def enrollment(c, path):
 
 
 class Prerequisites:
-    def __init__(self, c, cfg):
+    def __init__(self, c, cfg, backend=None):
         self.c, self.cfg = c, cfg
-        self.game = Backend(cfg)
+        self.game = backend if backend is not None else Backend(cfg)
 
     def providers(self):
         agent = Path(self.c['agent_home'])

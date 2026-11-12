@@ -48,6 +48,24 @@ class SourceProviderTests(unittest.TestCase):
         class Idle:
             def services(self):return {k:{'ActiveState':'inactive','MainPID':'0'} for k in ('body','controller')}
         self.patcher=patch('installation_participant.LocalInstallation',type('IdleInstallation',(Idle,),{'__init__':lambda self,cfg:None}));self.patcher.start();self.addCleanup(self.patcher.stop)
+    def test_supplied_service_backend_keeps_gate_checks_and_never_constructs_systemd_driver(self):
+        class Services:
+            def __init__(self):self.active=False;self.reads=0
+            def services(self):
+                self.reads+=1
+                return {k:{'ActiveState':'active' if self.active else 'inactive','MainPID':'123' if self.active else '0'} for k in ('body','controller')}
+        backend=Services()
+        with patch('installation_participant.LocalInstallation',side_effect=AssertionError('No Linux backend construction')):
+            provider=FakeProvider(self.cfg,backend=backend)
+            provider.require_prepared(self.tx)
+            self.assertEqual(backend.reads,1)
+            backend.active=True
+            with self.assertRaisesRegex(ContinuityError,'both owned units stopped'):provider.require_prepared(self.tx)
+            backend.active=False
+            self.home.joinpath('installation-updates/gate.json').unlink()
+            with self.assertRaises(FileNotFoundError):provider.require_prepared(self.tx)
+        self.assertEqual(read(self.home/'workshop.json')['unknown'],['keep'])
+
     def test_plan_only_stages_and_records_official_sdk_commit(self):
         self.assertFalse((self.home/'app').is_symlink());self.assertEqual(self.provider.status()['version'],'a'*40)
         self.assertEqual(read(Path(self.plan['stage'])/'manifest.json')['sdk']['commit'],SDK)
