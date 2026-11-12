@@ -1,5 +1,5 @@
 const test=require('node:test'),assert=require('node:assert/strict'),fs=require('node:fs'),os=require('node:os'),path=require('node:path');
-const {Vec3}=require('vec3'),{WorkshopState}=require('../workshop-state.cjs'),{BlockControls,revision}=require('../block-controls.cjs');
+const {Vec3}=require('vec3'),{WorkshopState}=require('../workshop-state.cjs'),{BlockControls,revision,noEffect}=require('../block-controls.cjs');
 function fixture(t,name='stone_button'){
  const dir=fs.mkdtempSync(path.join(os.tmpdir(),'controls-'));t.after(()=>fs.rmSync(dir,{recursive:true,force:true}));
  const h=new WorkshopState(path.join(dir,'state.json')),p=new Vec3(0,64,1);let powered=false,calls=0;
@@ -26,4 +26,14 @@ test('stale selection, wrong block, out-of-reach and stopped authority make no c
   const f=fixture(t);change(f);await assert.rejects(()=>f.c.use(f.bot,f.p,f.args,()=>{}));assert.equal(f.calls(),0);
  }
  const f=fixture(t);await assert.rejects(()=>f.c.use(f.bot,f.p,f.args,()=>{throw Error('stopped');}),/stopped/);assert.equal(f.calls(),0);
+});
+
+test('changed clearance at dispatch has no-effect evidence; transport or receipt loss does not',async t=>{
+ const f=fixture(t);f.c.preflight(f.bot,f.p,f.args);f.bot.world.raycast=()=>({position:new Vec3(0,65,0)});
+ let rejected;try{await f.c.use(f.bot,f.p,f.args,()=>{});}catch(e){rejected=e;}
+ assert.equal(noEffect(rejected),true);assert.equal(f.calls(),0);assert.equal(f.h.data.block_controls?.[f.args.operation_id],undefined);
+ f.bot.world.raycast=()=>null;f.bot.activateBlock=async()=>{throw Error('transport lost');};
+ await assert.rejects(f.c.use(f.bot,f.p,f.args,()=>{}),e=>{assert.equal(noEffect(e),false);return true;});
+ assert.equal(f.h.data.block_controls[f.args.operation_id].status,'started');
+ await assert.rejects(f.c.use(f.bot,f.p,f.args,()=>{}),e=>{assert.equal(noEffect(e),false);return /uncertain/.test(e.message);});
 });
