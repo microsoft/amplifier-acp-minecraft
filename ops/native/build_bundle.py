@@ -47,7 +47,7 @@ def fetch(spec, cache):
     return path
 
 
-def extract(archive, destination):
+def extract(archive, destination, *, single_root=True):
     destination.mkdir()
     if archive.name.endswith('.zip'):
         with zipfile.ZipFile(archive) as source:
@@ -59,6 +59,8 @@ def extract(archive, destination):
     else:
         with tarfile.open(archive) as source:
             source.extractall(destination, filter='data')
+    if not single_root:
+        return destination
     roots = list(destination.iterdir())
     if len(roots) != 1 or not roots[0].is_dir():
         raise ValueError('Expected one runtime archive root')
@@ -94,6 +96,15 @@ def build(output, cache, *, browser=True):
             for kind in ('python', 'node'):
                 extracted = extract(fetch(spec[kind], cache), scratch/kind)
                 shutil.copytree(extracted, output/kind, symlinks=True)
+            helper_root=extract(fetch(spec['task_helper'],cache),scratch/'task-helper',single_root=False)
+            helper_name='agent-runtime.exe' if selected.startswith('windows-') else 'agent-runtime'
+            helper=helper_root/helper_name
+            if helper.is_symlink() or not helper.is_file() or sha(helper)!=spec['task_helper']['binary_sha256']:
+                raise ValueError('Pure task-helper executable digest mismatch')
+            (output/'task-helper').mkdir()
+            for name in (helper_name,'LICENSE','PACKAGE.json'):
+                shutil.copy2(helper_root/name,output/'task-helper'/name)
+
         windows = selected.startswith('windows-')
         python = output/'python'/('python.exe' if windows else 'bin/python3')
         node = output/'node'/('node.exe' if windows else 'bin/node')
@@ -130,8 +141,8 @@ def build(output, cache, *, browser=True):
         manifest={'schema':1,'target':selected,'source_commit':subprocess.check_output(['git','rev-parse','HEAD'],cwd=ROOT).decode().strip(),
                   'source_clean':not bool(subprocess.check_output(['git','status','--porcelain','--untracked-files=no'],cwd=ROOT).strip()),
                   'runtimes':spec,'node_version':lock['node_version'],'python_version':lock['python_version'],
-                  'sdk':sdk,'sdk_commit':lock['sdk_commit'],'browser_included':browser,
-                  'commands':{'python':python.relative_to(output).as_posix(),'node':node.relative_to(output).as_posix()},
+                  'sdk':sdk,'sdk_commit':lock['sdk_commit'],'browser_included':browser,'task_helper_version':lock['task_helper_version'],'task_helper_source':lock['task_helper_source'],
+                  'commands':{'python':python.relative_to(output).as_posix(),'node':node.relative_to(output).as_posix(),'task_helper':'task-helper/'+helper_name},
                   'files':inventory(output)}
         (output/'manifest.json').write_text(json.dumps(manifest,sort_keys=True,indent=2)+'\n')
         run([python,'-I',output/'launch.py','doctor'],env=env)

@@ -21,7 +21,7 @@ class BundleTests(unittest.TestCase):
 
     def manifest(self):
         (self.root/'runtime').write_bytes(b'private executable')
-        data={'schema':1,'commands':{'python':'runtime','node':'runtime'},'files':self.build.inventory(self.root)}
+        data={'schema':1,'commands':{'python':'runtime','node':'runtime','task_helper':'runtime'},'files':self.build.inventory(self.root)}
         (self.root/'manifest.json').write_text(json.dumps(data));return data
 
     def test_windows_cli_preserves_spaced_argv_and_exit_status(self):

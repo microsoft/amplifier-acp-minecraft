@@ -2,7 +2,7 @@
 
 Native packages contain private Node and Python runtimes, the pinned official
 Python ACP SDK, the connector and its dependency graph, and the screenshot
-renderer/browser. Building requires developer tools; running a built package
+renderer/browser, and a separately pinned pure task-helper executable. Building requires developer tools; running a built package
 does not require installing Node, Python, Git, npm or a compiler.
 
 The native workflow builds separately on Linux x64/ARM64, macOS Intel/Apple
@@ -50,3 +50,18 @@ On Windows use `bundle/python/python.exe`. Keep the exact receipt and manifest
 with each tested archive. The fixture does not contact a real game or model.
 Server installation, Java, accounts, edition gateways and LAN discovery remain
 separate: follow the [server setup guide](server-setup.md).
+
+## Pure task helper
+
+`manifest.commands.task_helper` resolves the bundled helper below the validated
+package root. Native setup can explicitly configure `task_helpers.command` to
+that absolute executable; it is independent of the selected ACP engine. The
+package does not replace an engine, select a model, renew work or rewrite an
+existing configuration. Existing enrolled installs keep their separately owned
+helper update component.
+
+The six-target fixture invokes the actual packaged `helper-capabilities`,
+`continuation-v2` and `watch-v2` commands without a model or agent home. It checks
+explicit unbounded tasks, bounded watch lifetime, Stop, unknown-bound refusal
+and unchanged stored watches after invalid input. No maximum-number sentinel
+or task conversion is introduced.
