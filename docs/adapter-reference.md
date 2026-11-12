@@ -974,10 +974,17 @@ not a reason to place again blindly. Other oriented blocks keep their documented
 horizontal restrictions.
 
 `inspect` returns `block_revision`. Use it with `activate_control` to press a
-button once or set a lever's `powered` state explicitly. Each call has a unique
+button once, set a lever's `powered` state, set a repeater's `delay` to 1–4
+redstone ticks, or set a comparator's `mode` to `compare`/`subtract`. Each call has a unique
 `operation_id`; a settled duplicate returns its receipt without another press,
 including after restart. Uncertain outcomes refuse replay. Only nearby ordinary
-buttons/levers are supported. The result verifies the control's powered state,
+buttons, levers, repeaters and comparators are supported.
+Use `operation: set` with only the matching `powered`, `delay` or `mode` target.
+Configuration uses at most three clicks and confirms each server state before
+continuing. Intermediate states can affect live circuitry; inspect isolation
+and choose the configuration deliberately. An interrupted configuration never
+resumes on a duplicate call, even if earlier clicks were confirmed. The result
+verifies the selected component property,
 not a working door, pulse length or safe passage. Inspect the actual circuit
 and test traversal before reporting it complete.
 

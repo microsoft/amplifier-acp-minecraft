@@ -23,6 +23,7 @@ from ops.rcon import command
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--node', required=True)
+    parser.add_argument('--configuration-only', action='store_true', help='Configure repeaters/comparators through ordinary confirmed interactions')
     parser.add_argument('--redstone-only', action='store_true', help='Run only the item-to-wire placement regression')
     parser.add_argument('--properties', type=Path, required=True)
     parser.add_argument('--out', type=Path, required=True)
@@ -61,6 +62,23 @@ def main():
                              'tp FacingTester 1.5 81 1.5', 'clear FacingTester']:
                     r(text)
                 time.sleep(.4)
+                if args.configuration_only:
+                    for name, prop, values in [('repeater','delay',[1,2,3,4]), ('comparator','mode',['compare','subtract'])]:
+                        for initial in values:
+                            for target in values:
+                                control(cfg, '/finish', {}); control(cfg, '/turn', {})
+                                r(f'setblock 2 81 1 {name}[{prop}={initial},facing=north]'); time.sleep(.15)
+                                inspected=act('inspect',x=2,y=81,z=1)
+                                arguments={'x':2,'y':81,'z':1,'operation':'set',prop:target,
+                                    'operation_id':f'fixture-{name}-{initial}-{target}', 'block_revision':inspected['block_revision']}
+                                result=act('activate_control',**arguments)
+                                confirmation=r(f'execute if block 2 81 1 {name}[{prop}={target},facing=north]')
+                                assert result['verified'] and result[prop]==target and 'Test passed' in confirmation,(result,confirmation)
+                                duplicate=act('activate_control',**arguments);assert duplicate['duplicate']
+                                assert 'Test passed' in r(f'execute if block 2 81 1 {name}[{prop}={target},facing=north]')
+                                report['checks'].append({'control':name,'from':initial,'to':target,'result':result,'duplicate':duplicate,'independent_server_confirmation':confirmation})
+                    report['passed']=True
+                    return
                 for item in ([] if args.redstone_only else ['furnace', 'blast_furnace', 'smoker', 'repeater', 'comparator', 'oak_stairs', 'stone_brick_stairs', 'piston', 'sticky_piston']):
                     r(f'give FacingTester {item} 6'); time.sleep(.2)
                     control(cfg, '/finish', {}); control(cfg, '/turn', {})
