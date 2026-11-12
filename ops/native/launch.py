@@ -16,7 +16,7 @@ def validate(root):
     manifest=json.loads((root/'manifest.json').read_text())
     if manifest.get('schema')!=1:
         raise ValueError('Unsupported package manifest')
-    for command in ('python','node'):
+    for command in ('python','node','task_helper'):
         if manifest.get('commands',{}).get(command) not in manifest['files']:
             raise ValueError('Runtime command is not an inventoried package file')
     for name,entry in manifest['files'].items():
@@ -51,13 +51,17 @@ def doctor(root):
     version=subprocess.check_output([str(node),'--version'],text=True).strip()
     if version!='v'+manifest['node_version'] or platform.python_version()!=manifest['python_version']:
         raise ValueError('Private runtime version differs')
+    helper=root/manifest['commands']['task_helper']
+    capability=json.loads(subprocess.check_output([str(helper),'helper-capabilities'],text=True,timeout=10))
+    if capability.get('schema_version')!=1 or any(capability.get('helpers',{}).get(name,{}).get('version')!=2 or capability['helpers'][name].get('command')!=name+'-v2' for name in ('watch','continuation')):
+        raise ValueError('Pure task-helper capability differs')
     # Import the actual production client and Node dependency graph; no sessions,
     # model prompts, Minecraft connections or user home writes are performed.
     sys.path.insert(0,str(root/'app'))
     __import__('acp_client')
     subprocess.run([str(node),'-e',"for(const n of ['mineflayer','mineflayer-pathfinder','@modelcontextprotocol/sdk/server/mcp.js','playwright'])require(n)"],cwd=root/'app',check=True)
     return {'verified':True,'target':manifest['target'],'source_commit':manifest['source_commit'],
-            'sdk_commit':manifest['sdk_commit'],'browser_included':manifest['browser_included'],
+            'sdk_commit':manifest['sdk_commit'],'browser_included':manifest['browser_included'],'task_helper':capability,
             'game_connected':False,'session_created':False}
 
 

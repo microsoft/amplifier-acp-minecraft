@@ -19,6 +19,8 @@ async def verify(root, source):
          'PLAYWRIGHT_BROWSERS_PATH':str(root/'browsers'),'RUN_SCREENSHOT_RENDER':'1',
          'WORKSHOP_TEST_PYTHON':str(python)}
     subprocess.run([str(python),'-I',str(root/'launch.py'),'doctor'],env=env,check=True)
+    from verify_task_helper import verify as verify_helper
+    helper_result=verify_helper(root/manifest['commands']['task_helper'])
     subprocess.run([str(python),'-s',str(root/'app/adapter.py'),'--help'],env=env,check=True,timeout=30)
     sys.path.insert(0,str(root/'app'))
     from installation_session_probe import probe
@@ -64,7 +66,7 @@ async def verify(root, source):
         shutil.rmtree(fixtures,ignore_errors=True)
     result={'target':manifest['target'],'source_commit':manifest['source_commit'],'official_sdk':manifest['sdk_commit'],
             'original_session_loaded':True,'unused_initialize_only':True,'game_server':False,'model_prompts':0,
-            'body_fixtures':True,'actual_packaged_browser':True,'controller_entrypoint_imports':True,'offline_body_launcher_no_join':True,'native_service_lifecycle_verified':False}
+            'pure_task_helper':helper_result,'body_fixtures':True,'actual_packaged_browser':True,'controller_entrypoint_imports':True,'offline_body_launcher_no_join':True,'native_service_lifecycle_verified':False}
     print(json.dumps(result))
     return result
 
