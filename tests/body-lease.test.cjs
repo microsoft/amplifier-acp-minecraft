@@ -615,3 +615,37 @@ test('owner task-effects review stays closed until exact resume and next lease, 
   await f.operate('move',{x:2,y:64,z:0,mode:'walk_only'});assert.equal(moves,1);
  }finally{f.close();}
 });
+
+test('settled planner limit preserves ordinary activity continuation across reload without a task or repeated effects',async()=>{
+ let effects=0;const f=fixture(optionalConfig,{move:async()=>{effects++;return {reached:true};}});try{
+  f.history.data.task=null;f.history.save();const e=incoming(f);
+  await f.request('/turn',{conversation_only:true,message_ids:[e.id]});
+  await f.operate('move',{x:1,y:64,z:0,mode:'walk_only'});
+  await f.request('/finish',{budget_limited:true});
+  assert.equal((await f.request('/status')).task_capabilities.activity_continuation,true);
+  const restored=new (realRequire('./workshop-state.cjs').WorkshopState)(path.join(f.home,'workshop.json'));
+  assert.equal(restored.data.last_turn.budget_limited,true);
+  assert.equal(restored.data.last_turn.activity_report,undefined,'limit is not an invented model progress report');
+  assert.equal(require('../activity-policy.cjs').canContinue(restored,optionalConfig),true);
+  assert.equal(effects,1);assert.equal(restored.task(),null);
+  await f.request('/turn',{activity:true,continuation:true,renewable_lease:true});
+  await f.operate('move',{x:2,y:64,z:0,mode:'walk_only'});
+  await f.operate('work_report',{status:'review',summary:'Both requested locations checked.'});await f.request('/finish',{});
+  assert.equal(effects,2);assert.equal(f.history.task(),null);
+  assert.equal((await f.request('/status')).task_capabilities.activity_continuation,false);
+ }finally{f.close();}
+});
+test('planner limit cannot override explicit activity wait, completion, blocker, Stop or unknown effects',async()=>{
+ for(const mode of ['waiting','review','blocked','stop','unknown','interrupted','complete']){
+  const f=fixture(optionalConfig,{move:async()=>{if(mode==='unknown')throw Error('unknown transport outcome');return {reached:true};}});try{
+   f.history.data.task=null;f.history.save();const e=incoming(f);await f.request('/turn',{conversation_only:true,message_ids:[e.id]});
+   if(mode==='unknown')await assert.rejects(f.operate('move',{x:1,y:64,z:0,mode:'walk_only'}),/unknown transport/);
+   else await f.operate('move',{x:1,y:64,z:0,mode:'walk_only'});
+   if(['waiting','review','blocked'].includes(mode))await f.operate('work_report',{status:mode,summary:'Observed current outcome.',...(mode==='waiting'?{wait_for:'A peer supplies the missing item.'}:{})});
+   if(mode==='stop'){f.history.data.activity_stop={at:Date.now(),reason:'Human Stop'};f.history.save();}
+   await f.request('/finish',{budget_limited:mode!=='complete',error:mode==='interrupted'});
+   assert.equal((await f.request('/status')).task_capabilities.activity_continuation,false,mode);
+   assert.equal(f.history.task(),null);
+  }finally{f.close();}
+ }
+});

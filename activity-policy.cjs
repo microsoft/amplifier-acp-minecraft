@@ -11,7 +11,13 @@ function reason(history,cfg){
  return null;
 }
 function allowed(history,cfg){return reason(history,cfg)===null;}
-function canContinue(history,cfg){return allowed(history,cfg)&&!history.data.last_turn?.effect_review?.future_work_only&&history.data.last_turn?.activity===true&&history.data.last_turn?.activity_report?.status==='running';}
+function canContinue(history,cfg){
+ const turn=history.data.last_turn;
+ // A provider turn limit is not a completed responsibility. Retain its terminal
+ // evidence without inventing a model report; an explicit wait/block/review wins.
+ return allowed(history,cfg)&&!turn?.effect_review?.future_work_only&&turn?.activity===true&&
+  (turn.activity_report?.status==='running'||(!turn.activity_report&&turn.budget_limited===true));
+}
 function promote(history,cfg){
  if(!allowed(history,cfg)||!history.data.turn?.conversation_only)throw Error('Ordinary activity is stopped or has unresolved effects');
  history.data.turn={...history.data.turn,conversation_only:false,activity:true,task_id:null,may_mutate:true};history.save();

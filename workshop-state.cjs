@@ -175,7 +175,7 @@ class WorkshopState {
   }
   inputOutcomes.settle(this.data,{interrupted:!!error,reason:error?'turn_interrupted':budgetLimited?'planner_turn_limited':turn?.activity_report?.status==='blocked'?'activity_blocked':task?.status==='blocked'?'assignment_blocked':null});
   require('./speech.cjs').settleReplies(this.data,{error,budgetLimited});
-  if(turn)this.data.last_turn={...turn,interrupted:!!error};
+  if(turn)this.data.last_turn={...turn,interrupted:!!error,...(budgetLimited&&!error?{budget_limited:true}:{})};
   this.data.turn=null;this.save();
  }
  wake(task_id){
