@@ -63,7 +63,7 @@ report={'source':manifest['source_commit'],'bundle_target':manifest['target'],
  'shared_source':subprocess.check_output(['git','rev-parse','HEAD'],cwd=SHARED,text=True).strip(),
  'driver_sha256':hashlib.sha256(DRIVER.read_bytes()).hexdigest(),
  'production_operations':False,'model_prompts':0,'actual_os':sys.platform,'cycles':[]}
-units=[];temp=None
+units=[];dispatched=[];temp=None
 try:
  temp=tempfile.TemporaryDirectory(prefix='minecraft-native-domain-');root=pathlib.Path(temp.name).resolve();protect(root)
  home=root/'game';state=root/'state';home.mkdir();state.mkdir();protect(home);protect(state)
@@ -111,10 +111,15 @@ try:
  data={'version':1,'roots':{'home':str(home),'state':str(state)},'locks':{'installation':str(state/'installation.lock')},'services':service_map,'registrations':registrations,'service_applications':applications,'commands':{'session_endpoint':{'executable':endpoint['command'][0],'args':endpoint['command'][1:],'cwd':endpoint['cwd'],'timeout_seconds':200},'session_probe':{'executable':sys.executable,'args':[str(wrapper),'--home',str(home),'--result','{result}','--native-owner-config',str(ownercfg)],'cwd':str(root),'timeout_seconds':200,'result_root':'state'}}}
  data['exchanges']={key:{'lock':'installation','profile':{'current':str(home/key),'roots':{'state':str(state)}}} for key in ('app','venv')}
  drivercfg.write_text(json.dumps(data));protect(drivercfg);validate_driver_mapping(cfg,drivercfg)
+ preflight=subprocess.run([str(DRIVER),'--config',str(drivercfg),'serve'],
+     input=json.dumps({'version':1,'id':'read-only-preflight','op':'describe'})+'\n',capture_output=True,text=True,timeout=20)
+ report['driver_preflight']={'returncode':preflight.returncode,'stdout':preflight.stdout,'stderr':preflight.stderr}
+ if preflight.returncode:raise RuntimeError('Native driver configuration failed: '+preflight.stderr)
  with Session(DRIVER,drivercfg) as session:
   io=NativeIO(cfg,session);backend=NativeInstallation(cfg,session)
   with owner_io(io),installation_lock(state/'installation.lock'):
    for kind in ('body','controller'):
+    dispatched.append(units[0 if kind=='body' else 1])
     assert session.service_register(kind)=={'created':True}
     stopped=session.service_snapshot(kind);assert service_stopped(stopped),stopped
     assert session.service_register(kind)=={'created':False}
@@ -165,8 +170,12 @@ try:
  report['passed']=True
 finally:
  cleanup=NativeServiceApplicationTests()
- for name,definition in units:cleanup.cleanup(name,definition)
+ cleanup_errors=[]
+ for name,definition in dispatched:
+  try:cleanup.cleanup(name,definition)
+  except Exception as error:cleanup_errors.append({'service':name,'error':repr(error)})
+ report['cleanup_errors']=cleanup_errors
  if temp:temp.cleanup()
- report['disposable_units_removed']=True
+ report['disposable_units_removed']=not cleanup_errors
  args.receipt.write_text(json.dumps(report,indent=2)+'\n')
 print(json.dumps({'passed':report.get('passed',False),'target':manifest['target'],'cycles':len(report['cycles']),'original_session_loads':len(report.get('acp_events',[]))//2}))
