@@ -151,7 +151,18 @@ permits one block of feet descent. This is not a one-block limit on the whole
 route: a longer descent needs multiple valid edges with head clearance and
 supported landings. Normal dry full-block walking/jump edges likewise rise at
 most one block of feet height, not an arbitrary vertical jump to a clear target.
-Fluid, ladder and partial-block geometry is separate.
+A normal jump also checks the **source ceiling at current feet+2**, beyond the
+source's standing feet/head and the destination feet/head/support. Clearing a
+destination does not clear the jump arc. `plan_route` and movement repair results
+include `source_jump_clearance` from the current loaded position, not a claim
+about a prior failure or a guarantee of a valid route. Empty space overhead
+alone does not enable same-column ascent without a climbable route; towers
+remain disabled.
+
+Fluid, ladder and partial-block geometry is separate. In particular, upstream
+safe-liquid landings can bypass the dry solid-floor drop distance check when
+`infiniteLiquidDropdownDistance` is enabled; the dry one-block figure is not a
+universal fluid/ladder cap or permission to take an unsafe drop.
 Observations and normal `plan_route` results expose `movement_capabilities`
 from the active movement settings. Planning still cannot dig, build towers,
 parkour or place scaffolding; this reporting does not change those guards.
