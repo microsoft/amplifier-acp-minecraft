@@ -101,3 +101,14 @@ test('string-valued protocol block properties retain age and moisture without co
   assert.deepEqual(observeCrops(bot).blocks[0].properties,{});
  }
 });
+
+test('mushroom evidence changes only with observed block changes and retains bounded coverage',()=>{
+ let blocks=[{name:'red_mushroom',position:new Vec3(1,64,0)},{name:'brown_mushroom',position:new Vec3(2,64,0)}];
+ const bot={registry:{blocksByName:{red_mushroom:{id:39},brown_mushroom:{id:40}}},findBlocks:options=>{
+  assert.deepEqual(options.matching,[39,40]);assert.equal(options.maxDistance,16);assert.equal(options.count,65);return blocks.map(b=>b.position);
+ },blockAt:p=>{const b=blocks.find(b=>b.position.equals(p));return b?{...b,getProperties:()=>({})}:null;}};
+ const before=observeCrops(bot);assert.equal(before.blocks.length,2);assert.deepEqual(observeCrops(bot),before);
+ blocks.push({name:'red_mushroom',position:new Vec3(3,64,0)});const grown=observeCrops(bot);assert.equal(grown.blocks.length,3);assert.notDeepEqual(grown,before);assert.ok(grown.blocks.every(b=>Object.keys(b.properties).length===0));
+ blocks=blocks.slice(1);assert.equal(observeCrops(bot).blocks.some(b=>b.position.x===1),false);
+ assert.equal(grown.radius_blocks,16);assert.equal(grown.truncated,false);
+});

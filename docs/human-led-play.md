@@ -378,3 +378,11 @@ same cell/item. It keeps all original receipts and task state. This review
 permits future work only; it does not claim the earlier batch had zero effects
 or replay any successful placement.
 
+### Mushroom observations
+
+Mushroom growth watches use the same passive `environment:crops` observation
+as crops and farmland. Red and brown mushroom blocks are included, with stable
+coordinates and no invented age/growth value. Coverage remains loaded blocks
+within 16 blocks, at most 64 results; inspect `truncated` and `unavailable`. A
+seed outside that coverage is not evidence of loss. Watch expiry is not a growth
+notification or authority renewal; use fresh observations when revising a wait.
