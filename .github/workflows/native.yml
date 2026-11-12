@@ -85,6 +85,7 @@ jobs:
           path: |
             minecraft-${{ matrix.target }}.tar.gz
             minecraft-${{ matrix.target }}.tar.gz.json
+            native-lifecycle-result.json
             native-result.json
             bundle/manifest.json
           retention-days: 7
