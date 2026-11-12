@@ -61,14 +61,16 @@ def native_service(state):
 
 def service_active(state):
     if native_service(state):
-        return state.get('active') is True and state.get('transitioning') is False
+        return (state.get('active') is True and state.get('transitioning') is False
+                and ('application' not in state or state['application'].get('status') == 'running'))
     return state.get('ActiveState') == 'active'
 
 
 def service_stopped(state):
     if native_service(state):
         return (state.get('active') is False and state.get('transitioning') is False
-                and state.get('processes') == [])
+                and state.get('processes') == []
+                and ('application' not in state or state['application'].get('status') == 'absent'))
     return (state.get('ActiveState') in ('inactive', 'failed')
             and str(state.get('MainPID')) == '0')
 
@@ -89,6 +91,16 @@ def service_process_identity(state):
         return state.get('process_identity')
     if not service_active(state):
         return None
+    if 'application' in state:
+        proof = state['application']
+        identity = proof.get('identity')
+        if (proof.get('status') != 'running' or not isinstance(identity, dict)
+                or type(identity.get('pid')) is not int or identity['pid'] <= 0
+                or len(identity) < 2 or not isinstance(proof.get('supervisor'), dict)
+                or not isinstance(proof.get('manager_process'), dict)
+                or not re.fullmatch('[0-9a-f]{64}', proof.get('profile_sha256', ''))):
+            raise ContinuityError('Actual service application generation is not proved')
+        return identity
     roles = {'systemd_user':'MainPID', 'launch_agent':'launchd_pid'}
     role = roles.get(state['service']['manager'])
     matches = [p.get('identity') for p in state.get('processes', [])
@@ -102,7 +114,7 @@ def service_process_identity(state):
 
 def service_generation(state):
     if native_service(state):
-        return {k:state.get(k) for k in ('service', 'active', 'transitioning', 'processes')}
+        return {k:state.get(k) for k in ('service', 'active', 'transitioning', 'processes', 'application')}
     return {k:state.get(k) for k in ('MainPID', 'ExecMainStartTimestamp', 'ActiveState')}
 
 

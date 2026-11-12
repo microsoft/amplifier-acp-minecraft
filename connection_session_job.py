@@ -15,6 +15,7 @@ def main():
     args = parser.parse_args()
     if not args.home.is_absolute() or not args.result.is_absolute() or args.result.exists():
         raise ValueError('Fresh absolute owner job paths required')
+    native=None
     with ExitStack() as stack:
         if args.native_owner_config:
             from installation_native import native_scope, NativeIO
@@ -22,10 +23,11 @@ def main():
             if Path(cfg['home']).resolve()!=args.home.resolve():
                 raise ValueError('Probe enrollment belongs to a different game connection')
             session=stack.enter_context(native_scope(cfg))
+            native=(cfg['native_platform']['driver'],cfg['native_platform']['config'])
             root,_=NativeIO(cfg,session).relative(args.result)
             if root!='state':raise ValueError('Probe result must remain under owner state')
         try:
-            result = asyncio.run(probe(args.home, 180, idle_timeout=30))
+            result = asyncio.run(probe(args.home, 180, idle_timeout=30, native_driver=native))
         except Exception as error:
             result = {'verified':False, 'failure_type':type(error).__name__,
                       'message':'Original-session compatibility could not be verified; no prompt or replacement session was sent.'}

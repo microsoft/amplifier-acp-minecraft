@@ -86,6 +86,10 @@ class NativeInstallation(LocalInstallation):
     def session_python(self):
         return self.python
 
+    def session_arguments(self):
+        native=self.c['native_platform']
+        return ['--native-driver',native['driver'],'--native-driver-config',native['config']]
+
     def services(self):
         states = {kind:self.native.service_snapshot(name) for kind,name in self.names.items()}
         if any(not native_service(state) for state in states.values()):

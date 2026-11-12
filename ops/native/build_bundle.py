@@ -82,7 +82,9 @@ def inventory(root):
     return entries
 
 
-def build(output, cache, *, browser=True):
+def build(output, cache, *, browser=True, native_shared=None, native_driver=None):
+    if bool(native_shared) != bool(native_driver):
+        raise ValueError('Shared source and exact native driver must be supplied together')
     lock = json.loads((ROOT/'ops/native/runtime-lock.json').read_text())
     selected = target()
     spec = lock['targets'][selected]
@@ -133,6 +135,23 @@ def build(output, cache, *, browser=True):
             run([node,app/'node_modules/playwright/cli.js','install','chromium'],env=env)
         # Retain exact dependency versions and upstream provenance, not a claim
         # that equal package version strings imply equal SDK implementations.
+        shared = None
+        if native_shared:
+            shared_revision=subprocess.check_output(['git','rev-parse','HEAD'],cwd=native_shared,text=True).strip()
+            if shared_revision!=json.loads((ROOT/'ops/native/shared-driver-lock.json').read_text())['commit']:
+                raise ValueError('Shared driver source differs from reviewed native lock')
+            if subprocess.check_output(['git','status','--porcelain','--untracked-files=no'],cwd=native_shared).strip():
+                raise ValueError('Shared source has uncommitted changes')
+            library=native_shared/'support/python/constellation_native'
+            site=Path(subprocess.check_output([str(python),'-I','-c','import sysconfig;print(sysconfig.get_path("purelib"))'],text=True).strip())
+            if not site.resolve().is_relative_to((output/'python').resolve()):
+                raise ValueError('Private native Python package directory escaped bundle')
+            shutil.copytree(library,site/'constellation_native',ignore=shutil.ignore_patterns('__pycache__','*.pyc'))
+            (output/'native').mkdir()
+            name='constellation-native-driver.exe' if windows else 'constellation-native-driver'
+            shutil.copy2(native_driver,output/'native'/name)
+            shared={'repository':'microsoft/amplifier-constellation','source':shared_revision,
+                    'driver':'native/'+name,'driver_sha256':sha(output/'native'/name)}
         packages = subprocess.check_output([str(python),'-m','pip','list','--format=json'],env=env)
         (output/'python-packages.json').write_bytes(packages)
         shutil.copy2(ROOT/'ops/native/launch.py',output/'launch.py')
@@ -144,6 +163,9 @@ def build(output, cache, *, browser=True):
                   'sdk':sdk,'sdk_commit':lock['sdk_commit'],'browser_included':browser,'task_helper_version':lock['task_helper_version'],'task_helper_source':lock['task_helper_source'],
                   'commands':{'python':python.relative_to(output).as_posix(),'node':node.relative_to(output).as_posix(),'task_helper':'task-helper/'+helper_name},
                   'files':inventory(output)}
+        if shared:
+            manifest['native_platform']=shared
+            manifest['commands']['native_driver']=shared['driver']
         (output/'manifest.json').write_text(json.dumps(manifest,sort_keys=True,indent=2)+'\n')
         run([python,'-I',output/'launch.py','doctor'],env=env)
         return manifest
@@ -157,5 +179,7 @@ if __name__ == '__main__':
     parser.add_argument('--output',type=Path,required=True)
     parser.add_argument('--cache',type=Path,required=True)
     parser.add_argument('--without-browser',action='store_true',help='Explicitly incomplete developer bundle only')
+    parser.add_argument('--native-shared',type=Path)
+    parser.add_argument('--native-driver',type=Path)
     args=parser.parse_args()
-    build(args.output.resolve(),args.cache.resolve(),browser=not args.without_browser)
+    build(args.output.resolve(),args.cache.resolve(),browser=not args.without_browser,native_shared=args.native_shared.resolve() if args.native_shared else None,native_driver=args.native_driver.resolve() if args.native_driver else None)

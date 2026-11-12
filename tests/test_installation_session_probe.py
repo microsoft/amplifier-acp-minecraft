@@ -6,7 +6,7 @@ import shutil
 import tempfile
 import unittest
 from pathlib import Path
-from installation_session_probe import probe
+from installation_session_probe import probe, supervised_endpoint
 from installation_participant import LocalInstallation
 
 
@@ -36,6 +36,20 @@ class SessionProbeTests(unittest.IsolatedAsyncioTestCase):
 
     def events(self):
         return [json.loads(line) for line in self.log.read_text().splitlines()] if self.log.exists() else []
+
+    def test_native_transport_only_wraps_exact_original_endpoint(self):
+        config=self.home/'driver.json';driver=self.home/'driver'
+        profile={'executable':self.endpoint['command'][0],'args':self.endpoint['command'][1:],
+                 'cwd':self.endpoint['cwd'],'timeout_seconds':180}
+        config.write_text(json.dumps({'version':1,'commands':{'session_endpoint':profile}}))
+        original=json.loads(json.dumps(self.endpoint));saved=(self.home/'session.json').read_bytes()
+        result=supervised_endpoint(self.endpoint,driver,config)
+        self.assertEqual(result['command'],[str(driver),'--config',str(config),'exec','--command','session_endpoint'])
+        self.assertEqual(result['env'],original['env']);self.assertEqual(self.endpoint,original)
+        self.assertEqual((self.home/'session.json').read_bytes(),saved)
+        profile['args']=['different'];config.write_text(json.dumps({'version':1,'commands':{'session_endpoint':profile}}))
+        with self.assertRaises(ValueError):supervised_endpoint(self.endpoint,driver,config)
+        self.assertEqual(self.events(),[])
 
     async def test_actual_sdk_loads_original_without_new_prompt_or_saved_file_write(self):
         before = (self.home/'session.json').read_bytes()

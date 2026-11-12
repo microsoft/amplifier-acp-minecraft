@@ -122,6 +122,9 @@ class LocalInstallation:
             raise ContinuityError('Helper watch TTL contract changed')
         return {'sha256': hashlib.sha256(Path(command).read_bytes()).hexdigest(), 'capabilities': caps}
 
+    def session_arguments(self):
+        return []
+
     def session(self, timeout):
         # Use the enrolled installation SDK, not the owner helper interpreter.
         # An unused installation still needs initialize compatibility, but must
@@ -134,7 +137,7 @@ class LocalInstallation:
         value = json.loads(subprocess.check_output(
             [str(python), str(script), '--home', str(self.home),
              '--timeout', str(min(verification_seconds(self.c), timeout-6)),
-             '--idle-timeout', str(min(30, verification_seconds(self.c), timeout-6))],
+             '--idle-timeout', str(min(30, verification_seconds(self.c), timeout-6)), *self.session_arguments()],
             text=True, timeout=timeout))
         if (value.get('verified') is not True or value.get('initialized') is not True
                 or value.get('saved_session_present') is not present

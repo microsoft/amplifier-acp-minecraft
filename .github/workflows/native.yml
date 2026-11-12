@@ -21,13 +21,41 @@ jobs:
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          repository: microsoft/amplifier-constellation
+          ref: 3a3c7f882b5fd865d50240f233785f0d350666c5
+          path: native-shared
+      - name: Build actual target shared driver
+        shell: bash
+        run: |
+          rustup toolchain install 1.93.0 --profile minimal
+          cargo +1.93.0 build --locked --manifest-path native-shared/crates/native-platform-driver/Cargo.toml
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
       - name: Test package validation
         run: python -m unittest discover -s ops/native -p test_*.py -v
-      - name: Build private native runtimes and dependencies
-        run: python ops/native/build_bundle.py --output bundle --cache runtime-cache
+      - name: Build private native runtimes and dependencies (Unix)
+        if: runner.os != 'Windows'
+        run: python ops/native/build_bundle.py --output bundle --cache runtime-cache --native-shared native-shared --native-driver native-shared/crates/native-platform-driver/target/debug/constellation-native-driver
+      - name: Build private native runtimes and dependencies (Windows)
+        if: runner.os == 'Windows'
+        run: python ops/native/build_bundle.py --output bundle --cache runtime-cache --native-shared native-shared --native-driver native-shared/crates/native-platform-driver/target/debug/constellation-native-driver.exe
+      - name: Prepare disposable Linux native service manager
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          sudo loginctl enable-linger "$USER"
+          sudo systemctl start "user@$(id -u).service"
+          echo "XDG_RUNTIME_DIR=/run/user/$(id -u)" >> "$GITHUB_ENV"
+          echo "DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/$(id -u)/bus" >> "$GITHUB_ENV"
+      - name: Verify actual native lifecycle and original session (Unix)
+        if: runner.os != 'Windows'
+        run: bundle/python/bin/python3 -I ops/native/verify_lifecycle.py --bundle bundle --source . --shared native-shared --driver bundle/native/constellation-native-driver --receipt native-lifecycle-result.json
+      - name: Verify actual native lifecycle and original session (Windows)
+        if: runner.os == 'Windows'
+        run: bundle/python/python.exe -I ops/native/verify_lifecycle.py --bundle bundle --source . --shared native-shared --driver bundle/native/constellation-native-driver.exe --receipt native-lifecycle-result.json
       - name: Install Linux browser OS libraries on disposable runner
         if: runner.os == 'Linux'
         run: bundle/node/bin/node bundle/app/node_modules/playwright/cli.js install-deps chromium
@@ -38,9 +66,11 @@ jobs:
         if: runner.os == 'Windows'
         run: bundle/python/python.exe -I ops/native/verify_bundle.py --bundle bundle --source . --receipt native-result.json
       - uses: actions/upload-artifact@v4
+        if: always()
         with:
           name: minecraft-evidence-${{ matrix.target }}
           path: |
+            native-lifecycle-result.json
             native-result.json
             bundle/manifest.json
             bundle/python-packages.json

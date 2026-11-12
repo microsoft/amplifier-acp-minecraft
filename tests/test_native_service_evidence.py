@@ -77,6 +77,20 @@ class NativeEvidenceTests(unittest.TestCase):
         with self.assertRaisesRegex(ContinuityError,'generation'):
             service_process_identity(service('scheduled_task'))
 
+    def test_native_application_is_distinct_from_scheduler_and_unknown_never_stops(self):
+        state=service('scheduled_task')
+        app={'status':'running','identity':{'pid':555,'creation_time':'exact'},
+             'supervisor':{'pid':554,'creation_time':'parent'},
+             'manager_process':state['processes'][0],'profile_sha256':'a'*64}
+        state['application']=app
+        self.assertEqual(service_process_identity(state),app['identity'])
+        state['application']={'status':'unconfirmed'}
+        self.assertFalse(service_active(state));self.assertFalse(service_stopped(state))
+        state.update(active=False,processes=[])
+        self.assertFalse(service_stopped(state))
+        state['application']={'status':'absent'}
+        self.assertTrue(service_stopped(state))
+
     def test_original_unknown_state_cannot_be_captured_as_stopped(self):
         for patch in ({'active':None},{'transitioning':True},{'active':False}):
             state=service();state.update(patch)
