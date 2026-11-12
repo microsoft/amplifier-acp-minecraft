@@ -73,7 +73,7 @@ async def deliver_final_reply(text, revision, request, observe, *, sleep=asyncio
 
 def continuation_messages(state):
     ordinary=state.get('task_capabilities',{}).get('activity_continuation')
-    return [{'source':'continuation','message':('Continue useful ordinary activity from your last settled progress report; inspect current facts and do not replay effects. Tasks are optional.' if ordinary else 'Continue the accepted game task. Inspect current world state and progress before acting.')}]
+    return [{'source':'continuation','message':('Reassess unfinished ordinary activity from the latest settled receipts and any progress report; inspect current facts and do not replay effects. Report a real wait, blocker or completion when appropriate. Tasks are optional.' if ordinary else 'Continue the accepted game task. Inspect current world state and progress before acting.')}]
 
 
 def control(cfg, path, payload=None):

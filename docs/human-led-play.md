@@ -361,6 +361,15 @@ recovery accounting and original failed/interrupted receipts. Stop still wins.
 On an uncertain response, inspect durable state rather than replaying the call.
 No model-facing recovery tool or automatic retry is introduced.
 
+### Planner turn limits during ordinary activity
+
+A model request/token limit after settled calls is a checkpoint, not a completed
+activity. The terminal turn retains `budget_limited`; absent an explicit activity
+report, the next turn can reassess unfinished work from current observations.
+An explicit waiting, blocked or review report still stops continuation. Stop,
+uncertain effects, current permissions and provider limits remain enforced. No
+task is created or renewed, and no completed action or original input is replayed.
+
 ### Settled placement refusal and partial builds
 
 A refused placement is not an uncertain worker when the ordinary placement call
