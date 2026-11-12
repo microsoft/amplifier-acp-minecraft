@@ -7,6 +7,7 @@ session, enable a disabled service, or start a game connection.
 from pathlib import Path
 import hashlib
 import json
+import os
 import re
 from installation_guard import ContinuityError, read, service_stopped
 from installation_session_probe import saved_endpoint
@@ -28,8 +29,13 @@ def profiles(cfg, owner_config, bundle, services):
         if path.is_absolute() or '..' in path.parts or '\\' in rel or ':' in rel:
             raise ValueError('Package command escaped its root')
         result=bundle/path
-        if not result.is_file() or result.is_symlink():raise ValueError('Package command unavailable')
-        if manifest['files'][rel]['sha256']!=hashlib.sha256(result.read_bytes()).hexdigest():
+        if not result.is_file() or not result.resolve().is_relative_to(bundle.resolve()):
+            raise ValueError('Package command unavailable or outside package')
+        entry=manifest['files'][rel]
+        if result.is_symlink():
+            if entry.get('link')!=os.readlink(result):raise ValueError('Package command link changed')
+            entry=manifest['files'][result.resolve().relative_to(bundle.resolve()).as_posix()]
+        if entry.get('sha256')!=hashlib.sha256(result.read_bytes()).hexdigest():
             raise ValueError('Package command differs from manifest')
         return result
     driver,python,node=command('native_driver'),command('python'),command('node')

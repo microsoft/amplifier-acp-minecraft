@@ -153,7 +153,8 @@ class Provider:
 
     def build(self, revision, previous, stage):
         if self.c.get('native_platform'):
-            raise ContinuityError('Native staging requires a verified target package; no Linux build fallback')
+            from installation_native_package import stage_package
+            return stage_package(self,revision,previous,stage)
         cache = self.root/'source.git'
         if not cache.exists():
             run(['git','clone','--bare','https://github.com/'+REPOSITORY+'.git',str(cache)],stderr=subprocess.DEVNULL)
@@ -224,7 +225,7 @@ class Provider:
             stage = self.retention.safe_path('stage', identifier)
             try:
                 manifest = read(stage/'manifest.json')
-                if (set(p.name for p in stage.iterdir()) != {'app','venv','manifest.json'}
+                if (set(p.name for p in stage.iterdir()) != ({'app','venv','manifest.json','package','package-receipt.json'} if self.c.get('native_platform') else {'app','venv','manifest.json'})
                         or manifest.get('build_inputs') != inputs
                         or digest(manifest) != record.get('manifest_hash')
                         or any(fingerprint(stage/k) != manifest['fingerprints'][k] for k in self.paths)):

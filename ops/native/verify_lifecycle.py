@@ -77,7 +77,8 @@ try:
  initial(home/'workshop.json',{'task':task,'turn':None,'inbox':[],'unknown_receipts':['preserved']})
  gamecfg={'control_port':port,'token':'disposable-fixture-only'};initial(home/'config.json',gamecfg)
  (home/'app').mkdir();protect(home/'app')
- for item in (BUNDLE/'app').glob('*.py'):shutil.copyfile(item,home/'app'/item.name);protect(home/'app'/item.name)
+ for item in [*(BUNDLE/'app').glob('*.py'),BUNDLE/'app/requirements.txt']:
+  shutil.copyfile(item,home/'app'/item.name);protect(home/'app'/item.name)
  peer=root/'peer.py';shutil.copyfile(SOURCE/'tests/session_probe_fixture.py',peer);log=root/'acp.jsonl'
  endpoint={'command':[sys.executable,str(peer)],'cwd':str(root),'env':{'PROBE_LOG':str(log)}}
  effective={**endpoint,'mcp_servers':[{'type':'http','name':'minecraft','url':f'http://127.0.0.1:{port}/mcp',
@@ -97,7 +98,8 @@ try:
  cfg['native_platform'].update(python=str(home/'venv'/environment_python),environment_python=environment_python)
  cfg.update(app=str(home/'app'),venv=str(home/'venv'),python=sys.executable,node=str(BUNDLE/manifest['commands']['node']),npm_cli=str(BUNDLE/'app/package.json'),channel='latest-passing-development',required_checks=['disposable-boundary'])
  initial(home/'app-source.json',{'revision':'a'*40,'fixture':True})
- original={p.name:p.read_bytes() for p in home.iterdir() if p.is_file()}
+ original={p.name:p.read_bytes() for p in home.iterdir() if p.is_file() and p.name!='app-source.json'}
+ original_source=read(home/'app-source.json')
  script=root/'fixture.py';script.write_text(fixture);protect(script)
  drivercfg=root/'driver.json';ownercfg=root/'owner.json';ownercfg.write_text(json.dumps(cfg));protect(ownercfg)
  wrapper=root/'probe-entry.py';wrapper.write_text('import sys,runpy\nsys.path[:0]='+repr([str(BUNDLE/'app'),str(SHARED/'support/python')])+'\nrunpy.run_module("connection_session_job",run_name="__main__")\n');protect(wrapper)
@@ -128,7 +130,7 @@ try:
   io=NativeIO(cfg,session);backend=NativeInstallation(cfg,session)
   with owner_io(io),installation_lock(state/'installation.lock'):
    for kind in ('body','controller'):
-    dispatched.append(units[0 if kind=='body' else 1])
+    dispatched.append((*units[0 if kind=='body' else 1],drivercfg,state/(kind+'-identity.json')))
     assert session.service_register(kind)=={'created':True}
     stopped=session.service_snapshot(kind);assert service_stopped(stopped),stopped
     assert session.service_register(kind)=={'created':False}
@@ -166,7 +168,8 @@ try:
      report['native_source_exchange']=read(state/'native-source-receipts'/(env['id']+'.json'))
     assert p.verify('applied')['verified'];assert p.restore('applied')['restored']
     terminal=read(p.path);assert Participant(cfg,env,backend).restore('applied')['restored']
-    assert {q.name:q.read_bytes() for q in home.iterdir() if q.is_file()}==original
+    assert {q.name:q.read_bytes() for q in home.iterdir() if q.is_file() and q.name!='app-source.json'}==original
+    assert read(home/'app-source.json')==original_source
     report['cycles'].append({'components':components,'transaction':env['plan']['transaction_id'],'receipt':terminal,'after':backend.capture()})
    native_connection=connection_backend(cfg,session);request=str(uuid.uuid4())
    def conn(action='status'):
@@ -185,18 +188,20 @@ try:
    assert result['state']=='connected' and result['settled'] and readiness_seen,result
    assert conn().run()==result
    report['connection']={'disconnected':disconnected,'connected':read(conn().path),'quiescence_seen':quiescence_seen,'readiness_seen':readiness_seen}
-   assert {q.name:q.read_bytes() for q in home.iterdir() if q.is_file()}==original
+   assert {q.name:q.read_bytes() for q in home.iterdir() if q.is_file() and q.name!='app-source.json'}==original
+   assert read(home/'app-source.json')==original_source
   report['acp_events']=[json.loads(line) for line in log.read_text().splitlines()]
   assert report['acp_events']==[{'action':'initialize'},{'action':'load','session':'original-fixture-session'}]*4
  report['passed']=True
 finally:
  cleanup=NativeServiceApplicationTests()
  cleanup_errors=[]
- for name,definition in dispatched:
-  try:cleanup.cleanup(name,definition)
+ for name,definition,config,identity in dispatched:
+  try:cleanup.cleanup(name,definition,config,identity)
   except Exception as error:cleanup_errors.append({'service':name,'error':repr(error)})
  report['cleanup_errors']=cleanup_errors
  if temp:temp.cleanup()
  report['disposable_units_removed']=not cleanup_errors
  args.receipt.write_text(json.dumps(report,indent=2)+'\n')
+ if cleanup_errors:raise RuntimeError('Disposable native service cleanup failed; see retained receipt')
 print(json.dumps({'passed':report.get('passed',False),'target':manifest['target'],'cycles':len(report['cycles']),'original_session_loads':len(report.get('acp_events',[]))//2}))
