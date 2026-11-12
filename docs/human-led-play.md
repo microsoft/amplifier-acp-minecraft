@@ -395,3 +395,11 @@ coordinates and no invented age/growth value. Coverage remains loaded blocks
 within 16 blocks, at most 64 results; inspect `truncated` and `unavailable`. A
 seed outside that coverage is not evidence of loss. Watch expiry is not a growth
 notification or authority renewal; use fresh observations when revising a wait.
+
+For a historical single `place` failure in a settled ordinary-activity turn,
+`settled_failed_placement` permits an explicit owner review of the exact retained
+server-refusal terminal, selected item and integer target. The owner must verify
+the producing source and current state. It preserves prior movement/equip and
+the original uncertain receipt; it does not establish a historical inventory
+delta, replay placement or resume a task. Silence, timeout, unloaded targets,
+changed receipts and interrupted task turns remain ineligible.
