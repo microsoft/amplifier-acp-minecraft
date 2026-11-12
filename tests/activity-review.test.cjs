@@ -52,3 +52,31 @@ test('disk failure rolls back every review and policy remains held',t=>{
  const {h,input,observation}=fixture(t),before=JSON.stringify(h.data),disk=fs.readFileSync(h.file,'utf8');h.save=()=>{throw Error('disk full');};
  assert.throws(()=>review(h,cfg,input,observation),/disk full/);assert.equal(JSON.stringify(h.data),before);assert.equal(fs.readFileSync(h.file,'utf8'),disk);assert.equal(policy.reason(h,cfg),'unresolved_activity_effects');
 });
+for(const [action,args,error,outcome='no_effect'] of [
+ ['gather',{block:'stone',count:3,targets:[{x:1,y:64,z:0}]},'Gather count must be 1–8 and no greater than the target selection'],
+ ['container',{operation:'withdraw',count:1},'Transfer needs an exact item name and count from 1 to 64'],
+ ['container',{operation:'withdraw',item:'wooden_pickaxe',count:1},'Named, enchanted, or component-bearing items need explicit selection: inspect, then supply source_slot and source_item_revision','settled_failed_storage'],
+ ['move',{x:1000,y:64,z:0,mode:'normal'},'Coordinates must be whole blocks within 64 blocks of this player'],
+ ['container',{x:1,y:64,z:0,operation:'inspect',expected:'barrel'},'Container is obstructed; inspect the observed blocker and choose a clear reachable position'],
+ ['container',{x:8,y:64,z:0,operation:'inspect',expected:'barrel'},'Move within four blocks of the container first; no movement performed']
+])test('owner can review legacy preflight refusal '+action+' '+error,t=>{
+ const {h,input,observation}=fixture(t);
+ for(const e of h.data.events.filter(e=>e.action_id==='partial')){e.action=action;e.arguments=args;if(e.kind==='action_failed')e.error=error;}
+ const item=input.reviews[1];item.outcome=outcome;item.receipt_sha256=digest(h.data.events.find(e=>e.action_id==='partial'&&e.kind==='action_failed'));
+ const before=structuredClone(h.data);assert.equal(review(h,cfg,input,observation).activity_allowed,true);
+ assert.deepEqual(h.data.events,before.events);assert.deepEqual(h.data.task,before.task);assert.equal(policy.canContinue(h,cfg),false);
+ assert.equal(policy.allowed(new WorkshopState(h.file),cfg),true);
+});
+for(const operation of ['deposit','withdraw','recover','inspect'])test('storage unknown/transfer is not cleared by legacy review '+operation,t=>{
+ const {h,input,observation}=fixture(t);
+ for(const e of h.data.events.filter(e=>e.action_id==='partial')){e.action='container';e.arguments={operation};if(e.kind==='action_failed')e.error=operation==='inspect'?'Window acknowledgment missing':'Container is obstructed; inspect the observed blocker and choose a clear reachable position';}
+ input.reviews[1].outcome='no_effect';input.reviews[1].receipt_sha256=digest(h.data.events.find(e=>e.action_id==='partial'&&e.kind==='action_failed'));
+ const before=JSON.stringify(h.data);assert.throws(()=>review(h,cfg,input,observation));assert.equal(JSON.stringify(h.data),before);
+});
+
+test('an opened storage inspection is not falsely reviewed as no effect',t=>{
+ const {h,input,observation}=fixture(t);
+ for(const e of h.data.events.filter(e=>e.action_id==='partial')){e.action='container';e.arguments={operation:'withdraw',item:'wooden_pickaxe',count:1};if(e.kind==='action_failed')e.error='Named, enchanted, or component-bearing items need explicit selection: inspect, then supply source_slot and source_item_revision';}
+ input.reviews[1].outcome='no_effect';input.reviews[1].receipt_sha256=digest(h.data.events.find(e=>e.action_id==='partial'&&e.kind==='action_failed'));
+ const before=JSON.stringify(h.data);assert.throws(()=>review(h,cfg,input,observation));assert.equal(JSON.stringify(h.data),before);
+});

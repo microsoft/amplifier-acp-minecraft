@@ -20,7 +20,7 @@ function fixture({ignoreCancel=false,cleanupMs=0,timeoutMs=10}={}){
   if(name==='mineflayer')return {createBot:()=>bot};
   if(name==='node:http')return {createServer:()=>({listen(){},close(){}})};
   if(name==='./spatial.cjs')return spatial;
-  if(name==='./containers.cjs')return {container:()=>spatial.gotoWithProgress()};
+  if(name==='./containers.cjs')return {preflight(){},container:()=>spatial.gotoWithProgress()};
   if(name==='./action-deadline.cjs')return {boundedAction:(work,options)=>boundedAction(work,{...options,timeoutMs,settleMs:40})};
   return realRequire(name);
  };

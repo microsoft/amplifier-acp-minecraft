@@ -67,6 +67,7 @@ function validate(a){
  if(['deposit','withdraw'].includes(a.operation)&&(!a.item||!Number.isInteger(a.count)||a.count<1||a.count>64))
   throw Error('Transfer needs an exact item name and count from 1 to 64');
 }
+function preflight(bot,p,a){validate(a);target(bot,p,a.expected);}
 async function container(bot,p,a,check,{beforeTransfer=()=>{}}={}){
  validate(a);let binding,before,confirmed=0,clicks=0,lastConfirmed,unacknowledged=false;
  const deadline=Date.now()+25000;
@@ -162,4 +163,4 @@ async function container(bot,p,a,check,{beforeTransfer=()=>{}}={}){
   if(b&&bot.currentWindow===b.window&&!b.window.selectedItem&&!unacknowledged){bot.closeWindow(b.window);opened.delete(bot);}
  }
 }
-module.exports={container,validate,inventorySnapshot:snapshot};
+module.exports={preflight,container,validate,inventorySnapshot:snapshot};

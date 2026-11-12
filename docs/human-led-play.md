@@ -61,8 +61,9 @@ turns refuse. The original uncertain receipt is retained with the dated no-effec
 review; tasks, Stop, prior input and accounting are unchanged. Read state after a
 lost response; do not repeat a failed game action or infer renewed work authority.
 
-For multiple terminal movement failures, owner-only
-`POST /activity/review-settled-moves` records a complete per-action review. It is
+For multiple terminal movement or proven preflight failures, owner-only
+`POST /activity/review-settled-actions` (also available at the compatible
+`/activity/review-settled-moves` route) records a complete per-action review. It is
 not available to models, presence clients or installation callers. Supply:
 
 - `generation` from `/conversation`, a UUID `request_id`, and `expected_turn_sha256`.
@@ -71,15 +72,25 @@ not available to models, presence clients or installation callers. Supply:
 - `evidence_sha256`, the hash of the retained owner assessment, plus `reviews`
   covering every uncertain action exactly. Each entry contains `action_id`,
   `receipt_sha256` of the retained `action_failed` event, a concrete `reason`, and
-  `outcome`: `no_effect` for a proven pre-dispatch walk-only refusal, or
-  `settled_failed_movement` when the operation settled without verified arrival.
+  `outcome`: `no_effect` for a proven pre-dispatch refusal,
+  `settled_failed_movement` when movement settled without verified arrival, or
+  `settled_failed_storage` for a closed inspection that refused item transfer.
+
+Only explicit legacy cases are supported: movement, rejected coordinates, gather
+count/selection mismatch, blocked/out-of-reach storage inspection, missing
+transfer arguments, and component-bearing transfer refused before its first click.
+For storage opened before that refusal, verify the closed window, clear cursor and
+retained subsequent receipts; do not call opening/closing a window no effect.
+New coordinate, gather-selection and container reach/argument checks run before
+effect admission and do not create an uncertain action. Later failures still
+retain uncertainty; this does not automatically classify errors or replay work.
 
 Hashes of JSON values use SHA-256 of JavaScript `JSON.stringify(value)`. Inspect
 the original implementation, terminal tool receipts and current physical state;
 an error string or final position alone cannot prove no effects. The endpoint
 checks an idle, non-interrupted activity, matching start/failure receipts,
 unchanged position/inventory and complete coverage. Pending operations, timeouts,
-other action kinds, missing receipts and stale reviews refuse. It retains original
+unsupported failures, missing receipts and stale reviews refuse. It retains original
 uncertain statuses and adds the review atomically. A matching repeat returns the
 saved review; a changed request refuses. Stop, task bounds, accounting and input
 receipts are untouched. This permits future work under existing policy, never

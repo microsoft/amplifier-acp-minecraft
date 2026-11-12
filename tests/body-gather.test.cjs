@@ -51,7 +51,7 @@ test('missing, invalid or duplicate selection is refused before any movement or 
  for(const input of [{},{targets:[]},{targets:[{x:NaN,y:64,z:0}]},{targets:[{x:1.5,y:64,z:0}]},
   {targets:[{x:30,y:64,z:0}]},{targets:Array(9).fill({x:3,y:64,z:0})},{targets:[{x:3,y:64,z:0},{x:3,y:64,z:0}]},
   {count:2,targets:[{x:3,y:64,z:0}]}]){
-  const f=fixture();try{await assert.rejects(f.run(input),/target|selection|count/i);assert.equal(f.dug.length,0);assert.equal(f.moves.length,0);}finally{f.close();}
+  const f=fixture();try{await assert.rejects(f.run(input),/target|selection|count/i);assert.equal(f.dug.length,0);assert.equal(f.moves.length,0);assert.equal(f.history.data.turn.actions.length,0);assert.equal(f.history.data.events.filter(e=>e.kind==='action_started').length,0);}finally{f.close();}
  }
 });
 test('a changed or unloaded selected block stops the batch without finding replacements',async()=>{
