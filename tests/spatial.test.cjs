@@ -92,3 +92,27 @@ test('stalled navigation distinguishes acknowledged cancellation from a merely s
  const bot={entity:{position:new Vec3(0,0,0)},pathfinder:{goto:()=>new Promise((_,r)=>{reject=r;}),setGoal(){reject(Error('cancelled'));}},clearControlStates(){}};
  await assert.rejects(gotoWithProgress(bot,{}, {stallMs:10,pollMs:5,settleMs:20}),e=>e.movementOperationSettled===true);
 });
+
+test('reported dry drop bound matches actual upstream landing-floor semantics',()=>{
+ const {Movements}=require('mineflayer-pathfinder');const {movementCapabilities}=require('../spatial.cjs');
+ for(const limit of [2,3]){
+  const m={maxDropDown:limit,canDig:false,allowParkour:false,allow1by1towers:false,bot:{game:{minY:-64}}};
+  const bot={pathfinder:{movements:m}};
+  assert.equal(movementCapabilities(bot).normal.max_dry_full_block_feet_drop_per_edge,limit-1);
+  for(const descent of [1,2,3]){
+   const floor=64-descent-1;
+   m.getBlock=(node,dx,dy,dz)=>{const p=new Vec3(node.x+dx,node.y+dy,node.z+dz);return {position:p,physical:p.y===floor,safe:true,liquid:false};};
+   const landing=Movements.prototype.getLandingBlock.call(m,new Vec3(0,64,0),{x:1,z:0});
+   assert.equal(landing?.position.y??null,descent<limit?64-descent:null);
+  }
+ }
+ assert.equal(movementCapabilities({}).normal.max_dry_full_block_feet_drop_per_edge,null);
+});
+test('route reports its movement limits without rejecting a larger total descent',()=>{
+ const {route}=require('../spatial.cjs');let searches=0;
+ const bot=world({});bot.pathfinder={movements:{maxDropDown:2,canDig:false,allowParkour:false,allow1by1towers:false},getPathTo(){searches++;return {status:'success',path:[new Vec3(1,63,0),new Vec3(2,62,0),new Vec3(3,61,0)]};}};
+ const r=route(bot,new Vec3(3,61,0));
+ assert.equal(r.reachable,true);assert.equal(searches,1);assert.equal(r.steps.length,3);
+ assert.equal(r.movement_capabilities.normal.max_dry_full_block_feet_drop_per_edge,1);
+ assert.equal(r.movement_capabilities.normal.can_dig,false);
+});
