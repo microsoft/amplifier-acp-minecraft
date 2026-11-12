@@ -26,13 +26,17 @@ jobs:
       - uses: actions/checkout@v4
         with:
           repository: microsoft/amplifier-constellation
-          ref: d91147b95d6f1843e7d3674d7e1ffae2402a735a
+          ref: 2f8555870672536d5ae34e45f5330232d4bf54fc
           path: native-shared
       - name: Build actual target shared driver
         shell: bash
         run: |
           rustup toolchain install 1.93.0 --profile minimal
           cargo +1.93.0 build --locked --manifest-path native-shared/crates/native-platform-driver/Cargo.toml
+      - name: Build shared disposable Windows service cleanup fixture
+        if: runner.os == 'Windows'
+        shell: bash
+        run: cargo +1.93.0 build --locked --manifest-path native-shared/crates/native-platform/Cargo.toml --features installation --example windows_service_fixture
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'

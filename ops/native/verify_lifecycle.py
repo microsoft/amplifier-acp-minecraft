@@ -8,7 +8,10 @@ SOURCE=args.source.resolve();BUNDLE=args.bundle.resolve();SHARED=args.shared.res
 manifest=json.loads((BUNDLE/'manifest.json').read_text())
 sys.path[:0]=[str(BUNDLE/'app'),str(SHARED/'support/python'),str(SHARED/'tests/native_python')]
 os.environ['CONSTELLATION_NATIVE_DRIVER']=str(DRIVER)
-from test_driver import protect
+from test_driver import protect as shared_protect, windows_user_sid
+# Explicit script directory is needed with the bundled interpreter -I flag.
+sys.path.insert(0,str(SOURCE/'ops/native'))
+from fixture_security import protect_fixture_path,fixture_application_identities
 from test_service import NativeServiceApplicationTests
 from constellation_native import Session
 from installation_native import NativeIO,NativeInstallation,validate_driver_mapping,connection_backend
@@ -19,6 +22,13 @@ from installation_native_exchange import NativeExchange
 from installation_source_provider import Provider,fingerprint,verify_sdk
 from installation_enrollment import registration
 from installation_guard import digest
+
+fixture_root=None
+
+def protect(path):
+    if fixture_root is None:raise RuntimeError('Disposable root not initialized')
+    protect_fixture_path(path,fixture_root,shared_protect,windows=os.name=='nt',
+                         user_sid=windows_user_sid() if os.name=='nt' else None)
 
 def initial(path,value):
     path.write_text(json.dumps(value),encoding='utf-8');protect(path)
@@ -62,13 +72,27 @@ else:
      driver.private_write('home','installation-updates/controller-idle.json',json.dumps(ack).encode())
    time.sleep(.05)
 '''
+class FixtureCleanup(NativeServiceApplicationTests):
+ def __init__(self,service):
+  super().__init__();self.fixture_service=service
+ def receipt_identities(self,receipt):
+  return fixture_application_identities(receipt,self.fixture_service)
+
+if os.name=='nt':
+ cleanup_fixture=SHARED/'crates/native-platform/target/debug/examples/windows_service_fixture.exe'
+ if not cleanup_fixture.is_file():raise RuntimeError('Build the shared disposable Windows cleanup fixture first')
+ os.environ['NATIVE_SERVICE_FIXTURE']=str(cleanup_fixture)
+ os.environ['CONSTELLATION_INSTALLATION_SMOKE']='1'
+
 report={'source':manifest['source_commit'],'bundle_target':manifest['target'],
  'shared_source':subprocess.check_output(['git','rev-parse','HEAD'],cwd=SHARED,text=True).strip(),
  'driver_sha256':hashlib.sha256(DRIVER.read_bytes()).hexdigest(),
- 'production_operations':False,'model_prompts':0,'actual_os':sys.platform,'cycles':[]}
+ 'production_operations':False,'model_prompts':0,'actual_os':sys.platform,'cycles':[],
+ 'cleanup_fixture_sha256':hashlib.sha256(cleanup_fixture.read_bytes()).hexdigest() if os.name=='nt' else None,
+ 'fixture_protection':{'shared_dacl':True,'explicit_current_user_owner':os.name=='nt','scope':'Fresh disposable temp paths only; not production setup'}}
 units=[];dispatched=[];temp=None
 try:
- temp=tempfile.TemporaryDirectory(prefix='minecraft-native-domain-');root=pathlib.Path(temp.name).resolve();protect(root)
+ temp=tempfile.TemporaryDirectory(prefix='minecraft-native-domain-');root=pathlib.Path(temp.name).resolve();fixture_root=root;protect(root)
  home=root/'game';state=root/'state';home.mkdir();state.mkdir();protect(home);protect(state)
  with socket.socket() as sock:sock.bind(('127.0.0.1',0));port=sock.getsockname()[1]
  cfg={'home':str(home),'state':str(state),'session_verification_seconds':12,
@@ -119,7 +143,8 @@ try:
    name+='.service';manager='systemd_user';definition=pathlib.Path.home()/'.config/systemd/user'/name
   elif sys.platform=='darwin':
    manager='launch_agent';definition=pathlib.Path.home()/'Library/LaunchAgents'/(name+'.plist')
-  else:manager='scheduled_task'
+  else:
+   manager='scheduled_task';name='constellation-driver-test-'+uuid.uuid4().hex
   if definition:definition.parent.mkdir(parents=True,exist_ok=True)
   units.append((name,definition))
   argv=[str(script),'--role',role,'--home',str(home),'--driver',str(DRIVER),'--driver-config',str(drivercfg),'--shared',str(SHARED/'support/python')]
@@ -144,7 +169,7 @@ try:
   io=NativeIO(cfg,session);backend=NativeInstallation(cfg,session)
   with owner_io(io),installation_lock(state/'installation.lock'):
    for kind in ('body','controller'):
-    dispatched.append((*units[0 if kind=='body' else 1],drivercfg,state/(kind+'-identity.json')))
+    dispatched.append((*units[0 if kind=='body' else 1],drivercfg,state/(kind+'-identity.json'),kind))
     assert session.service_register(kind)=={'created':True}
     stopped=session.service_snapshot(kind);assert service_stopped(stopped),stopped
     assert session.service_register(kind)=={'created':False}
@@ -208,10 +233,9 @@ try:
   assert report['acp_events']==[{'action':'initialize'},{'action':'load','session':'original-fixture-session'}]*4
  report['passed']=True
 finally:
- cleanup=NativeServiceApplicationTests()
  cleanup_errors=[]
- for name,definition,config,identity in dispatched:
-  try:cleanup.cleanup(name,definition,config,identity)
+ for name,definition,config,identity,kind in dispatched:
+  try:FixtureCleanup(kind).cleanup(name,definition,config,identity)
   except Exception as error:cleanup_errors.append({'service':name,'error':repr(error)})
  report['cleanup_errors']=cleanup_errors
  if temp:temp.cleanup()
