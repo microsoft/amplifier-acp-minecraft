@@ -62,12 +62,12 @@ async def verify(root, source):
     try:
         shutil.copytree(source/'tests',fixtures)
         subprocess.run([str(node),'--test',*[str(fixtures/name) for name in
-            ('body-chat.test.cjs','body-gather.test.cjs','body-timeout.test.cjs','body-facing.test.cjs','body-lease.test.cjs','placement-receipt.test.cjs','task-effects-review.test.cjs','activity-review.test.cjs','screenshots.test.cjs')]],env=env,check=True)
+            ('body-chat.test.cjs','body-gather.test.cjs','body-timeout.test.cjs','body-facing.test.cjs','body-lease.test.cjs','block-controls.test.cjs','redstone-configuration.test.cjs','placement-receipt.test.cjs','task-effects-review.test.cjs','activity-review.test.cjs','screenshots.test.cjs')]],env=env,check=True)
     finally:
         shutil.rmtree(fixtures,ignore_errors=True)
     result={'target':manifest['target'],'source_commit':manifest['source_commit'],'official_sdk':manifest['sdk_commit'],
             'original_session_loaded':True,'unused_initialize_only':True,'game_server':False,'model_prompts':0,
-            'pure_task_helper':helper_result,'body_fixtures':True,'actual_packaged_browser':True,'controller_entrypoint_imports':True,'offline_body_launcher_no_join':True,'native_service_lifecycle_verified':False}
+            'pure_task_helper':helper_result,'body_fixtures':True,'redstone_configuration_fixtures':True,'actual_packaged_browser':True,'controller_entrypoint_imports':True,'offline_body_launcher_no_join':True,'native_service_lifecycle_verified':False}
     print(json.dumps(result))
     return result
 
