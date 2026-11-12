@@ -12,7 +12,7 @@ function review(history,cfg,input,observation,{taskEffects=false}={}){
  if(!Number.isSafeInteger(input.generation)||!uuid(input.request_id)||!hash(input.expected_turn_sha256)||!hash(input.expected_inventory_sha256)||!hash(input.evidence_sha256)||!Object.values(input.expected_position).every(Number.isFinite)||!Array.isArray(input.reviews)||input.reviews.length<1||input.reviews.length>64)throw Error('Malformed activity review');
  for(const item of input.reviews){
   exact(item,['action_id','receipt_sha256','outcome','reason']);
-  if(typeof item.action_id!=='string'||!hash(item.receipt_sha256)||!['no_effect','settled_failed_movement','settled_failed_storage','settled_partial_gather'].includes(item.outcome)||typeof item.reason!=='string'||!item.reason.trim()||item.reason.length>2000)throw Error('Each failed action needs concrete reviewed evidence');
+  if(typeof item.action_id!=='string'||!hash(item.receipt_sha256)||!['no_effect','settled_failed_movement','settled_failed_storage','settled_partial_gather','settled_partial_build'].includes(item.outcome)||typeof item.reason!=='string'||!item.reason.trim()||item.reason.length>2000)throw Error('Each failed action needs concrete reviewed evidence');
  }
  const policy=require('./activity-policy.cjs'),turn=history.data.last_turn;
  if(!policy.enabled(cfg)||history.data.turn||!turn||!Array.isArray(turn.actions))throw Error('Exact idle action history required');
@@ -33,7 +33,15 @@ function review(history,cfg,input,observation,{taskEffects=false}={}){
   const events=history.data.events.filter(e=>e.action_id===item.action_id);
   const starts=events.filter(e=>e.kind==='action_started'),ends=events.filter(e=>['action_result','action_failed'].includes(e.kind));
   const start=starts[0],end=ends[0];
-  if(starts.length!==1||ends.length!==1||start.action!==end.action||!['move','container','gather',...(taskEffects?['dig']:[])].includes(start.action)||end.kind!=='action_failed'||end.timeout||end.operation_settled===false||!Number.isFinite(Date.parse(start.time))||!Number.isFinite(Date.parse(end.time))||!(Date.parse(start.time)>=Date.parse(turn.started_at))||Date.parse(end.time)<Date.parse(start.time)||digest(start.arguments)!==digest(end.arguments)||digest(end)!==item.receipt_sha256)throw Error('Exact retained terminal action receipt required');
+  if(starts.length!==1||ends.length!==1||start.action!==end.action||!['move','container','gather',...(taskEffects?['dig']:['build'])].includes(start.action)||(start.action==='build'?end.kind!=='action_result':end.kind!=='action_failed')||end.timeout||end.operation_settled===false||!Number.isFinite(Date.parse(start.time))||!Number.isFinite(Date.parse(end.time))||!(Date.parse(start.time)>=Date.parse(turn.started_at))||Date.parse(end.time)<Date.parse(start.time)||digest(start.arguments)!==digest(end.arguments)||digest(end)!==item.receipt_sha256)throw Error('Exact retained terminal action receipt required');
+  if(start.action==='build'){
+   const r=end.result,blocks=start.arguments?.blocks,itemName=start.arguments?.item,p=r?.failed_at;
+   const equal=(a,b)=>a&&b&&['x','y','z'].every(k=>Number.isInteger(a[k])&&a[k]===b[k]);
+   const prefix=Array.isArray(blocks)&&Array.isArray(r?.placed)&&r.placed.length<blocks.length&&r.placed.every((v,i)=>v.verified===true&&v.actual===itemName&&equal(v.position,blocks[i]));
+   const refusal=prefix&&equal(p,blocks[r.placed.length])&&r.error===`Server refused to place ${itemName} at (${p.x}, ${p.y}, ${p.z}): the block is still air`;
+   const later=history.data.events.some(e=>e.kind==='action_result'&&e.action==='place'&&Date.parse(e.time)>Date.parse(end.time)&&equal(e.arguments,p)&&e.arguments.item===itemName&&e.result?.verified===true&&e.result.actual===itemName&&equal(e.result.position,p));
+   if(item.outcome!=='settled_partial_build'||!refusal||!later||r.timeout||r.operation_settled===false)throw Error('Partial build requires verified prefix, exact server refusal and later confirmed final placement');
+  }else if(item.outcome==='settled_partial_build')throw Error('Partial build review is only for a build');
   // Legacy preflight failures predate no-effect journaling. This is an explicit
   // owner review of exact historical receipts, never automatic error recovery.
   if(start.action==='dig'&&!(item.outcome==='no_effect'&&end.error==='Refusing to remove a block supporting a player; move to safe footing first'))throw Error('Only exact supporting-player dig preflight is reviewable');
@@ -53,7 +61,7 @@ function review(history,cfg,input,observation,{taskEffects=false}={}){
   // returned. Earlier harvest effects may exist: do not invent a zero/count.
   const partialGather=start.action==='gather'&&end.error==='Movement ended without reaching the requested destination; inspect current position'&&item.outcome==='settled_partial_gather';
   if(start.action==='gather'&&!(end.error==='Gather count must be 1–8 and no greater than the target selection'&&item.outcome==='no_effect'||partialGather))throw Error('Only reviewed legacy gather preflight or settled pickup movement is supported');
-  if(start.action==='move'&&['settled_failed_storage','settled_partial_gather'].includes(item.outcome))throw Error('Movement requires movement evidence');
+  if(start.action==='move'&&['settled_failed_storage','settled_partial_gather','settled_partial_build'].includes(item.outcome))throw Error('Movement requires movement evidence');
   if(item.outcome==='no_effect'&&start.action==='move'&&start.arguments?.mode!=='walk_only'&&!coordinateRefusal)throw Error('Normal movement must retain its settled failed-effects distinction');
  }
  const candidate=structuredClone(turn),at=new Date().toISOString();

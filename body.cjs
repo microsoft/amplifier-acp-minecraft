@@ -395,7 +395,7 @@ async function operate(name,a={},sequenceId=null){
   if(++actions>24&&cfg.human_engagement?.enabled!==true)throw Error('This turn reached its 24-action budget; save progress with work_report');
   busy=true;activeAction=name;const epoch=generation;const actionId=crypto.randomUUID();history.actionStarted(actionId);record('action_started',{action_id:actionId,action:name,arguments:a});let unfinished;
   const check=()=>{if(epoch!==generation||Date.now()>turnUntil)throw Error('Action cancelled');};
-  const movementFailures=new WeakMap();
+  const movementFailures=new WeakMap(),placementFailures=new WeakMap(),settledBuilds=new WeakSet();
   const movementFailure=(error,before,settled)=>{if(settled&&epoch===generation&&ready&&Date.now()<turnUntil&&!error.actionTimeout)movementFailures.set(error,{kind:'settled_failed_movement',before,position:{x:bot.entity.position.x,y:bot.entity.position.y,z:bot.entity.position.z},reached:false,replayed:false});return error;};
   const go=async(p,r=2,exactHeight=false)=>{check();const before={x:bot.entity.position.x,y:bot.entity.position.y,z:bot.entity.position.z};const goal=exactHeight?new spatial.FeetGoal(p.x,p.y,p.z,r):new goals.GoalNear(p.x,p.y,p.z,r);let settled=false;try{await spatial.gotoWithProgress(bot,goal);settled=true;await delay(250);check();if(!goal.isEnd(bot.entity.position.floored()))throw Error('Movement ended without reaching the requested destination; inspect current position');}catch(error){throw movementFailure(error,before,settled||error.movementOperationSettled===true);}};
   async function place(p,item,supportFace,facing){
@@ -414,11 +414,16 @@ async function operate(name,a={},sequenceId=null){
     await go(p,3);check();await bot.equip(stack,'hand');await refreshInventory(bot);check();
     if(bot.heldItem?.name!==item)throw Error('Server did not confirm the requested held item; refresh inventory before retrying');
     const support=spatial.placementSupport(bot,p,supportFace,item);
+    const placementAttempt=async send=>{try{return await require('./placement-receipt.cjs').attempt(bot,support.block,p,item,send);}catch(error){
+      const receipt=require('./placement-receipt.cjs').refusal(error);
+      if(receipt&&epoch===generation&&ready&&Date.now()<turnUntil&&!error.actionTimeout)placementFailures.set(error,{kind:'settled_failed_placement',receipt,position:{x:bot.entity.position.x,y:bot.entity.position.y,z:bot.entity.position.z},replayed:false});
+      throw error;
+    }};
     check();bot.setControlState('sneak',true);
     // Mineflayer's smooth look promise follows yaw, not pitch. For pistons,
     // send the explicit rotation and allow physics ticks before placement;
     // the resulting server block state is still the authoritative check.
-    try{await delay(100);check();if(facing){const [dx,dz]=directions[facing]||[0,0],direction=/_sign$/.test(item)||furnaceFacing||pistonFacing?-1:1,dy=facing==='up'?-1:facing==='down'?1:0;await bot.lookAt(bot.entity.position.offset(dx*direction,1.62+dy,dz*direction),pistonFacing);if(pistonFacing)await bot.waitForTicks(2);check();await bot._placeBlockWithOptions(support.block,support.normal,{forceLook:'ignore',swingArm:'right'});}else await bot.placeBlock(support.block,support.normal);}finally{bot.setControlState('sneak',false);}
+    try{await delay(100);check();if(facing){const [dx,dz]=directions[facing]||[0,0],direction=/_sign$/.test(item)||furnaceFacing||pistonFacing?-1:1,dy=facing==='up'?-1:facing==='down'?1:0;await bot.lookAt(bot.entity.position.offset(dx*direction,1.62+dy,dz*direction),pistonFacing);if(pistonFacing)await bot.waitForTicks(2);check();await placementAttempt(()=>bot._placeBlockWithOptions(support.block,support.normal,{forceLook:'ignore',swingArm:'right'}));}else await placementAttempt(()=>bot.placeBlock(support.block,support.normal));}finally{bot.setControlState('sneak',false);}
     await delay(180);check();
     const actual=bot.blockAt(p)?.name;const expected=[item,...(item==='redstone'?['redstone_wire']:[]),...farming.plantedBlocks(item),...(item.endsWith('torch')?[item.replace('torch','wall_torch')]:[]),...(item.endsWith('_sign')?[item.replace('_sign','_wall_sign')]:[])];
     if(!expected.includes(actual))throw Error(`Placement mismatch: expected ${item}, observed ${actual}`);if(item==='ladder'&&supportFace&&bot.blockAt(p)?.getProperties().facing!==supportFace)throw Error('Ladder was placed but facing differs from requested support_face; inspect before continuing');
@@ -503,7 +508,7 @@ async function operate(name,a={},sequenceId=null){
       if(name==='place')return await place(coord(a),a.item,a.support_face,a.facing);
       if(name==='build'){
         const positions=a.blocks.map(coord);const placed=[];
-        for(const p of positions){check();try{placed.push(await place(p,a.item,a.support_face));}catch(e){let repair;try{repair=repairs.explain(bot,'place',{...a,x:p.x,y:p.y,z:p.z},e);}catch{}return {placed,failed_at:p,error:e.message,...(repair?{repair}:{})};}}
+        for(const p of positions){check();try{placed.push(await place(p,a.item,a.support_face));}catch(e){let repair;try{repair=repairs.explain(bot,'place',{...a,x:p.x,y:p.y,z:p.z},e);}catch{}const result={placed,failed_at:p,error:e.message,...(repair?{repair}:{})};const failure=placementFailures.get(e);if(failure){result.settled_failure={kind:'settled_partial_build',placed,failed_at:p,placement:failure,replayed:false};settledBuilds.add(result);}return result;}}
         return {placed};
       }
       if(name==='give'){
@@ -513,8 +518,8 @@ async function operate(name,a={},sequenceId=null){
     },{timeoutMs:Math.max(1,Math.min(60000,turnUntil-Date.now())),cancel:()=>{if(name==='move')cancelAction();else stop();},
       onUnsettled:completion=>{unfinished=completion;stop();}});
     if(['move','follow'].includes(name))check();
-    if(result?.settled_failure&&!result?.error)history.actionFailedSettled(actionId,result.settled_failure);else history.actionSettled(actionId,!result?.error);const r=record('action_result',{action_id:actionId,action:name,arguments:a,result});receipts.push(r);if(receipts.length>100)receipts.shift();return result;
-  }catch(e){try{retryGuard.failed(bot,name,a,e);}catch{}let repair;try{repair=repairs.explain(bot,name,a,e);}catch{}if(repair)e.details={...(e.details||{}),repair};const settled=name==='move'?movementFailures.get(e):null;if(settled){e.details={...(e.details||{}),settled_failure:settled};history.actionFailedSettled(actionId,settled);}else history.actionSettled(actionId,false);record('action_failed',{action_id:actionId,action:name,arguments:a,error:e.message,...(repair?{repair}:{}),...(settled?{settled_failure:settled}:{}),
+    if(result?.settled_failure&&(!result?.error||settledBuilds.has(result)))history.actionFailedSettled(actionId,result.settled_failure);else history.actionSettled(actionId,!result?.error);const r=record('action_result',{action_id:actionId,action:name,arguments:a,result});receipts.push(r);if(receipts.length>100)receipts.shift();return result;
+  }catch(e){try{retryGuard.failed(bot,name,a,e);}catch{}let repair;try{repair=repairs.explain(bot,name,a,e);}catch{}if(repair)e.details={...(e.details||{}),repair};const settled=name==='move'?movementFailures.get(e):name==='place'?placementFailures.get(e):null;if(settled){e.details={...(e.details||{}),settled_failure:settled};history.actionFailedSettled(actionId,settled);}else history.actionSettled(actionId,false);record('action_failed',{action_id:actionId,action:name,arguments:a,error:e.message,...(repair?{repair}:{}),...(settled?{settled_failure:settled}:{}),
     ...(e.actionTimeout?{timeout:true,operation_settled:e.operationSettled,turn_preserved:Date.now()<turnUntil}: {})});throw e;}
   finally{const settled=()=>{busy=false;activeAction=null;};if(unfinished)unfinished.then(settled);else settled();}
 }

@@ -92,3 +92,18 @@ for(const [error,outcome] of [
  input.reviews[1].outcome=outcome;input.reviews[1].receipt_sha256=digest(h.data.events.find(e=>e.action_id==='partial'&&e.kind==='action_failed'));
  const before=JSON.stringify(h.data);assert.throws(()=>review(h,cfg,input,observation));assert.equal(JSON.stringify(h.data),before);
 });
+for(const mode of ['confirmed','unknown','prefix','later_missing','later_earlier','timeout','no_effect'])test('historical partial build review '+mode,t=>{
+ const {h,input,observation}=fixture(t),args={item:'cobblestone',blocks:[{x:1,y:64,z:1},{x:2,y:64,z:1}]};
+ for(const e of h.data.events.filter(e=>e.action_id==='partial')){e.action='build';e.arguments=args;if(e.kind==='action_failed'){e.kind='action_result';delete e.error;e.result={placed:[{position:args.blocks[0],actual:'cobblestone',verified:true}],failed_at:args.blocks[1],error:'Server refused to place cobblestone at (2, 64, 1): the block is still air'};}}
+ const end=h.data.events.find(e=>e.action_id==='partial'&&e.kind==='action_result');
+ const later={id:'later',kind:'action_result',action:'place',time:'2026-11-11T01:00:03Z',arguments:{...args.blocks[1],item:'cobblestone'},result:{position:args.blocks[1],actual:'cobblestone',verified:true}};
+ if(mode!=='later_missing')h.data.events.push(later);
+ if(mode==='later_earlier')later.time='2026-11-11T01:00:00Z';
+ if(mode==='unknown')end.result.error='Server did not answer';
+ if(mode==='prefix')end.result.placed[0].verified=false;
+ if(mode==='timeout')end.timeout=true;
+ input.reviews[1].outcome=mode==='no_effect'?'no_effect':'settled_partial_build';input.reviews[1].receipt_sha256=digest(end);
+ const before=structuredClone(h.data);
+ if(mode==='confirmed'){assert.equal(review(h,cfg,input,observation).activity_allowed,true);assert.equal(policy.canContinue(h,cfg),false);assert.deepEqual(h.data.events,before.events);assert.deepEqual(h.data.task,before.task);assert.equal(policy.allowed(new WorkshopState(h.file),cfg),true);}
+ else{assert.throws(()=>review(h,cfg,input,observation));assert.deepEqual(h.data,before);}
+});

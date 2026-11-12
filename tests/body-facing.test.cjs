@@ -13,9 +13,9 @@ function fixture(item,properties={facing:'south'},actual=item,refusal=null){
  bot.pathfinder={setGoal(){}};bot.inventory={items:()=>[{name:item,count:1}]};
  bot.equip=async i=>{bot.heldItem=i;};bot.lookAt=async p=>{look=p.minus(bot.entity.position);};
  bot.blockAt=p=>({name:p.equals(target)?placed:'stone',position:p,boundingBox:p.equals(target)?'empty':'block',getProperties:()=>p.equals(target)?properties:{}});
- const send=()=>{sends++;if(refusal)throw Error(refusal);placed=actual;bot.emit('blockUpdate',null,bot.blockAt(target));};
- bot._placeBlockWithOptions=async(block,normal,o)=>{assert.ok(block.position.plus(normal).equals(target));options=o;send();};
- bot.placeBlock=async()=>{ordinary++;send();};
+ const send=()=>{sends++;if(typeof refusal==='function')return refusal(bot,target);if(refusal)throw Error(refusal);placed=actual;bot.emit('blockUpdate',null,bot.blockAt(target));};
+ bot._placeBlockWithOptions=async(block,normal,o)=>{assert.ok(block.position.plus(normal).equals(target));options=o;return send();};
+ bot.placeBlock=async()=>{ordinary++;return send();};
  const spatial=realRequire('./spatial.cjs');
  const context=vm.createContext({require:name=>{
   if(name==='mineflayer')return {createBot:()=>bot};
@@ -100,4 +100,18 @@ test('redstone item verifies its placed wire block without accepting missing or 
    assert.equal(f.observation().sends,1);
   }finally{f.close();}
  }
+});
+for(const confirmed of [true,false])test('actual partial build '+(confirmed?'retains verified prefix and settled refusal':'retains unknown missing acknowledgment'),async()=>{
+ const f=fixture('cobblestone',{});try{
+  const placed=new Map(),first=new Vec3(0,64,0),second=new Vec3(1,64,0);
+  f.bot.blockAt=p=>({position:p,type:p.y===63||placed.has(p.toString())?1:0,name:p.y===63||placed.has(p.toString())?'cobblestone':'air',boundingBox:p.y===63?'block':'empty',getProperties:()=>({})});
+  let attempts=0;
+  f.bot.placeBlock=async(support,normal)=>{attempts++;const dest=support.position.plus(normal);if(dest.equals(first)){placed.set(dest.toString(),true);return;}if(confirmed){f.bot.emit(`blockUpdate:${support.position}`,null,support);f.bot.emit(`blockUpdate:${dest}`,null,f.bot.blockAt(dest));}throw Error(`Server refused to place cobblestone at ${dest}: the block is still air`);};
+  const before=JSON.stringify(f.history.task());
+  const result=await f.operate('build',{item:'cobblestone',support_face:'up',blocks:[first,second,{x:2,y:64,z:0}]});
+  assert.equal(attempts,2);assert.equal(result.placed.length,1);assert.equal(result.placed[0].verified,true);assert.equal(result.failed_at.x,1);assert.match(result.error,/Server refused/);
+  assert.equal(f.history.data.turn.actions[0].status,confirmed?'failed_settled':'uncertain');
+  assert.equal(!!result.settled_failure,confirmed);assert.equal(JSON.stringify(f.history.task()),before);
+  assert.equal(f.bot.eventNames().filter(n=>String(n).startsWith('blockUpdate:')).length,0);
+ }finally{f.close();}
 });
