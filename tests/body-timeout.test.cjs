@@ -11,7 +11,7 @@ function fixture({ignoreCancel=false,cleanupMs=0,timeoutMs=10}={}){
  const home=fs.mkdtempSync(path.join(os.tmpdir(),'body-timeout-'));
  const config=path.join(home,'config.json');fs.writeFileSync(config,JSON.stringify({username:'Fixture',token:'fixture'}));
  const bot=new EventEmitter();bot.username='Fixture';bot.entity={position:new Vec3(.5,64,.5)};bot.players={};bot.entities={1:{id:1,uuid:'fixture-target',position:new Vec3(2,64,0)}};
- bot.loadPlugin=()=>{};bot.clearControlStates=()=>{};bot.stopDigging=()=>{};
+ bot.loadPlugin=()=>{};bot.blockAt=()=>null;bot.clearControlStates=()=>{};bot.stopDigging=()=>{};
  let rejectMovement,releaseMovement,starts=0;
  bot.pathfinder={setGoal(goal){if(goal===null&&!ignoreCancel&&rejectMovement)setTimeout(()=>rejectMovement(Error('Movement cancelled')),cleanupMs);}};
  const actualSpatial=realRequire('./spatial.cjs');

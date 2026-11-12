@@ -83,7 +83,7 @@ function fixture(configOverride={},walkingOverride=null,bridgeOverride=null){
  fs.writeFileSync(config,JSON.stringify({username:'Builder',token:'fixture',...configOverride}));
  const now=Date.now(),task={id:'accepted',status:'running',deadline:now+3600000,turns:120,max_turns:135,progress:[]};
  fs.writeFileSync(path.join(home,'workshop.json'),JSON.stringify({task,events:[],turn:null,inbox:[]}));
- const bot=new EventEmitter();Object.assign(bot,{username:'Builder',players:{},loadPlugin(){},pathfinder:{setGoal(){}},clearControlStates(){},stopDigging(){},entity:{position:{clone:()=>({x:0,y:64,z:0})}},health:20});
+ const bot=new EventEmitter();Object.assign(bot,{username:'Builder',players:{},loadPlugin(){},blockAt:()=>null,pathfinder:{setGoal(){}},clearControlStates(){},stopDigging(){},entity:{position:{clone:()=>({x:0,y:64,z:0})}},health:20});
  let handle,current=now;const timers=new Set();
  class Clock extends Date{static now(){return current;}}
  const ctx=vm.createContext({require:n=>n==='./watch-bridge.cjs'&&bridgeOverride?bridgeOverride:n==='./walking.cjs'&&walkingOverride?{plan:()=>({reachable:true}),...walkingOverride}:n==='mineflayer'?{createBot:()=>bot}:n==='node:http'?{createServer:h=>{handle=h;return {listen(){},close(){}};}}:realRequire(n),
@@ -95,6 +95,29 @@ function fixture(configOverride={},walkingOverride=null,bridgeOverride=null){
   let status,text;await handle(req,{writeHead:x=>status=x,end:x=>text=x});assert.equal(status,code,text);return text?JSON.parse(text):null;
  },advance(ms){current+=ms;for(const t of [...timers])if(t.at<=current){timers.delete(t);t.fn();}},close(){fs.rmSync(home,{recursive:true,force:true});}};
 }
+test('exact blocked destination is a no-effect refusal and changed clearance permits fresh movement',async()=>{
+ for(const obstruction of ['feet','head'])for(const mode of ['normal','walk_only']){
+  let moves=0,searches=0,solid=true;const f=fixture({}, {move:async()=>{moves++;return {reached:true};}});try{
+   const {Vec3}=realRequire('vec3');f.bot.entity.position=new Vec3(0,64,0);
+   f.bot.pathfinder.goto=async()=>{searches++;throw Error('unexpected path search');};
+   f.bot.blockAt=p=>({position:p,name:solid&&p.y===(obstruction==='feet'?63:64)?'dirt':'air',shapes:solid&&p.y===(obstruction==='feet'?63:64)?[[0,0,0,1,1,1]]:[]});
+   await f.request('/turn',{renewable_lease:true,continuation:true});const before=JSON.stringify(f.history.data.turn.actions);
+   await assert.rejects(f.operate('move',{x:1,y:63,z:0,range:0,mode}),/Exact destination.*feet.*supporting block/);
+   assert.equal(moves,0);assert.equal(searches,0);assert.equal(JSON.stringify(f.history.data.turn.actions),before);
+   const refusal=f.history.data.events.findLast(e=>e.kind==='action_preflight_refused');assert.equal(refusal.effect_attempted,false);
+   solid=false;await f.operate('move',{x:1,y:63,z:0,range:0,mode:'walk_only'});assert.equal(moves,1);
+  }finally{f.close();}
+ }
+});
+test('nearby range and partial or unavailable destination geometry are not falsely rejected as full obstructions',async()=>{
+ for(const geometry of ['nearby','partial','unknown']){
+  let moves=0;const f=fixture({}, {move:async()=>{moves++;return {reached:true};}});try{
+   const {Vec3}=realRequire('vec3');f.bot.entity.position=new Vec3(0,64,0);
+   f.bot.blockAt=p=>geometry==='unknown'?null:{position:p,name:'stone',shapes:geometry==='partial'?[[0,0,0,1,.5,1]]:[[0,0,0,1,1,1]]};
+   await f.request('/turn',{renewable_lease:true,continuation:true});await f.operate('move',{x:1,y:64,z:0,range:geometry==='nearby'?1:0,mode:'walk_only'});assert.equal(moves,1);
+  }finally{f.close();}
+ }
+});
 test('actual peer reply can schedule existing work and deliberately speak, but cannot execute effects until next work turn',async()=>{
  const f=fixture({incoming_chat_only:true,human_engagement:{enabled:true},agent_dialogue:true,bot_names:['Lead'],human_task_intake:{enabled:true,delegation:{enabled:true}}});try{
   const h=f.history;Object.assign(h.data.task,{status:'waiting',authority:{kind:'human_game_request'},authority_revision:1,wait_for:'Lead installs glass',started_at:new Date(Date.now()-10000).toISOString()});
