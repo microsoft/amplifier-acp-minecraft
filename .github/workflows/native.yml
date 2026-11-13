@@ -28,6 +28,11 @@ jobs:
           repository: microsoft/amplifier-constellation
           ref: 268d1d565435d785c2048664b1ba64eb8128cdec
           path: native-shared
+      - uses: actions/checkout@v4
+        with:
+          repository: microsoft/amplifier-constellation-instance
+          ref: 39807674755dff153de372b3311e08a006ba7174
+          path: instance-fixture
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
@@ -99,6 +104,12 @@ jobs:
       - name: Verify fresh setup and full archive staging (Windows)
         if: runner.os == 'Windows'
         run: bundle/python/python.exe -I ops/native/verify_setup.py --bundle bundle --source . --shared native-shared --archive minecraft-${{ matrix.target }}.tar.gz --receipt native-setup-result.json
+      - name: Verify actual Worker admission and gate ownership (Unix)
+        if: runner.os != 'Windows'
+        run: bundle/python/bin/python3 -I ops/native/verify_worker.py --bundle bundle --source . --shared native-shared --instance instance-fixture --receipt native-worker-result.json
+      - name: Verify actual Worker admission and gate ownership (Windows)
+        if: runner.os == 'Windows'
+        run: bundle/python/python.exe -I ops/native/verify_worker.py --bundle bundle --source . --shared native-shared --instance instance-fixture --receipt native-worker-result.json
       - name: Verify detached Connect parity (Unix)
         if: runner.os != 'Windows'
         run: bundle/python/bin/python3 -I ops/native/verify_connect.py --bundle bundle --source . --shared native-shared --output native-connect-result
@@ -137,6 +148,7 @@ jobs:
             native-driver-inspection.json
             native-library-inspection.json
             native-setup-result.json
+            native-worker-result.json
             native-connect-result/
             native-retention-result.json
             native-tree-recovery-result.json
@@ -154,6 +166,7 @@ jobs:
             native-driver-inspection.json
             native-library-inspection.json
             native-setup-result.json
+            native-worker-result.json
             native-connect-result/
             native-retention-result.json
             native-tree-recovery-result.json
