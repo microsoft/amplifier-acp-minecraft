@@ -62,7 +62,7 @@ jobs:
         shell: bash
         run: |
           python - <<'PYCODE'
-          import os, pathlib, platform, subprocess, sys
+          import os, pathlib, platform, shutil, subprocess, sys
           shared=pathlib.Path('native-shared').resolve()
           target=pathlib.Path('target')/os.environ.get('CARGO_BUILD_TARGET','')/'release'
           suffix='.exe' if os.name=='nt' else ''
@@ -76,6 +76,9 @@ jobs:
               if os.name=='nt':
                   fixture=shared/'crates/native-platform'/target/'examples'/('windows_service_fixture'+suffix)
                   output.write('NATIVE_SERVICE_FIXTURE='+str(fixture)+'\n')
+                  saved=pathlib.Path('qualification-fixtures');saved.mkdir()
+                  shutil.copyfile(fixture,saved/fixture.name)
+                  subprocess.run([sys.executable,str(shared/'tests/native_python/inspect_driver.py'),'--driver',str(saved/fixture.name),'--output',str(saved/'inspection.json')],check=True)
           PYCODE
       - name: Test package validation
         run: python -m unittest discover -s ops/native -p test_*.py -v
@@ -163,6 +166,7 @@ jobs:
             native-result.json
             bundle/manifest.json
             bundle/python-packages.json
+            qualification-fixtures/
           retention-days: 14
       - uses: actions/upload-artifact@v4
         with:
@@ -181,4 +185,5 @@ jobs:
             native-lifecycle-result.json
             native-result.json
             bundle/manifest.json
+            qualification-fixtures/
           retention-days: 7
