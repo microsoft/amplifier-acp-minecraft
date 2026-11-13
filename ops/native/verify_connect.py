@@ -130,7 +130,11 @@ def run_case(spec, destination, lose_ack, worker=None):
     # initialize_root still validates rather than repairing production parents.
     sys.path.insert(0,str(Path(spec['shared'])/'tests/native_python'))
     from test_driver import protect
-    temporary = Path(tempfile.mkdtemp(prefix='connect-abi-', dir=destination)).resolve()
+    # Hosted Windows checkouts may have broad Authenticated Users ancestry.
+    # Use the same per-user temporary parent as the actual Worker fixture;
+    # never alter the checkout's inherited ACL to make enrollment pass.
+    temporary = Path(tempfile.mkdtemp(prefix='connect-abi-',
+        dir=None if os.name=='nt' else destination)).resolve()
     protect(temporary)
     root = temporary/'installation'
     driver_input, library = Path(spec['driver']), Path(spec['library'])
