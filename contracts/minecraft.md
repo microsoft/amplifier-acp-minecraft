@@ -3,6 +3,8 @@
 For people operating ACP players and experiences using their game tools and
 context. The promise: an agent participates through its actual player, and the
 adapter makes the meaning of game input, effects and observations dependable.
+This agreement covers the Minecraft [Connection](https://github.com/microsoft/amplifier-constellation/blob/main/contracts/connection.md)
+and its world [Tools](https://github.com/microsoft/amplifier-constellation/blob/main/contracts/tool.md).
 
 **Example:** Ask a player to carry supplies to a build site. The player finds a
 route, uses its inventory and reports the observed handoff. A voice client can
@@ -57,14 +59,14 @@ inspect that result without turning private direction into public game chat.
 ## Shared promises and technical detail
 
 [Composition](https://github.com/microsoft/amplifier-constellation/blob/main/contracts/composition.md)
-owns service and record ownership;
+defines how boundaries compose and records retain their owners;
 [interaction](https://github.com/microsoft/amplifier-constellation/blob/main/contracts/interaction.md)
 owns audience, speech and participation meaning;
 [work continuity](https://github.com/microsoft/amplifier-constellation/blob/main/contracts/work-continuity.md)
-owns input and recovery meaning; and
-[engine compatibility](https://github.com/microsoft/amplifier-constellation/blob/main/contracts/engine-compatibility.md)
-owns protocol and engine choice, including optional integrations and fallback.
-These shared promises are not redefined here.
+owns input and recovery meaning. These shared promises are not redefined here.
+The [ACP compatibility profile](https://github.com/microsoft/amplifier-constellation/blob/main/contracts/engine-compatibility.md)
+defines the applicable protocol, optional capabilities and fallback; it does not
+prescribe the agent's internal architecture.
 
 The [interface map](../docs/interfaces.md) locates schemas, configuration, setup
 and executable checks, including capability discovery for the installed adapter.
@@ -76,6 +78,8 @@ Reconnect two saved worlds without mixing bindings or changing work. Compare
 compact context with full evidence, and test the ordinary ACP fallback. Mechanical
 fixtures use disposable worlds; fresh human play checks conversation and usefulness.
 
-**Left open:** Building style, route and resource choices, agent reasoning strategy,
-and product UX. Test new mechanics and server translations against their actual
-world behavior; a protocol connection alone does not establish support.
+**Left open:** Building style, route and resource choices, product UX, and
+[Agent Instance internals](https://github.com/microsoft/amplifier-constellation/blob/main/contracts/agent-instance.md),
+including engines, workers, memory and scheduling behind the supported interfaces.
+Test new mechanics and server translations against their actual world behavior;
+a protocol connection alone does not establish support.

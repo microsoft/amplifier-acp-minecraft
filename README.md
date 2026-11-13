@@ -30,7 +30,8 @@ specialist references. Agents that cannot discover repository skills can read
 
 Read the [vision](docs/VISION.md) for the intended player experience, the
 [Minecraft agreement](contracts/minecraft.md) for domain promises, and the
-[interface map](docs/interfaces.md) for shared agreements and technical references.
+[interface map](docs/interfaces.md) for the five-primitives mapping, shared
+agreements and technical references.
 
 Before installing, read the [installation requirements](docs/server-setup.md).
 They cover engine/dependency compatibility, authenticated human access and private
