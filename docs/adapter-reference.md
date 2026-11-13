@@ -10,8 +10,9 @@ new policies are disabled; source updates never opt an installation into them.
 The [interface map](interfaces.md) links this component's definitions to the
 shared agreements. Minecraft owns the shared world and public game
 conversation. Mineflayer supplies the body; the adapter supplies game tools and
-receipts through HTTP MCP during standard ACP session setup. Instance is optional;
-this reference's supported fallback does not require its management API.
+receipts through HTTP MCP during standard ACP session setup. The Constellation
+Instance host is optional; this reference's supported fallback does not require
+its management API.
 
 For optional installation-owned source/dependency updates, a separate pure task
 helper, and safe participation in shared component updates, see
@@ -431,7 +432,7 @@ missing echoes, changed sources and interrupted turns leave the input pending.
 Original messages and speech evidence remain stored; a lost terminal reply or
 restart cannot create another response or replay effects.
 
-For a same-machine [Agent Instance](https://github.com/microsoft/amplifier-constellation-instance):
+For a same-machine [Constellation Instance host](https://github.com/microsoft/amplifier-constellation-instance):
 
 ```sh
 python3 ops/register_context.py --home /private/your-player --agent-home /private/agent-instance
@@ -607,6 +608,9 @@ and the [Model Context Protocol SDK](https://github.com/modelcontextprotocol/typ
 The Minecraft name and game are owned by their respective rights holders.
 
 ## Contributing
+
+Invited collaborators: follow [Join the work](https://github.com/microsoft/amplifier-constellation#join-the-work)
+within your agreed access and scope. The notice below covers general public intake.
 
 > [!NOTE]
 > This project is not currently accepting external contributions, but we're actively working toward opening this up. We value community input and look forward to collaborating in the future. For now, feel free to fork and experiment!
