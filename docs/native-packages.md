@@ -39,12 +39,18 @@ Screenshot assets follow the renderer's existing admitted versions in
 version's complete textures and block states plus generic viewer assets, and
 omits version-specific rendering assets for versions the connector rejects.
 Gameplay protocol and `minecraft-data` support are unchanged. The complete
-resulting archive still passes protected extraction, inventory checks and the
+resulting archive must pass protected extraction, inventory checks and the
 existing 600-second provider staging budget; this is not a partial extraction.
 After dependencies and renderer assets are built, the package omits Node's
 build-only npm/Corepack tools and C/C++ headers. The pinned Node executable and
 license stay byte-identical; consumer source updates use complete archives and
 do not compile or run npm on the installation.
+
+During protected staging, payloads up to 64 KiB use the existing native
+create-only writer once with their complete bytes. Larger files retain private
+empty-file allocation followed by bounded streaming and flush. Both paths keep
+collision refusal and the final exact inventory check; an uncertain write never
+falls back to another publication or a retry.
 
 Run `minecraft doctor` (`minecraft.cmd doctor` on Windows) from the extracted
 package for read-only verification. The fixed `body --home <absolute-path>` and

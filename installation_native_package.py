@@ -44,8 +44,26 @@ def create_payload_file(path, stream, mode=0o600):
     owner=current_owner_io()
     if owner is None:raise ContinuityError('Private payload creation needs owner scope')
     name,relative=owner.relative(path)
+    # Most package entries are small. The existing protected create operation
+    # can publish them once, avoiding an empty durable write followed by another
+    # open/write/flush. Stay well below the fixed JSON request bound. Short reads
+    # are not EOF, and failure/unknown never falls back to a second publication.
+    prefix=bytearray()
+    while len(prefix)<=65536:
+        block=stream.read(65537-len(prefix))
+        if not block:break
+        prefix.extend(block)
+    if len(prefix)<=65536:
+        owner.session.private_write(name,relative,bytes(prefix),create_only=True)
+        if os.name!='nt':path.chmod(0o700 if mode & 0o111 else 0o600)
+        return
+    class Prefixed:
+        def __init__(self):self.prefix=bytes(prefix)
+        def read(self,amount):
+            part,self.prefix=self.prefix[:amount],self.prefix[amount:]
+            return part+stream.read(amount-len(part)) if len(part)<amount else part
     owner.session.private_write(name,relative,b'',create_only=True)
-    fill_created_payload_file(path,stream,mode)
+    fill_created_payload_file(path,Prefixed(),mode)
 
 
 def fill_created_payload_file(path,stream,mode):

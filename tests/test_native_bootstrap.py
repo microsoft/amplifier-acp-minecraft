@@ -142,4 +142,38 @@ class BootstrapTests(unittest.TestCase):
             with self.assertRaises(FileExistsError):create_payload_file(destination,io.BytesIO(b'overwrite'))
         self.assertEqual(destination.stat().st_size,len(data))
 
+    def test_small_payload_uses_one_protected_create_with_complete_bytes(self):
+        state=self.base/'state';home=self.base/'home';state.mkdir();home.mkdir()
+        config=self.base/'native.json';config.write_text(json.dumps({'roots':{'state':str(state),'home':str(home)}}))
+        session=self.module.NativeSession(None,None,config);cfg={'state':str(state),'home':str(home)}
+        for size in (0,13,65536):
+            data=b'x'*size;destination=state/str(size)
+            with session.lock('installation'),owner_io(NativeIO(cfg,session)),patch.object(session,'private_write',wraps=session.private_write) as write:
+                create_payload_file(destination,io.BytesIO(data),0o755)
+                write.assert_called_once_with('state',str(size),data,create_only=True)
+                self.assertEqual(destination.read_bytes(),data)
+                with self.assertRaises(FileExistsError):create_payload_file(destination,io.BytesIO(b'replace'))
+                self.assertEqual(destination.read_bytes(),data)
+
+    def test_short_reads_do_not_truncate_either_payload_route(self):
+        class Short(io.BytesIO):
+            def read(self,n=-1):return super().read(min(n,731))
+        state=self.base/'state';home=self.base/'home';state.mkdir();home.mkdir()
+        config=self.base/'native.json';config.write_text(json.dumps({'roots':{'state':str(state),'home':str(home)}}))
+        session=self.module.NativeSession(None,None,config);cfg={'state':str(state),'home':str(home)}
+        with session.lock('installation'),owner_io(NativeIO(cfg,session)):
+            for size in (65536,65537,1048577):
+                data=bytes(range(251))*(size//251)+b'z'*(size%251)
+                destination=state/str(size);create_payload_file(destination,Short(data))
+                self.assertEqual(destination.read_bytes(),data)
+
+    def test_small_create_unknown_never_falls_back_to_direct_write(self):
+        state=self.base/'state';home=self.base/'home';state.mkdir();home.mkdir()
+        config=self.base/'native.json';config.write_text(json.dumps({'roots':{'state':str(state),'home':str(home)}}))
+        session=self.module.NativeSession(None,None,config);cfg={'state':str(state),'home':str(home)}
+        with session.lock('installation'),owner_io(NativeIO(cfg,session)),patch.object(session,'private_write',side_effect=RuntimeError('unknown publication')) as write,patch('installation_native_package.fill_created_payload_file') as fill:
+            with self.assertRaisesRegex(RuntimeError,'unknown publication'):create_payload_file(state/'file',io.BytesIO(b'payload'))
+            write.assert_called_once_with('state','file',b'payload',create_only=True)
+            fill.assert_not_called()
+
 if __name__=='__main__':unittest.main()
