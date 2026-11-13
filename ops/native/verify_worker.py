@@ -44,7 +44,7 @@ def main():
  spec={'app':str(bundle/'app'),'source':str(source),'shared':str(shared),'facade':str(Path(constellation_native.__file__).resolve().parents[1])};load(spec)
  from constellation_native import initialize_root,initialize_config,NativeSession
  from installation_native import native_scope,NativeIO
- from installation_guard import installation_lock,durable_write
+ from installation_guard import installation_lock,durable_write,owner_io
  from test_native_service_evidence import NativeFixture
  from test_driver import protect
  pin=json.loads((shared/'tests/native_python/fixtures/worker_source.json').read_bytes())
@@ -57,14 +57,6 @@ def main():
    base=Path(tmp).resolve();protect(base);home=base/'home';state=base/'state';wr=base/'worker'
    for p in (home,state,wr):initialize_root(driver,p)
    manager={'linux':'systemd_user','darwin':'launch_agent','win32':'scheduled_task'}[sys.platform]
-   fixture=NativeFixture(home,manager)
-   # Native service data is a named synthetic topology, not OS state proof.
-   for index,v in enumerate(fixture.units.values()):
-    v['application']={'status':'running','identity':{'pid':500+index,'generation':'original-child'},
-       'supervisor':{'pid':400+index,'generation':'original-parent'},
-       'manager_process':v['processes'][0],'profile_sha256':'a'*64}
-   if scenario.endswith('disabled'):fixture.units[scenario.split('-')[0]].update(start_allowed=False,enabled=False)
-   else:fixture.body.update(busy=True,turn_active=True)
    native_config=state/'native.json';owner=state/'owner.json'
    cfg={'home':str(home),'state':str(state),'native_platform':{'version':1,'data_journals':1,'driver':str(driver),'library':str(library),
      'library_sha256':hashlib.sha256(library.read_bytes()).hexdigest(),'config':str(native_config),'python':sys.executable,'services':{'body':'body','controller':'controller'}}}
@@ -72,7 +64,17 @@ def main():
       'services':{k:{'manager':manager,'name':'unused-worker-fixture-'+k+('.service' if sys.platform=='linux' else ''),'definition_path':None} for k in ('body','controller')}})
    driver=copy_fixture_driver(driver,state,native_config);cfg['native_platform']['driver']=str(driver)
    with NativeSession(library,driver,native_config) as session,session.lock('installation'):
-    NativeIO(cfg,session).prepare_data_journal_directories()
+    io=NativeIO(cfg,session);io.prepare_data_journal_directories()
+    # Seed the synthetic baseline through the actual protected writer as well;
+    # the legacy POSIX fixture writer is not a Windows storage implementation.
+    with owner_io(io):fixture=NativeFixture(home,manager)
+   # Native service data is a named synthetic topology, not OS state proof.
+   for index,v in enumerate(fixture.units.values()):
+    v['application']={'status':'running','identity':{'pid':500+index,'generation':'original-child'},
+       'supervisor':{'pid':400+index,'generation':'original-parent'},
+       'manager_process':v['processes'][0],'profile_sha256':'a'*64}
+   if scenario.endswith('disabled'):fixture.units[scenario.split('-')[0]].update(start_allowed=False,enabled=False)
+   else:fixture.body.update(busy=True,turn_active=True)
    # Fixed fixture inputs only; actual participant writes use native storage.
    owner.write_text(json.dumps(cfg));protect(owner)
    for p in home.rglob('*'):protect(p)

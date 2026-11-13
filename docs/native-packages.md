@@ -77,10 +77,11 @@ or task conversion is introduced.
 ## Native lifecycle integration
 
 The candidate package can include the separately reviewed Constellation native
-installation driver and its Python binding. Build with both `--native-shared`
-(the exact checkout pinned in `ops/native/shared-driver-lock.json`) and
-`--native-driver` (the binary built for this target). The package records both
-source and binary identity. This is an explicit backend; existing Linux
+installation driver and its Python binding. Supply `--native-shared`
+(the exact checkout pinned in `ops/native/shared-driver-lock.json`),
+`--native-driver`, and `--native-library` (the matched release-mode executable
+and caller-process library built for this target). The package records source
+and both binary identities. This is an explicit backend; existing Linux
 installations do not switch merely because it is present.
 
 Setup uses `installation_native_setup.profiles` to describe fixed body,
