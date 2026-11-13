@@ -26,4 +26,5 @@ then test them together.
 
 This applies the [Constellation vision](https://github.com/microsoft/amplifier-constellation/blob/main/docs/VISION.md)
 to a shared game world. The [Minecraft agreement](../contracts/minecraft.md) holds
-our domain promises; the [interface map](interfaces.md) leads to technical detail.
+our domain promises; the [interface map](interfaces.md) connects this experience
+to the five primitives and technical detail.

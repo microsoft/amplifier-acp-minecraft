@@ -7,16 +7,23 @@ it does not introduce another contract or a release inventory.
 ## Agreements
 
 The [Minecraft agreement](../contracts/minecraft.md) holds the domain promises.
-The six shared agreements have their own homes:
+This adapter supplies a [Connection](https://github.com/microsoft/amplifier-constellation/blob/main/contracts/connection.md)
+into Minecraft's [Conversations](https://github.com/microsoft/amplifier-constellation/blob/main/contracts/conversation.md)
+and game [Experience](https://github.com/microsoft/amplifier-constellation/blob/main/contracts/experience.md),
+and exposes world [Tools](https://github.com/microsoft/amplifier-constellation/blob/main/contracts/tool.md)
+to [Agent Instances](https://github.com/microsoft/amplifier-constellation/blob/main/contracts/agent-instance.md).
+These are roles, not a requirement for separate services.
+
+Shared promises and the applicable installation and ACP profiles stay in the umbrella:
 
 | When the question is about… | Read |
 | --- | --- |
-| Service roles, record ownership or how parts connect | [Composition](https://github.com/microsoft/amplifier-constellation/blob/main/contracts/composition.md) |
+| Composing boundaries, record ownership or how parts connect | [Composition](https://github.com/microsoft/amplifier-constellation/blob/main/contracts/composition.md) |
 | Audience, participation, speech or useful result return | [Interaction](https://github.com/microsoft/amplifier-constellation/blob/main/contracts/interaction.md) |
 | Accepting, amending, delegating or stopping work | [Work authority](https://github.com/microsoft/amplifier-constellation/blob/main/contracts/work-authority.md) |
 | New input, planning, context or uncertain recovery | [Work continuity](https://github.com/microsoft/amplifier-constellation/blob/main/contracts/work-continuity.md) |
-| Setup, saved connections, updates or restoration | [Installations](https://github.com/microsoft/amplifier-constellation/blob/main/contracts/installations.md) |
-| ACP, SDKs, optional capabilities or engine choice | [Engine compatibility](https://github.com/microsoft/amplifier-constellation/blob/main/contracts/engine-compatibility.md) |
+| Setup, saved connections, updates or restoration | [Installation profile](https://github.com/microsoft/amplifier-constellation/blob/main/contracts/installations.md) |
+| ACP, SDKs, optional capabilities or compatible agent endpoints | [ACP compatibility profile](https://github.com/microsoft/amplifier-constellation/blob/main/contracts/engine-compatibility.md) |
 
 ## Technical references
 
