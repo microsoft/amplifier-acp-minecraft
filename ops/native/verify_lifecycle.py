@@ -6,6 +6,8 @@ import argparse
 parser=argparse.ArgumentParser();parser.add_argument('--source',type=pathlib.Path,required=True);parser.add_argument('--bundle',type=pathlib.Path,required=True);parser.add_argument('--shared',type=pathlib.Path,required=True);parser.add_argument('--driver',type=pathlib.Path,required=True);parser.add_argument('--receipt',type=pathlib.Path,required=True);args=parser.parse_args()
 SOURCE=args.source.resolve();BUNDLE=args.bundle.resolve();SHARED=args.shared.resolve();DRIVER=args.driver.resolve()
 manifest=json.loads((BUNDLE/'manifest.json').read_text())
+shared_pin=json.loads((SOURCE/'ops/native/shared-driver-lock.json').read_bytes())
+assert shared_pin['commit']==manifest['native_platform']['source']
 LIBRARY=BUNDLE/manifest['commands']['native_library']
 sys.path[:0]=[str(BUNDLE/'app'),str(SHARED/'support/python'),str(SHARED/'tests/native_python')]
 os.environ['CONSTELLATION_NATIVE_DRIVER']=str(DRIVER)
@@ -88,7 +90,8 @@ if os.name=='nt':
  os.environ['CONSTELLATION_INSTALLATION_SMOKE']='1'
 
 report={'source':manifest['source_commit'],'bundle_target':manifest['target'],
- 'shared_source':subprocess.check_output(['git','rev-parse','HEAD'],cwd=SHARED,text=True).strip(),
+ 'shared_source':shared_pin['commit'],
+ 'shared_source_provenance':'Fixed component lock plus package manifest; exact shared fixture checkout/archive supplied by CI/consumer kit',
  'driver_sha256':hashlib.sha256(DRIVER.read_bytes()).hexdigest(),'library_sha256':hashlib.sha256(LIBRARY.read_bytes()).hexdigest(),'session_boundary':'NativeSession ABI1',
  'controller_admission':'actual update_admission.held with NativeSession/data journals; idle synthetic controller',
  'production_operations':False,'model_prompts':0,'actual_os':sys.platform,'cycles':[],
