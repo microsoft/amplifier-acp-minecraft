@@ -117,6 +117,34 @@ all target install/update/rollback journeys. Preserve separately required tree
 observation and data-journal capabilities when integrating shared revisions;
 do not replace their acceptance tests with a library-load test.
 
+Optional `native_platform.data_journals: 1` selects the shared data reader and
+replacement writer together. Enrollment requires exact `private_data_read: 1`
+and `private_data_publication: 1` advertisements and both `storage.read_data`
+and `storage.write_data` operations. This option is not inferred from Windows
+or enabled by upgrading a binary. Qualify the paired reader/writer and combined
+driver before enrolling an installation.
+
+The fixed selection covers direct JSON children of owner-state `transactions`,
+`connections`, `provider-receipts`, `native-source-receipts`, and
+`artifact-receipts`, plus `active.json` and `cleanup-last.json`. In the game home
+it covers `app-source.json`, the installation gate/controller acknowledgment,
+and `installation-connections/state.json`. Full workshop history, credentials,
+driver configuration, package manifests/fingerprints, and independently owned
+updater plans retain their separate read/publication paths. Reference collection
+hashes and parses the same read snapshot.
+
+Selected journals have an explicit 1 MiB serialized limit: oversized reads
+refuse, and oversized writes refuse before directory creation or publication.
+Audit existing and projected receipt sizes, including captured continuity
+baselines, before enrollment. No truncation, empty-state fallback, or automatic
+switch back to strict I/O is allowed. Absence remains `FileNotFoundError`; empty
+or invalid JSON, owner/refusal/read errors, and lost transport remain errors.
+Unwind before fresh read-only reconciliation. Executable transport loss releases
+its locks; an in-process poisoned session retains ownership until unwind. Neither
+outcome permits automatic republishing.
+The data reader permits Windows delete sharing; other processes reading these
+journals still require their own compatible-handle qualification.
+
 Native source updates use the stable channel's exact target archive, published
 digest and source tree. They verify the official SDK's immutable provenance and
 stage privately before stopping services. They do not run Git, npm or pip on
