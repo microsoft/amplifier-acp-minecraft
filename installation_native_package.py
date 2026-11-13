@@ -25,9 +25,13 @@ def target():
 
 def private_directory(path):
     owner=current_owner_io()
-    if owner is None or not hasattr(owner,'mkdir'):
+    if owner is None or not hasattr(owner,'session'):
         raise ContinuityError('Native package staging requires its protected owner storage scope')
-    owner.mkdir(path)
+    # Package parents are created in depth order. The shared operation already
+    # validates the complete enrolled path and parent; do not repeatedly ask it
+    # to create every ancestor for every one of thousands of child directories.
+    root,relative=owner.relative(path)
+    owner.session.private_dir(root,relative)
 
 
 

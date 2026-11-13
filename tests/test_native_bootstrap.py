@@ -103,6 +103,16 @@ class BootstrapTests(unittest.TestCase):
         with self.assertRaises(ContinuityError):self.run_setup()
         self.assertEqual(receipt.read_bytes(),before)
         self.assertEqual(len([c for c in self.calls if c==('register','controller')]),1)
+    def test_interrupted_private_copy_retains_unpublished_root_without_retry(self):
+        with patch('installation_native_bootstrap.fill_created_payload_file',side_effect=OSError('copy interrupted')):
+            with self.assertRaisesRegex(OSError,'copy interrupted'):self.run_setup()
+        self.assertTrue(all(s.bootstrap_cli for s in self.sessions))
+        self.assertFalse(any(c[0]=='register' for c in self.calls))
+        self.assertFalse((self.root/'state/owner.json').exists())
+        before=(self.root/'state/setup.json').read_bytes();count=len(self.calls)
+        with self.assertRaises(ContinuityError):self.run_setup()
+        self.assertEqual((self.root/'state/setup.json').read_bytes(),before)
+        self.assertEqual(len(self.calls),count)
     def test_existing_empty_root_is_not_unused_proof(self):
         self.root.mkdir()
         with self.assertRaises(ContinuityError):self.run_setup()
