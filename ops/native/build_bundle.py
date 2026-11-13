@@ -84,7 +84,7 @@ def inventory(root):
 
 
 def select_viewer_assets(app, versions):
-    """Keep complete assets for the renderer's admitted versions only.
+    """Keep admitted game assets and the locked viewer's entity dependency.
 
     This changes the fresh build output, never an installed dependency tree.
     Gameplay minecraft-data/protocol versions and generic viewer assets remain.
@@ -93,21 +93,31 @@ def select_viewer_assets(app, versions):
             or any(not isinstance(v,str) or not re.fullmatch(r'\d+\.\d+(?:\.\d+)?',v) for v in versions)):
         raise ValueError('Explicit screenshot versions required')
     public=app/'node_modules/prismarine-viewer/public'
+    # prismarine-viewer 1.33.0 constructs named entity models with 1.16.4,
+    # independently of the scene version. Its models also reference item/misc
+    # textures, so retain that complete texture directory, not only entity/.
+    # This does not admit 1.16.4 scenes, its block atlas or block-state data.
+    entity_texture_versions=['1.16.4']
     required=[public/'textures'/v for v in versions]
     required += [public/f'textures/{v}.png' for v in versions]
     required += [public/f'blocksStates/{v}.json' for v in versions]
+    required += [public/'textures'/v for v in entity_texture_versions]
     if any(p.is_symlink() or not p.exists() for p in required):
         raise ValueError('Complete admitted screenshot assets are required')
     removed=0
     for directory in ('textures','blocksStates'):
         for path in (public/directory).iterdir():
             version=path.name if path.is_dir() else path.stem
+            if directory=='textures' and path.is_dir() and version in entity_texture_versions:
+                if path.is_symlink():raise ValueError('Unexpected viewer asset link')
+                continue
             if re.fullmatch(r'\d+\.\d+(?:\.\d+)?',version) and version not in versions:
                 if path.is_symlink():raise ValueError('Unexpected viewer asset link')
                 removed+=1
                 if path.is_dir():shutil.rmtree(path)
                 else:path.unlink()
-    return {'versions':versions,'removed_version_entries':removed}
+    return {'versions':versions,'entity_texture_versions':entity_texture_versions,
+            'removed_version_entries':removed}
 
 
 def select_node_runtime(root, windows):

@@ -39,7 +39,13 @@ Screenshot assets follow the renderer's existing admitted versions in
 version's complete textures and block states plus generic viewer assets, and
 omits version-specific rendering assets for versions the connector rejects.
 Gameplay protocol and `minecraft-data` support are unchanged. The complete
-resulting archive must pass protected extraction, inventory checks and the
+texture directory for the locked viewer's entity models (1.16.4) is retained
+separately, including referenced item/misc textures. This does not admit 1.16.4
+screenshots or retain its block atlas/state data. The actual browser fixture
+checks a positioned cow, the exact served entity PNG, and refusal on a missing
+texture. Capture waits for texture loading and settles the viewer's snapshot
+position/yaw animation before saving the image. The resulting complete archive
+must pass protected extraction, inventory checks and the
 existing 600-second provider staging budget; this is not a partial extraction.
 After dependencies and renderer assets are built, the package omits Node's
 build-only npm/Corepack tools and C/C++ headers. The pinned Node executable and
