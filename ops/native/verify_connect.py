@@ -140,7 +140,6 @@ def run_case(spec, destination, lose_ack):
                   'python': sys.executable, 'services': {'body':'body','controller':'controller'}},
                'service_connection': {'id':'minecraft-probe-fixture','label':'Disposable probe',
                   'revision':'a'*64,'context_provider_ids':['minecraft:probe-fixture']}}
-        fake = Fake(home)
         source = Path(spec['source'])
         (home/'app').mkdir(mode=0o700)
         for name in ('acp_client.py','prompt_lifecycle.py'):
@@ -162,12 +161,8 @@ def run_case(spec, destination, lose_ack):
         endpoint = {'command':[sys.executable,'-I',str(endpoint_wrapper)], 'cwd':str(root),
                     'env':{'PROBE_LOG':str(root/'acp.jsonl')}}
         game_config = {'control_port':1234,'token':'disposable-unused-no-http'}
-        durable_write(home/'config.json', game_config)
-        durable_write(home/'endpoint.json', endpoint)
         effective = {**endpoint,'mcp_servers':[{'type':'http','name':'minecraft','url':'http://127.0.0.1:1234/mcp',
                     'headers':[{'name':'Authorization','value':'Bearer '+game_config['token']}]}]}
-        durable_write(home/'session.json',{'session':'original-fixture-session',
-            'binding':hashlib.sha256(json.dumps(effective,sort_keys=True).encode()).hexdigest()})
         probe_wrapper = root/'probe.py'
         probe_wrapper.write_text('import sys,runpy\nsys.path[:0]='+repr([spec['facade'],spec['source']])
             +'\nrunpy.run_module("connection_session_job",run_name="__main__")\n',encoding='utf-8')
@@ -192,6 +187,11 @@ def run_case(spec, destination, lose_ack):
         with native_scope(cfg) as session, installation_lock(state/'installation.lock'):
             from installation_native import NativeIO
             NativeIO(cfg,session).prepare_data_journal_directories()
+            fake = Fake(home)
+            durable_write(home/'config.json', game_config)
+            durable_write(home/'endpoint.json', endpoint)
+            durable_write(home/'session.json',{'session':'original-fixture-session',
+                'binding':hashlib.sha256(json.dumps(effective,sort_keys=True).encode()).hexdigest()})
             durable_write(owner_config,cfg)
             disconnect_id, request_id = str(uuid.uuid4()), str(uuid.uuid4())
             def connection(identifier, action='status'):

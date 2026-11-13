@@ -81,5 +81,19 @@ class BundleTests(unittest.TestCase):
             self.build.select_viewer_assets(self.root,['1.21.1'])
         self.assertEqual(self.build.inventory(self.root),before)
 
+    def test_runtime_layout_preserves_exact_executable_license_and_other_files(self):
+        for windows in (False,True):
+            with tempfile.TemporaryDirectory(dir=self.root) as directory:
+                root=Path(directory);binary=root/('node.exe' if windows else 'bin/node')
+                binary.parent.mkdir(parents=True,exist_ok=True);binary.write_bytes(b'exact upstream executable')
+                (root/'LICENSE').write_bytes(b'upstream license');(root/'retained').write_bytes(b'other runtime data')
+                for name in ('include/node/header.h','lib/node_modules/npm/cli.js','node_modules/corepack/cli.js','npm.cmd'):
+                    path=root/name;path.parent.mkdir(parents=True,exist_ok=True);path.write_bytes(b'build only')
+                result=self.build.select_node_runtime(root,windows)
+                self.assertTrue(result['runtime_only'])
+                self.assertEqual(set(self.build.inventory(root)),{binary.relative_to(root).as_posix(),'LICENSE','retained'})
+                self.assertEqual(binary.read_bytes(),b'exact upstream executable')
+                self.assertEqual((root/'LICENSE').read_bytes(),b'upstream license')
+
 
 if __name__=='__main__':unittest.main()

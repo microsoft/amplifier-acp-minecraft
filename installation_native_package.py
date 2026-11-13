@@ -167,8 +167,9 @@ def stage_package(provider,revision,previous,stage):
     if size!=asset['size'] or h.hexdigest()!=digest[7:]:
         raise ContinuityError('Native archive differs from the published artifact')
     package=stage/'package';private_directory(package)
-    extract_private_archive(archive,package)
-    manifest=validate(package)
+    # Extraction returns the fully verified inventory. No work or publication
+    # occurs between that verification and these provenance checks.
+    manifest=extract_private_archive(archive,package)
     if manifest.get('target')!=target() or manifest.get('source_clean') is not True:
         raise ContinuityError('Native package target or source provenance differs')
     source=manifest.get('source_commit','')

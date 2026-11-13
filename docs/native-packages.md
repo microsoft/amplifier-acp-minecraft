@@ -41,6 +41,10 @@ omits version-specific rendering assets for versions the connector rejects.
 Gameplay protocol and `minecraft-data` support are unchanged. The complete
 resulting archive still passes protected extraction, inventory checks and the
 existing 600-second provider staging budget; this is not a partial extraction.
+After dependencies and renderer assets are built, the package omits Node's
+build-only npm/Corepack tools and C/C++ headers. The pinned Node executable and
+license stay byte-identical; consumer source updates use complete archives and
+do not compile or run npm on the installation.
 
 Run `minecraft doctor` (`minecraft.cmd doctor` on Windows) from the extracted
 package for read-only verification. The fixed `body --home <absolute-path>` and

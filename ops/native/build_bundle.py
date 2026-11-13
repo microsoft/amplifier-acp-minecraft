@@ -110,6 +110,29 @@ def select_viewer_assets(app, versions):
     return {'versions':versions,'removed_version_entries':removed}
 
 
+def select_node_runtime(root, windows):
+    """Drop build-only npm/Corepack and headers after dependencies are built.
+
+    Native consumer updates install complete verified archives, not npm builds.
+    The exact upstream Node executable and license remain unchanged.
+    """
+    executable=root/('node.exe' if windows else 'bin/node')
+    before=sha(executable)
+    paths=['include/node','lib/node_modules/npm','lib/node_modules/corepack',
+           'node_modules/npm','node_modules/corepack','bin/npm','bin/npx','bin/corepack',
+           'npm','npm.cmd','npm.ps1','npx','npx.cmd','npx.ps1',
+           'corepack','corepack.cmd','corepack.ps1','install_tools.bat','nodevars.bat']
+    removed=[]
+    for name in paths:
+        path=root/name
+        if not path.exists() and not path.is_symlink():continue
+        if path.is_symlink() or path.is_file():path.unlink()
+        else:shutil.rmtree(path)
+        removed.append(name)
+    if sha(executable)!=before:raise ValueError('Private Node executable changed')
+    return {'runtime_only':True,'removed_build_tool_entries':removed}
+
+
 def build(output, cache, *, browser=True, native_shared=None, native_driver=None, native_library=None):
     if bool(native_shared) != bool(native_driver):
         raise ValueError('Shared source and exact native driver must be supplied together')
@@ -168,6 +191,7 @@ def build(output, cache, *, browser=True, native_shared=None, native_driver=None
         screenshot_assets=select_viewer_assets(app,versions)
         if browser:
             run([node,app/'node_modules/playwright/cli.js','install','chromium'],env=env)
+        node_layout=select_node_runtime(output/'node',windows)
         # Retain exact dependency versions and upstream provenance, not a claim
         # that equal package version strings imply equal SDK implementations.
         shared = None
@@ -199,6 +223,7 @@ def build(output, cache, *, browser=True, native_shared=None, native_driver=None
                   'runtimes':spec,'node_version':lock['node_version'],'python_version':lock['python_version'],
                   'sdk':sdk,'sdk_commit':lock['sdk_commit'],'browser_included':browser,'task_helper_version':lock['task_helper_version'],'task_helper_source':lock['task_helper_source'],
                   'screenshot_assets':screenshot_assets,
+                  'node_layout':node_layout,
                   'commands':{'python':python.relative_to(output).as_posix(),'node':node.relative_to(output).as_posix(),'task_helper':'task-helper/'+helper_name},
                   'files':inventory(output)}
         if shared:
