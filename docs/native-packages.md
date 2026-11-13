@@ -93,6 +93,30 @@ verification, and restoration. Connection controls use the same backend and
 retain the acknowledged quiescence/readiness handoffs. An unknown operation is
 not permission to retry it.
 
+An explicitly enrolled `native_platform.library` and `library_sha256` select
+the shared `NativeSession(library, driver, config)` boundary. The library must
+be an ordinary absolute file matching the enrolled digest before loading. The
+fixed driver remains a separate installation-owned executable; Python's own
+executable is not its replacement. Missing or changed library metadata refuses
+selection, with no fallback to an out-of-process lock. Without these fields the
+existing transport selection is unchanged; ordinary Linux deployments retain
+their existing Python-owned lock path.
+
+ABI 1 runs synchronously and keeps the lock in the calling Python process.
+Cleanup still checks the remaining provider budget before intent/removal, but
+does not pass or silently simulate the transport's per-call timeout. Explicit
+per-call cleanup timeout arguments refuse. The outer operation worker remains
+responsible for its existing deadline and termination; termination never proves
+that a submitted effect failed. Provider/lifecycle budgets and the detached
+Connect probe's journal/status-only reconciliation are unchanged.
+
+This selection is not automatic enrollment or package readiness. The matching
+private library, fixed driver and Python wrapper must be packaged and qualified
+together, including actual Worker contention, Connect lost acknowledgment and
+all target install/update/rollback journeys. Preserve separately required tree
+observation and data-journal capabilities when integrating shared revisions;
+do not replace their acceptance tests with a library-load test.
+
 Native source updates use the stable channel's exact target archive, published
 digest and source tree. They verify the official SDK's immutable provenance and
 stage privately before stopping services. They do not run Git, npm or pip on

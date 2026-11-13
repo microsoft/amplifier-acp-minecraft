@@ -5,6 +5,7 @@ protected fixed driver configuration and an invocation-scoped official shared
 Session. Domain journals retain operation identity and decide restoration.
 """
 import copy
+import hashlib
 import json
 import time
 from contextlib import contextmanager
@@ -21,6 +22,7 @@ class NativeIO:
     def __init__(self, cfg, session, *, cleanup_deadline=None):
         self.session = session
         self.cleanup_deadline = cleanup_deadline
+        self.inprocess = 'library' in cfg.get('native_platform', {})
         self.roots = {key:Path(cfg[key]) for key in ('home', 'state')}
         if any(not path.is_absolute() for path in self.roots.values()):
             raise ValueError('Native owner roots must be absolute')
@@ -116,12 +118,18 @@ class NativeIO:
         remaining = self.cleanup_deadline - time.monotonic() - 60
         if remaining < 30:
             raise ContinuityError('Insufficient provider time for native cleanup')
+        if self.inprocess:
+            # ABI 1 is synchronous. The outer operation worker owns termination;
+            # do not pretend the transport's 120-second call timeout exists.
+            return None
         return min(120.0, remaining)
 
     def tree_remove(self, kind, identifier, expected, *, timeout=None):
         from installation_retention import canonical_id_or_false
         if not canonical_id_or_false(identifier) or not isinstance(expected, dict):
             raise ContinuityError('Native removal requires exact artifact identity')
+        if self.inprocess and timeout is not None:
+            raise ValueError('Synchronous native cleanup has no per-call timeout')
         profile = self.tree_profile(kind)
         remaining = self.tree_removal_timeout()
         if remaining is not None:
@@ -243,10 +251,26 @@ def native_scope(cfg, *, session_factory=None, cleanup_deadline=None):
     if native.get('version') != 1 or not driver.is_absolute() or not config.is_absolute():
         raise ValueError('Exact absolute native driver/config enrollment required')
     validate_driver_mapping(cfg, config)
-    if session_factory is None:
-        from constellation_native import Session
-        session_factory = Session
-    with session_factory(driver, config) as session:
+    if 'library' in native or 'library_sha256' in native:
+        library = Path(native.get('library', ''))
+        expected = native.get('library_sha256')
+        if (not library.is_absolute() or library.is_symlink() or not library.is_file()
+                or not isinstance(expected, str) or len(expected) != 64
+                or any(c not in '0123456789abcdef' for c in expected)):
+            raise ValueError('Exact ordinary native library and SHA256 enrollment required')
+        with library.open('rb') as stream:
+            if hashlib.file_digest(stream, 'sha256').hexdigest() != expected:
+                raise ContinuityError('Native library differs from the enrolled package')
+        if session_factory is None:
+            from constellation_native import NativeSession
+            session_factory = NativeSession
+        arguments = (library, driver, config)
+    else:
+        if session_factory is None:
+            from constellation_native import Session
+            session_factory = Session
+        arguments = (driver, config)
+    with session_factory(*arguments) as session:
         description = session.describe()
         required = {'lock.acquire','lock.release','process.identity','service.snapshot',
                     'service.action','storage.write','storage.mkdir','storage.remove'}
