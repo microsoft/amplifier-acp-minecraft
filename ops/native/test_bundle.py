@@ -61,7 +61,7 @@ class BundleTests(unittest.TestCase):
 
     def viewer_assets(self):
         public=self.root/'node_modules/prismarine-viewer/public'
-        for version in ('1.21.1','1.21.4'):
+        for version in ('1.16.4','1.21.1','1.21.4'):
             for name in (f'textures/{version}/entity/cow.png',f'textures/{version}.png',f'blocksStates/{version}.json'):
                 p=public/name;p.parent.mkdir(parents=True,exist_ok=True);p.write_bytes(name.encode())
         (public/'textures/generic.png').write_bytes(b'generic')
@@ -72,7 +72,17 @@ class BundleTests(unittest.TestCase):
         before={p.relative_to(public):p.read_bytes() for p in public.rglob('*') if p.is_file()}
         self.build.select_viewer_assets(self.root,['1.21.1'])
         after={p.relative_to(public):p.read_bytes() for p in public.rglob('*') if p.is_file()}
-        self.assertEqual(after,{p:b for p,b in before.items() if '1.21.4' not in str(p)})
+        self.assertEqual(after,{p:b for p,b in before.items()
+            if '1.21.4' not in p.as_posix() and (not p.as_posix().startswith(('textures/1.16.4.','blocksStates/1.16.4.')))})
+
+    def test_missing_entity_dependency_refuses_before_pruning(self):
+        public=self.viewer_assets()
+        import shutil
+        shutil.rmtree(public/'textures/1.16.4')
+        before=self.build.inventory(self.root)
+        with self.assertRaisesRegex(ValueError,'Complete admitted'):
+            self.build.select_viewer_assets(self.root,['1.21.1'])
+        self.assertEqual(self.build.inventory(self.root),before)
 
     def test_missing_admitted_assets_refuses_before_pruning_other_versions(self):
         public=self.viewer_assets();(public/'textures/1.21.1.png').unlink()

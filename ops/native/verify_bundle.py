@@ -17,7 +17,8 @@ async def verify(root, source):
     python=root/manifest['commands']['python']
     env={**os.environ,'PYTHONNOUSERSITE':'1','PYTHONDONTWRITEBYTECODE':'1',
          'PLAYWRIGHT_BROWSERS_PATH':str(root/'browsers'),'RUN_SCREENSHOT_RENDER':'1',
-         'WORKSHOP_TEST_PYTHON':str(python)}
+         'WORKSHOP_TEST_PYTHON':str(python),
+         'SCREENSHOT_FIXTURE_OUTPUT':str(Path.cwd()/'native-screenshot-result')}
     subprocess.run([str(python),'-I',str(root/'launch.py'),'doctor'],env=env,check=True)
     sys.path.insert(0,str(source/'ops/native'))
     from verify_task_helper import verify as verify_helper

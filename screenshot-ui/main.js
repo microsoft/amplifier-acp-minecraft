@@ -1,7 +1,12 @@
 const THREE=require('three');
+const TWEEN=require('@tweenjs/tween.js');
 const {Viewer}=require('prismarine-viewer/viewer/lib/viewer');
 (async()=>{
  const snapshot=await fetch('snapshot.json').then(r=>{if(!r.ok)throw Error('Snapshot unavailable');return r.json()});
+ let texturesLoading=false,textureFailed=false;
+ THREE.DefaultLoadingManager.onStart=()=>{texturesLoading=true};
+ THREE.DefaultLoadingManager.onLoad=()=>{texturesLoading=false};
+ THREE.DefaultLoadingManager.onError=()=>{textureFailed=true};
  const renderer=new THREE.WebGLRenderer({antialias:false,preserveDrawingBuffer:true});renderer.setPixelRatio(1);renderer.setSize(960,540);document.body.appendChild(renderer.domElement);
  const viewer=new Viewer(renderer);
  for(const worker of viewer.world.workers)worker.onerror=e=>{window.captureError='World renderer: '+e.message};
@@ -14,7 +19,14 @@ const {Viewer}=require('prismarine-viewer/viewer/lib/viewer');
  for(const c of snapshot.chunks)for(let y=snapshot.minY;y<snapshot.minY+snapshot.height;y+=16)if(y<0||y>=256)viewer.world.setSectionDirty({x:c.x,y,z:c.z});
  for(const e of snapshot.entities)viewer.updateEntity(e);
  await viewer.waitForChunksToRender();
- while(!viewer.world.material.map?.image?.complete)await new Promise(r=>setTimeout(r,20));
+ while(texturesLoading||!viewer.world.material.map?.image?.complete){
+  if(textureFailed)throw Error('Screenshot texture unavailable');
+  await new Promise(r=>setTimeout(r,20));
+ }
+ if(textureFailed)throw Error('Screenshot texture unavailable');
+ // This is one immutable snapshot, not the viewer's animation loop. Complete
+ // its entity position/yaw tweens before capturing the recorded coordinates.
+ TWEEN.update(Infinity);
  renderer.render(viewer.scene,viewer.camera);
  window.captureReady={loaded_chunks:snapshot.chunks.length};
 })().catch(e=>{window.captureError=String(e.message||e);console.error(e)});

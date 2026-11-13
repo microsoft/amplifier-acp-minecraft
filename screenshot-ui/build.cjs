@@ -1,6 +1,6 @@
 const path=require('node:path');const fs=require('node:fs');const esbuild=require('esbuild');
 const out=path.join(__dirname,'dist');fs.mkdirSync(out,{recursive:true});
-esbuild.build({entryPoints:[path.join(__dirname,'main.js')],outfile:path.join(out,'capture.js'),bundle:true,platform:'browser',define:{'global':'globalThis','__dirname':'""'},loader:{'.png':'dataurl'},minify:true,
+esbuild.build({entryPoints:[path.join(__dirname,'main.js')],outfile:path.join(out,'capture.js'),bundle:true,platform:'browser',define:{'global':'globalThis','__dirname':'""'},loader:{'.png':'dataurl'},minify:true,inject:[path.join(__dirname,'entity-globals.js')],
  plugins:[{name:'viewer-browser-assets',setup(build){
   build.onResolve({filter:/^\.\.?\/utils(\.electron\.js)?$/},args=>args.importer.includes('prismarine-viewer')?{path:require.resolve('prismarine-viewer/viewer/lib/utils.web.js')}:null);
   build.onResolve({filter:/^canvas$/},()=>({path:path.join(__dirname,'canvas.js')}));

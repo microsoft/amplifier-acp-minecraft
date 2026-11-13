@@ -41,3 +41,65 @@ test('real Chromium renderer uses loaded world geometry, including below zero', 
  assert.notDeepEqual(at(480,270),at(5,5),'wood wall must be visible, not an empty sky capture');
  assert.notDeepEqual(at(480,500),at(5,5),'floor must render below zero');
 });
+
+function entityScene(t){
+ const Chunk=require('prismarine-chunk')('1.21.1'),{Vec3}=require('vec3'),mc=require('minecraft-data')('1.21.1');
+ const {bot}=fixture(t),chunk=new Chunk();
+ for(let x=0;x<16;x++)for(let z=0;z<16;z++)chunk.setBlockStateId(new Vec3(x,-1,z),mc.blocksByName.grass_block.defaultState);
+ bot.entity.position=new Vec3(7,0,11);bot.world={getColumn:(x,z)=>x===0&&z===0?chunk:null};
+ bot.entities={cow:{id:12,name:'cow',position:new Vec3(7,0,7),width:.9,height:1.4,yaw:0,pitch:0}};
+ return bot;
+}
+
+function observeEntityBrowser(t,{missing=false}={}){
+ const {chromium}=require('playwright'),launch=chromium.launch.bind(chromium),responses=[];
+ responses.diagnostics=[];
+ const suffix='/textures/1.16.4/entity/cow/cow.png';
+ t.mock.method(chromium,'launch',async options=>{
+  const browser=await launch(options),create=browser.newContext.bind(browser);
+  browser.newContext=async options=>{
+   const context=await create(options);
+   context.on('page',page=>{
+    page.on('console',m=>{if(m.type()==='error'||m.type()==='log')responses.diagnostics.push(m.text());});
+    page.on('requestfailed',r=>responses.diagnostics.push(r.url()+': '+r.failure()?.errorText));
+    page.on('response',r=>{if(r.url().endsWith(suffix))responses.push(r.body().then(body=>({status:r.status(),body})));});
+    if(missing)page.route('**'+suffix,r=>r.fulfill({status:404,body:'missing fixture asset'}));
+   });
+   return context;
+  };
+  return browser;
+ });
+ return responses;
+}
+
+test('real Chromium captures the positioned cow using the retained entity texture', {skip:process.env.RUN_SCREENSHOT_RENDER!=='1'},async t=>{
+ const {render}=require('../screenshot-renderer.cjs'),{PNG}=require('pngjs'),crypto=require('node:crypto');
+ const bot=entityScene(t),pose=camera(bot,{}),responses=observeEntityBrowser(t);
+ const withCow=await render(bot,pose,{browserPath:process.env.SCREENSHOT_BROWSER_PATH});
+ const loaded=await Promise.all(responses);assert.equal(loaded.length,1,JSON.stringify(responses.diagnostics));assert.equal(loaded[0].status,200);
+ assert.equal(crypto.createHash('sha256').update(loaded[0].body).digest('hex'),'3800d29036c33b4da3ae20d07fed0633cee0c249b7f92c92b441a1cae3f18673');
+ bot.entities={};const empty=await render(bot,pose,{browserPath:process.env.SCREENSHOT_BROWSER_PATH});
+ const a=PNG.sync.read(withCow.png),b=PNG.sync.read(empty.png);let changed=0;
+ for(let y=120;y<420;y++)for(let x=300;x<660;x++){
+  const p=(y*960+x)*4;if(a.data[p]!==b.data[p]||a.data[p+1]!==b.data[p+1]||a.data[p+2]!==b.data[p+2])changed++;
+ }
+ assert.ok(changed>200,'entity at its captured position must visibly change the center of the image');
+ assert.equal(withCow.loaded_chunks,1);
+ const evidence={game_version:bot.version,texture_status:loaded[0].status,
+  texture_sha256:crypto.createHash('sha256').update(loaded[0].body).digest('hex'),changed_center_pixels:changed,
+  entity_position:{x:7,y:0,z:7},loaded_chunks:withCow.loaded_chunks};
+ t.diagnostic(JSON.stringify(evidence));
+ if(process.env.SCREENSHOT_FIXTURE_OUTPUT){
+  const directory=process.env.SCREENSHOT_FIXTURE_OUTPUT;fs.mkdirSync(directory,{recursive:true});
+  fs.writeFileSync(path.join(directory,'entity.png'),withCow.png);fs.writeFileSync(path.join(directory,'without-entity.png'),empty.png);
+  fs.writeFileSync(path.join(directory,'entity-result.json'),JSON.stringify(evidence,null,2)+'\n');
+ }
+});
+
+test('real Chromium refuses an unavailable entity texture instead of saving a false capture', {skip:process.env.RUN_SCREENSHOT_RENDER!=='1'},async t=>{
+ const {render}=require('../screenshot-renderer.cjs'),bot=entityScene(t);
+ const responses=observeEntityBrowser(t,{missing:true});
+ await assert.rejects(render(bot,camera(bot,{}),{browserPath:process.env.SCREENSHOT_BROWSER_PATH}),/Screenshot texture unavailable/);
+ const loaded=await Promise.all(responses);assert.equal(loaded.length,1);assert.equal(loaded[0].status,404);
+ t.diagnostic('missing entity texture refused without a capture');
+});

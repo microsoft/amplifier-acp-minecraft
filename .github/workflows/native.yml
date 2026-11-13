@@ -167,6 +167,7 @@ jobs:
             native-tree-recovery-result.json
             native-lifecycle-result.json
             native-result.json
+            native-screenshot-result/
             bundle/manifest.json
             bundle/python-packages.json
             qualification-fixtures/
@@ -187,6 +188,7 @@ jobs:
             native-tree-recovery-result.json
             native-lifecycle-result.json
             native-result.json
+            native-screenshot-result/
             bundle/manifest.json
             qualification-fixtures/
           retention-days: 7
