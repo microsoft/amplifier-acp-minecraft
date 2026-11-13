@@ -29,7 +29,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           repository: microsoft/amplifier-constellation
-          ref: 268d1d565435d785c2048664b1ba64eb8128cdec
+          ref: 8062eda22ea4fe9c333798be8397ce7fa4f6f2ee
           path: native-shared
       - uses: actions/checkout@v4
         with:
@@ -65,7 +65,7 @@ jobs:
         shell: bash
         run: |
           python - <<'PYCODE'
-          import os, pathlib, platform, shutil, subprocess, sys
+          import hashlib, json, os, pathlib, platform, shutil, subprocess, sys
           shared=pathlib.Path('native-shared').resolve()
           target=pathlib.Path('target')/os.environ.get('CARGO_BUILD_TARGET','')/'release'
           suffix='.exe' if os.name=='nt' else ''
@@ -73,6 +73,13 @@ jobs:
           subprocess.run([sys.executable,str(shared/'tests/native_python/inspect_driver.py'),'--driver',str(driver),'--output','native-driver-inspection.json'],check=True)
           library=driver.parent/{'Windows':'constellation_native_driver.dll','Darwin':'libconstellation_native_driver.dylib','Linux':'libconstellation_native_driver.so'}[platform.system()]
           subprocess.run([sys.executable,str(shared/'tests/native_python/inspect_library.py'),'--library',str(library),'--output','native-library-inspection.json'],check=True)
+          digest=lambda path:hashlib.sha256(path.read_bytes()).hexdigest()
+          build={'source':subprocess.check_output(['git','rev-parse','HEAD'],cwd=shared,text=True).strip(),
+                 'profile':'release','rustc':subprocess.check_output(['rustc','+1.93.0','-vV'],text=True),
+                 'cargo_build_target':os.environ.get('CARGO_BUILD_TARGET'),'rustflags':os.environ.get('RUSTFLAGS',''),
+                 'workflow_sha256':digest(pathlib.Path('.github/workflows/native.yml')),
+                 'driver_sha256':digest(driver),'library_sha256':digest(library)}
+          pathlib.Path('native-build-result.json').write_text(json.dumps(build,indent=2)+'\n')
           with open(os.environ['GITHUB_ENV'],'a') as output:
               output.write('MINECRAFT_NATIVE_LIBRARY='+str(library)+'\n')
               output.write('MINECRAFT_NATIVE_DRIVER='+str(driver)+'\n')
@@ -120,6 +127,12 @@ jobs:
       - name: Verify detached Connect parity (Windows)
         if: runner.os == 'Windows'
         run: bundle/python/python.exe -I ops/native/verify_connect.py --bundle bundle --source . --shared native-shared --instance instance-fixture --output native-connect-result
+      - name: Verify captured-PIPE Connect parity (Unix)
+        if: runner.os != 'Windows'
+        run: bundle/python/bin/python3 -I ops/native/verify_connect.py --bundle bundle --source . --shared native-shared --capture pipe --output native-connect-pipe-result
+      - name: Verify captured-PIPE Connect parity (Windows)
+        if: runner.os == 'Windows'
+        run: bundle/python/python.exe -I ops/native/verify_connect.py --bundle bundle --source . --shared native-shared --capture pipe --output native-connect-pipe-result
       - name: Verify actual native lifecycle and original session (Unix)
         if: runner.os != 'Windows'
         run: bundle/python/bin/python3 -I ops/native/verify_lifecycle.py --bundle bundle --source . --shared native-shared --driver bundle/native/constellation-native-driver --receipt native-lifecycle-result.json
@@ -152,17 +165,33 @@ jobs:
       - name: Verify fresh setup and full archive staging (Windows)
         if: runner.os == 'Windows'
         run: bundle/python/python.exe -I ops/native/verify_setup.py --bundle bundle --source . --shared native-shared --archive minecraft-${{ matrix.target }}.tar.gz --receipt native-setup-result.json
+      - name: Verify packaged native pair remained exact
+        shell: bash
+        run: |
+          python - <<'PYCODE'
+          import hashlib,json,pathlib
+          path=pathlib.Path('native-build-result.json');build=json.loads(path.read_bytes())
+          manifest=json.loads(pathlib.Path('bundle/manifest.json').read_bytes())
+          assert manifest['native_platform']['source']==build['source']
+          for role in ('driver','library'):
+              actual=hashlib.sha256((pathlib.Path('bundle')/manifest['native_platform'][role]).read_bytes()).hexdigest()
+              assert actual==manifest['native_platform'][role+'_sha256']==build[role+'_sha256']
+          build['packaged_pair_unchanged_after_qualification']=True
+          path.write_text(json.dumps(build,indent=2)+'\n')
+          PYCODE
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: minecraft-evidence-${{ matrix.target }}
           path: |
             native-driver-inspection.json
+            native-build-result.json
             native-library-inspection.json
             native-boundary-result.json
             native-setup-result.json
             native-worker-result.json
             native-connect-result/
+            native-connect-pipe-result/
             native-retention-result.json
             native-tree-recovery-result.json
             native-lifecycle-result.json
@@ -179,11 +208,13 @@ jobs:
             minecraft-${{ matrix.target }}.tar.gz
             minecraft-${{ matrix.target }}.tar.gz.json
             native-driver-inspection.json
+            native-build-result.json
             native-library-inspection.json
             native-boundary-result.json
             native-setup-result.json
             native-worker-result.json
             native-connect-result/
+            native-connect-pipe-result/
             native-retention-result.json
             native-tree-recovery-result.json
             native-lifecycle-result.json

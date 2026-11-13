@@ -278,7 +278,8 @@ def run_case(spec, destination, lose_ack, worker=None):
             record={'mode':mode,'caller_exit_seconds':time.monotonic()-started,'returncode':code}
             try:
                 stdout,stderr=process.communicate(timeout=1)
-                record.update(stdout=stdout,stderr=stderr,output_pending_after_caller_exit=False)
+                record.update(stdout=stdout,stderr=stderr,output_pending_after_caller_exit=False,
+                              pipe_eof_seconds=time.monotonic()-started)
             except subprocess.TimeoutExpired:
                 record.update(stdout='',stderr='',output_pending_after_caller_exit=True)
                 pending_output.append((process,record))
@@ -305,6 +306,9 @@ def run_case(spec, destination, lose_ack, worker=None):
             report['short_caller_exited_probe_and_endpoint_alive']=True
             report['probe_identity']=identity
             report['endpoint_identity']=endpoint_identity
+            report['post_caller_generation_observed_monotonic']=time.monotonic()
+            if spec.get('capture')=='pipe':
+                report['launch_pipe_eof_before_endpoint_release']=not report['invocations'][0]['output_pending_after_caller_exit']
         before_status=owner_snapshot(journal_path,raw=True)
         for _ in range(2):
             status=invoke('status')

@@ -1,5 +1,5 @@
 {
   "repository": "microsoft/amplifier-constellation",
-  "commit": "268d1d565435d785c2048664b1ba64eb8128cdec",
-  "status": "reviewed combined PR66 candidate; exact shared and composed checks required before migration"
+  "commit": "8062eda22ea4fe9c333798be8397ce7fa4f6f2ee",
+  "status": "accepted PR69 Windows detached-handle isolation; exact paired package and domain qualification required before migration"
 }
