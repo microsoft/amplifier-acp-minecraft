@@ -116,10 +116,10 @@ jobs:
         run: bundle/python/python.exe -I ops/native/verify_worker.py --bundle bundle --source . --shared native-shared --instance instance-fixture --receipt native-worker-result.json
       - name: Verify detached Connect parity (Unix)
         if: runner.os != 'Windows'
-        run: bundle/python/bin/python3 -I ops/native/verify_connect.py --bundle bundle --source . --shared native-shared --output native-connect-result
+        run: bundle/python/bin/python3 -I ops/native/verify_connect.py --bundle bundle --source . --shared native-shared --instance instance-fixture --output native-connect-result
       - name: Verify detached Connect parity (Windows)
         if: runner.os == 'Windows'
-        run: bundle/python/python.exe -I ops/native/verify_connect.py --bundle bundle --source . --shared native-shared --output native-connect-result
+        run: bundle/python/python.exe -I ops/native/verify_connect.py --bundle bundle --source . --shared native-shared --instance instance-fixture --output native-connect-result
       - name: Verify actual native lifecycle and original session (Unix)
         if: runner.os != 'Windows'
         run: bundle/python/bin/python3 -I ops/native/verify_lifecycle.py --bundle bundle --source . --shared native-shared --driver bundle/native/constellation-native-driver --receipt native-lifecycle-result.json

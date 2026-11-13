@@ -95,5 +95,17 @@ class BundleTests(unittest.TestCase):
                 self.assertEqual(binary.read_bytes(),b'exact upstream executable')
                 self.assertEqual((root/'LICENSE').read_bytes(),b'upstream license')
 
+    def test_javascript_layout_removes_only_declarations_and_debug_maps(self):
+        keep=('index.js','index.cjs','index.mjs','source.ts','data.json','terrain.map','LICENSE','image.png')
+        remove=('index.d.ts','index.d.cts','index.d.mts','index.d.ts.map','index.js.map','index.cjs.map','index.mjs.map')
+        for name in (*keep,*remove):
+            path=self.root/'node_modules/package'/name;path.parent.mkdir(parents=True,exist_ok=True);path.write_bytes(name.encode())
+        outside=self.root/'owner.js.map';outside.write_bytes(b'not a dependency')
+        before=self.build.inventory(self.root);result=self.build.select_javascript_runtime(self.root)
+        after=self.build.inventory(self.root)
+        self.assertEqual(after,{name:entry for name,entry in before.items() if name not in {'node_modules/package/'+n for n in remove}})
+        self.assertEqual(result['removed_files'],len(remove));self.assertFalse(result['declarations_and_debug_maps_included'])
+        self.assertEqual(self.build.select_javascript_runtime(self.root)['removed_files'],0)
+
 
 if __name__=='__main__':unittest.main()

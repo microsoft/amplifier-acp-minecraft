@@ -45,6 +45,11 @@ After dependencies and renderer assets are built, the package omits Node's
 build-only npm/Corepack tools and C/C++ headers. The pinned Node executable and
 license stay byte-identical; consumer source updates use complete archives and
 do not compile or run npm on the installation.
+After renderer compilation, dependency TypeScript declarations and external
+JavaScript debug source maps are omitted from this end-user runtime image.
+Executable JavaScript, JSON/protocol data, assets and licenses stay unchanged.
+Developer type checking and source-map debugging require the source checkout;
+the manifest records the omitted-file count and selection digest.
 
 During protected staging, payloads up to 64 KiB use the existing native
 create-only writer once with their complete bytes. Larger files retain private
@@ -283,3 +288,11 @@ services remain stopped, and stages an entire exact archive through the
 production provider using local release metadata/download fixtures. It records
 actual elapsed staging time against the unchanged 600-second provider budget.
 That is separate from archive extraction timing and the offline package check.
+
+The packaged Connect composition calls the pinned Instance worker's actual
+`connection_call`, including its file-backed stdout capture and 30-second action
+bound. It covers both a normal launch and a reply lost after the real launch,
+then status-only original-session verification with no redispatch. The fixture
+can separately run `--capture pipe` to diagnose inherited output-pipe lifetime;
+that is not the worker's production capture path. A pipe diagnostic must not be
+relabeled as successful merely because the worker path passes.

@@ -8,6 +8,7 @@ import argparse
 import copy
 import hashlib
 import importlib.metadata
+import importlib.util
 import json
 import os
 from pathlib import Path
@@ -57,6 +58,8 @@ def child(spec_path):
     root = Path(spec['root'])
     fixture = json.loads((root/'synthetic-service-state.json').read_text())
     envelope = spec['envelope']
+    if spec.get('capture') == 'worker':
+        assert json.loads(sys.stdin.buffer.read(65537)) == envelope
     observed = {'pid': os.getpid(), 'calls': [], 'call_timings': [], 'lock_acquired': False,
                 'child_started_monotonic':time.monotonic()}
     caught = None
@@ -102,6 +105,10 @@ def child(spec_path):
     observed['child_finished_monotonic']=time.monotonic()
     write(spec['child_receipt'], observed)
     assert bool(caught) == (spec['mode'] == 'launch' and spec['lose_ack'])
+    if spec.get('capture') == 'worker':
+        if caught is not None:
+            raise caught  # Actual Worker retains failed command as unknown; no synthetic success.
+        print(json.dumps(observed['result']))
 
 
 def wait_for(predicate, seconds, description):
@@ -113,7 +120,7 @@ def wait_for(predicate, seconds, description):
     raise AssertionError(description)
 
 
-def run_case(spec, destination, lose_ack):
+def run_case(spec, destination, lose_ack, worker=None):
     from constellation_native import NativeSession, initialize_root, initialize_config
     from installation_native import native_scope
     from installation_guard import installation_lock, durable_write, read
@@ -227,6 +234,24 @@ def run_case(spec, destination, lose_ack):
             child_receipt=destination/f'{"lost" if lose_ack else "normal"}-{number}-result.json'
             write(child_spec,{**base_child,'mode':mode,'child_receipt':str(child_receipt)})
             started=time.monotonic()
+            if spec.get('capture') == 'worker':
+                command=[sys.executable,'-I',str(Path(__file__).resolve()),'--child',str(child_spec)]
+                entry={'id':base_child['envelope']['connection_id'],'revision':'a'*64,'commands':{'status':command}}
+                record={'mode':mode,'capture':'actual_worker.connection_call'}
+                try:
+                    result=worker.connection_call(entry,'status',request_id)
+                    record['worker_result']=result
+                except ValueError as error:
+                    record['worker_error']=str(error)
+                    assert mode=='launch' and lose_ack and str(error)=='connection_command_failed'
+                record['elapsed']=time.monotonic()-started
+                record['receipt']=read(child_receipt)
+                report['invocations'].append(record)
+                if 'worker_error' in record:
+                    assert record['receipt']['unknown'] and record['receipt']['lock_scope_exited']
+                else:
+                    assert all(result[k]==v for k,v in record['receipt']['result'].items())
+                return record['receipt']
             process=subprocess.Popen([sys.executable,'-I',str(Path(__file__).resolve()),'--child',str(child_spec)],
                 stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True,close_fds=True)
             callers.append(process)
@@ -356,6 +381,8 @@ def main():
     parser.add_argument('--source',type=Path)
     parser.add_argument('--shared',type=Path)
     parser.add_argument('--output',type=Path)
+    parser.add_argument('--instance',type=Path)
+    parser.add_argument('--capture',choices=('worker','pipe'),default='worker')
     args=parser.parse_args()
     if args.child:
         child(args.child)
@@ -366,16 +393,26 @@ def main():
           'facade':str(Path(constellation_native.__file__).resolve().parents[1]),
           'driver':str(bundle/manifest['commands']['native_driver']),
           'library':str(bundle/manifest['commands']['native_library'])}
+    spec['capture']=args.capture
+    worker=None
+    worker_pin=None
+    if args.capture=='worker':
+        if args.instance is None:parser.error('--instance is required for actual Worker capture')
+        worker_pin=json.loads((args.shared/'tests/native_python/fixtures/worker_source.json').read_bytes())
+        path=args.instance.resolve()/worker_pin['path']
+        assert sha(path)==worker_pin['sha256']
+        module=importlib.util.spec_from_file_location('qualified_connect_worker',path)
+        worker=importlib.util.module_from_spec(module);module.loader.exec_module(worker)
     load_modules(spec)
     args.output.mkdir()
     result={'scope':'Actual packaged native host Connect; synthetic body/services, real ABI/driver/official-SDK original fixture session','target':manifest['target'],'source':manifest['source_commit'],
             'python':sys.version,'python_executable':sys.executable,
             'sdk_direct_url':json.loads(importlib.metadata.distribution('agent-client-protocol').read_text('direct_url.json')),
             'driver_sha256':sha(spec['driver']),'library_sha256':sha(spec['library']),
-            'cases':[]}
+            'capture':args.capture,'worker_pin':worker_pin,'cases':[]}
     try:
         for lose_ack in (False,True):
-            result['cases'].append(run_case(spec,args.output,lose_ack))
+            result['cases'].append(run_case(spec,args.output,lose_ack,worker))
         result['passed']=True
     finally:
         write(args.output/'completion.json',result)

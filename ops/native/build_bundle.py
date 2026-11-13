@@ -133,6 +133,20 @@ def select_node_runtime(root, windows):
     return {'runtime_only':True,'removed_build_tool_entries':removed}
 
 
+def select_javascript_runtime(app):
+    """Omit declaration/debug artifacts after compilation, not executable data."""
+    root=app/'node_modules'
+    suffixes=('.d.ts','.d.cts','.d.mts','.d.ts.map','.d.cts.map','.d.mts.map',
+              '.js.map','.cjs.map','.mjs.map')
+    removed=[];bytes_removed=0
+    for path in sorted(root.rglob('*')):
+        if path.is_symlink() or not path.is_file() or not path.name.endswith(suffixes):continue
+        removed.append(path.relative_to(app).as_posix());bytes_removed+=path.stat().st_size
+        path.unlink()
+    return {'declarations_and_debug_maps_included':False,'removed_files':len(removed),
+            'removed_bytes':bytes_removed,'removed_paths_sha256':hashlib.sha256('\n'.join(removed).encode()).hexdigest()}
+
+
 def build(output, cache, *, browser=True, native_shared=None, native_driver=None, native_library=None):
     if bool(native_shared) != bool(native_driver):
         raise ValueError('Shared source and exact native driver must be supplied together')
@@ -192,6 +206,7 @@ def build(output, cache, *, browser=True, native_shared=None, native_driver=None
         if browser:
             run([node,app/'node_modules/playwright/cli.js','install','chromium'],env=env)
         node_layout=select_node_runtime(output/'node',windows)
+        javascript_layout=select_javascript_runtime(app)
         # Retain exact dependency versions and upstream provenance, not a claim
         # that equal package version strings imply equal SDK implementations.
         shared = None
@@ -224,6 +239,7 @@ def build(output, cache, *, browser=True, native_shared=None, native_driver=None
                   'sdk':sdk,'sdk_commit':lock['sdk_commit'],'browser_included':browser,'task_helper_version':lock['task_helper_version'],'task_helper_source':lock['task_helper_source'],
                   'screenshot_assets':screenshot_assets,
                   'node_layout':node_layout,
+                  'javascript_layout':javascript_layout,
                   'commands':{'python':python.relative_to(output).as_posix(),'node':node.relative_to(output).as_posix(),'task_helper':'task-helper/'+helper_name},
                   'files':inventory(output)}
         if shared:
