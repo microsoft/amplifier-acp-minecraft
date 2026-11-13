@@ -299,6 +299,12 @@ The packaged Connect composition calls the pinned Instance worker's actual
 `connection_call`, including its file-backed stdout capture and 30-second action
 bound. It covers both a normal launch and a reply lost after the real launch,
 then status-only original-session verification with no redispatch. The fixture
-can separately run `--capture pipe` to diagnose inherited output-pipe lifetime;
-that is not the worker's production capture path. A pipe diagnostic must not be
-relabeled as successful merely because the worker path passes.
+also runs `--capture pipe` separately on every package target to verify captured
+output closes before the durable endpoint is released. Both normal and lost-reply
+cases retain the caller-exit/EOF timings, exact generation observations, original
+SDK session load and owned cleanup. This is not the worker's production capture
+path; neither mode's result substitutes for the other. Generation observations
+are made after caller return and endpoint readiness, not atomically at exit.
+The accepted PR69 shared source isolates Windows detached-spawn inheritance;
+the earlier captured-PIPE failure remains historical evidence. No deadline or
+supervisor lifetime is widened by this package qualification.
