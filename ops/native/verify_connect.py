@@ -126,7 +126,12 @@ def run_case(spec, destination, lose_ack, worker=None):
     from installation_guard import installation_lock, durable_write, read
     from installation_connection import Connection
     from test_installation_connection import Fake
+    # Only fresh fixture roots use the shared test preparation helper. Native
+    # initialize_root still validates rather than repairing production parents.
+    sys.path.insert(0,str(Path(spec['shared'])/'tests/native_python'))
+    from test_driver import protect
     temporary = Path(tempfile.mkdtemp(prefix='connect-abi-', dir=destination)).resolve()
+    protect(temporary)
     root = temporary/'installation'
     driver_input, library = Path(spec['driver']), Path(spec['library'])
     report = {'lost_launch_ack': lose_ack, 'invocations': [], 'production_operations': False}
@@ -404,7 +409,10 @@ def main():
         module=importlib.util.spec_from_file_location('qualified_connect_worker',path)
         worker=importlib.util.module_from_spec(module);module.loader.exec_module(worker)
     load_modules(spec)
-    args.output.mkdir()
+    args.output.mkdir()  # create-only: never repair an existing evidence directory
+    sys.path.insert(0,str(args.shared.resolve()/'tests/native_python'))
+    from test_driver import protect
+    protect(args.output)
     result={'scope':'Actual packaged native host Connect; synthetic body/services, real ABI/driver/official-SDK original fixture session','target':manifest['target'],'source':manifest['source_commit'],
             'python':sys.version,'python_executable':sys.executable,
             'sdk_direct_url':json.loads(importlib.metadata.distribution('agent-client-protocol').read_text('direct_url.json')),
