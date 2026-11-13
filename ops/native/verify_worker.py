@@ -56,8 +56,11 @@ def main():
    manager={'linux':'systemd_user','darwin':'launch_agent','win32':'scheduled_task'}[sys.platform]
    fixture=NativeFixture(home,manager)
    # Native service data is a named synthetic topology, not OS state proof.
-   for v in fixture.units.values():v['application']={'status':'running','identity':v['processes'][0]['identity']}
-   if scenario.endswith('disabled'):fixture.units[scenario.split('-')[0]]['start_allowed']=False
+   for index,v in enumerate(fixture.units.values()):
+    v['application']={'status':'running','identity':{'pid':500+index,'generation':'original-child'},
+       'supervisor':{'pid':400+index,'generation':'original-parent'},
+       'manager_process':v['processes'][0],'profile_sha256':'a'*64}
+   if scenario.endswith('disabled'):fixture.units[scenario.split('-')[0]].update(start_allowed=False,enabled=False)
    else:fixture.body.update(busy=True,turn_active=True)
    native_config=state/'native.json';owner=state/'owner.json'
    cfg={'home':str(home),'state':str(state),'native_platform':{'version':1,'driver':str(driver),'library':str(library),
