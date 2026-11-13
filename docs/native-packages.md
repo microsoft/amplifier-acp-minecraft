@@ -34,6 +34,14 @@ upstream runtime provenance, installed Python versions and every package file
 or internal link. Do not publish a dirty-source bundle. No personal installation,
 credentials, world or saved session is copied into the package.
 
+Screenshot assets follow the renderer's existing admitted versions in
+`screenshot-ui/versions.json` (currently Java 1.21.1). The build retains that
+version's complete textures and block states plus generic viewer assets, and
+omits version-specific rendering assets for versions the connector rejects.
+Gameplay protocol and `minecraft-data` support are unchanged. The complete
+resulting archive still passes protected extraction, inventory checks and the
+existing 600-second provider staging budget; this is not a partial extraction.
+
 Run `minecraft doctor` (`minecraft.cmd doctor` on Windows) from the extracted
 package for read-only verification. The fixed `body --home <absolute-path>` and
 `controller --home <absolute-path>` entry points use the private runtimes; they

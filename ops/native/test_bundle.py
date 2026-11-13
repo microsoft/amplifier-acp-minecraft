@@ -59,5 +59,27 @@ class BundleTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError,'Cached'):
             self.build.fetch({'url':'https://invalid.example/runtime.tar.gz','sha256':hashlib.sha256(b'expected').hexdigest()},self.root)
 
+    def viewer_assets(self):
+        public=self.root/'node_modules/prismarine-viewer/public'
+        for version in ('1.21.1','1.21.4'):
+            for name in (f'textures/{version}/entity/cow.png',f'textures/{version}.png',f'blocksStates/{version}.json'):
+                p=public/name;p.parent.mkdir(parents=True,exist_ok=True);p.write_bytes(name.encode())
+        (public/'textures/generic.png').write_bytes(b'generic')
+        return public
+
+    def test_asset_selection_preserves_full_admitted_version_and_generic_data(self):
+        public=self.viewer_assets()
+        before={p.relative_to(public):p.read_bytes() for p in public.rglob('*') if p.is_file()}
+        self.build.select_viewer_assets(self.root,['1.21.1'])
+        after={p.relative_to(public):p.read_bytes() for p in public.rglob('*') if p.is_file()}
+        self.assertEqual(after,{p:b for p,b in before.items() if '1.21.4' not in str(p)})
+
+    def test_missing_admitted_assets_refuses_before_pruning_other_versions(self):
+        public=self.viewer_assets();(public/'textures/1.21.1.png').unlink()
+        before=self.build.inventory(self.root)
+        with self.assertRaisesRegex(ValueError,'Complete admitted'):
+            self.build.select_viewer_assets(self.root,['1.21.1'])
+        self.assertEqual(self.build.inventory(self.root),before)
+
 
 if __name__=='__main__':unittest.main()

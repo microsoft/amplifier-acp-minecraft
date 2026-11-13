@@ -10,7 +10,7 @@ esbuild.build({entryPoints:[path.join(__dirname,'main.js')],outfile:path.join(ou
  // Bundle the tested game version and the viewer's tint reference, rather
  // than every historical edition (hundreds of MB in each worker).
  build.onLoad({filter:/minecraft-data[\\/]data\.js$/},args=>{
-  const data=require(args.path),pc={};for(const version of ['1.21.1','1.16.2'])pc[version]=Object.fromEntries(Object.entries(data.pc[version]).filter(([key])=>keep.has(key)));
+  const data=require(args.path),pc={};for(const version of [...require('./versions.json'),'1.16.2'])pc[version]=Object.fromEntries(Object.entries(data.pc[version]).filter(([key])=>keep.has(key)));
   return {contents:'module.exports='+JSON.stringify({pc,bedrock:{}}),loader:'js'};
  });
  build.onLoad({filter:/minecraft-data.*\.json$/},args=>keep.has(path.basename(args.path,'.json'))?null:{contents:'module.exports=[]',loader:'js'});

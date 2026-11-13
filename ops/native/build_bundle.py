@@ -4,6 +4,7 @@ import hashlib
 import json
 import os
 import platform
+import re
 import shutil
 import subprocess
 import tarfile
@@ -82,6 +83,33 @@ def inventory(root):
     return entries
 
 
+def select_viewer_assets(app, versions):
+    """Keep complete assets for the renderer's admitted versions only.
+
+    This changes the fresh build output, never an installed dependency tree.
+    Gameplay minecraft-data/protocol versions and generic viewer assets remain.
+    """
+    if (not isinstance(versions,list) or not versions
+            or any(not isinstance(v,str) or not re.fullmatch(r'\d+\.\d+(?:\.\d+)?',v) for v in versions)):
+        raise ValueError('Explicit screenshot versions required')
+    public=app/'node_modules/prismarine-viewer/public'
+    required=[public/'textures'/v for v in versions]
+    required += [public/f'textures/{v}.png' for v in versions]
+    required += [public/f'blocksStates/{v}.json' for v in versions]
+    if any(p.is_symlink() or not p.exists() for p in required):
+        raise ValueError('Complete admitted screenshot assets are required')
+    removed=0
+    for directory in ('textures','blocksStates'):
+        for path in (public/directory).iterdir():
+            version=path.name if path.is_dir() else path.stem
+            if re.fullmatch(r'\d+\.\d+(?:\.\d+)?',version) and version not in versions:
+                if path.is_symlink():raise ValueError('Unexpected viewer asset link')
+                removed+=1
+                if path.is_dir():shutil.rmtree(path)
+                else:path.unlink()
+    return {'versions':versions,'removed_version_entries':removed}
+
+
 def build(output, cache, *, browser=True, native_shared=None, native_driver=None, native_library=None):
     if bool(native_shared) != bool(native_driver):
         raise ValueError('Shared source and exact native driver must be supplied together')
@@ -133,6 +161,11 @@ def build(output, cache, *, browser=True, native_shared=None, native_driver=None
             raise ValueError('Official SDK immutable revision differs')
         run([node,npm,'ci','--ignore-scripts','--no-audit','--no-fund'],cwd=app,env=env)
         run([node,app/'screenshot-ui/build.cjs'],cwd=app,env=env)
+        versions=json.loads((app/'screenshot-ui/versions.json').read_bytes())
+        mapped=json.loads(subprocess.check_output([str(node),'-e',
+            "const v=require('./screenshot-ui/versions.json'),m=require('prismarine-viewer/viewer/lib/version');process.stdout.write(JSON.stringify(v.map(x=>m.getVersion(x))))"],cwd=app,env=env))
+        if mapped!=versions:raise ValueError('Viewer remaps an admitted screenshot version')
+        screenshot_assets=select_viewer_assets(app,versions)
         if browser:
             run([node,app/'node_modules/playwright/cli.js','install','chromium'],env=env)
         # Retain exact dependency versions and upstream provenance, not a claim
@@ -165,6 +198,7 @@ def build(output, cache, *, browser=True, native_shared=None, native_driver=None
                   'source_clean':not bool(subprocess.check_output(['git','status','--porcelain','--untracked-files=no'],cwd=ROOT).strip()),
                   'runtimes':spec,'node_version':lock['node_version'],'python_version':lock['python_version'],
                   'sdk':sdk,'sdk_commit':lock['sdk_commit'],'browser_included':browser,'task_helper_version':lock['task_helper_version'],'task_helper_source':lock['task_helper_source'],
+                  'screenshot_assets':screenshot_assets,
                   'commands':{'python':python.relative_to(output).as_posix(),'node':node.relative_to(output).as_posix(),'task_helper':'task-helper/'+helper_name},
                   'files':inventory(output)}
         if shared:
