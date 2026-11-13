@@ -4,6 +4,7 @@ import hashlib
 import json
 import os
 import platform
+import re
 import shutil
 import subprocess
 import tarfile
@@ -82,9 +83,75 @@ def inventory(root):
     return entries
 
 
-def build(output, cache, *, browser=True, native_shared=None, native_driver=None):
+def select_viewer_assets(app, versions):
+    """Keep complete assets for the renderer's admitted versions only.
+
+    This changes the fresh build output, never an installed dependency tree.
+    Gameplay minecraft-data/protocol versions and generic viewer assets remain.
+    """
+    if (not isinstance(versions,list) or not versions
+            or any(not isinstance(v,str) or not re.fullmatch(r'\d+\.\d+(?:\.\d+)?',v) for v in versions)):
+        raise ValueError('Explicit screenshot versions required')
+    public=app/'node_modules/prismarine-viewer/public'
+    required=[public/'textures'/v for v in versions]
+    required += [public/f'textures/{v}.png' for v in versions]
+    required += [public/f'blocksStates/{v}.json' for v in versions]
+    if any(p.is_symlink() or not p.exists() for p in required):
+        raise ValueError('Complete admitted screenshot assets are required')
+    removed=0
+    for directory in ('textures','blocksStates'):
+        for path in (public/directory).iterdir():
+            version=path.name if path.is_dir() else path.stem
+            if re.fullmatch(r'\d+\.\d+(?:\.\d+)?',version) and version not in versions:
+                if path.is_symlink():raise ValueError('Unexpected viewer asset link')
+                removed+=1
+                if path.is_dir():shutil.rmtree(path)
+                else:path.unlink()
+    return {'versions':versions,'removed_version_entries':removed}
+
+
+def select_node_runtime(root, windows):
+    """Drop build-only npm/Corepack and headers after dependencies are built.
+
+    Native consumer updates install complete verified archives, not npm builds.
+    The exact upstream Node executable and license remain unchanged.
+    """
+    executable=root/('node.exe' if windows else 'bin/node')
+    before=sha(executable)
+    paths=['include/node','lib/node_modules/npm','lib/node_modules/corepack',
+           'node_modules/npm','node_modules/corepack','bin/npm','bin/npx','bin/corepack',
+           'npm','npm.cmd','npm.ps1','npx','npx.cmd','npx.ps1',
+           'corepack','corepack.cmd','corepack.ps1','install_tools.bat','nodevars.bat']
+    removed=[]
+    for name in paths:
+        path=root/name
+        if not path.exists() and not path.is_symlink():continue
+        if path.is_symlink() or path.is_file():path.unlink()
+        else:shutil.rmtree(path)
+        removed.append(name)
+    if sha(executable)!=before:raise ValueError('Private Node executable changed')
+    return {'runtime_only':True,'removed_build_tool_entries':removed}
+
+
+def select_javascript_runtime(app):
+    """Omit declaration/debug artifacts after compilation, not executable data."""
+    root=app/'node_modules'
+    suffixes=('.d.ts','.d.cts','.d.mts','.d.ts.map','.d.cts.map','.d.mts.map',
+              '.js.map','.cjs.map','.mjs.map')
+    removed=[];bytes_removed=0
+    for path in sorted(root.rglob('*')):
+        if path.is_symlink() or not path.is_file() or not path.name.endswith(suffixes):continue
+        removed.append(path.relative_to(app).as_posix());bytes_removed+=path.stat().st_size
+        path.unlink()
+    return {'declarations_and_debug_maps_included':False,'removed_files':len(removed),
+            'removed_bytes':bytes_removed,'removed_paths_sha256':hashlib.sha256('\n'.join(removed).encode()).hexdigest()}
+
+
+def build(output, cache, *, browser=True, native_shared=None, native_driver=None, native_library=None):
     if bool(native_shared) != bool(native_driver):
         raise ValueError('Shared source and exact native driver must be supplied together')
+    if native_shared and not native_library:
+        raise ValueError('Exact shared caller-process library is required with the driver')
     lock = json.loads((ROOT/'ops/native/runtime-lock.json').read_text())
     selected = target()
     spec = lock['targets'][selected]
@@ -131,8 +198,15 @@ def build(output, cache, *, browser=True, native_shared=None, native_driver=None
             raise ValueError('Official SDK immutable revision differs')
         run([node,npm,'ci','--ignore-scripts','--no-audit','--no-fund'],cwd=app,env=env)
         run([node,app/'screenshot-ui/build.cjs'],cwd=app,env=env)
+        versions=json.loads((app/'screenshot-ui/versions.json').read_bytes())
+        mapped=json.loads(subprocess.check_output([str(node),'-e',
+            "const v=require('./screenshot-ui/versions.json'),m=require('prismarine-viewer/viewer/lib/version');process.stdout.write(JSON.stringify(v.map(x=>m.getVersion(x))))"],cwd=app,env=env))
+        if mapped!=versions:raise ValueError('Viewer remaps an admitted screenshot version')
+        screenshot_assets=select_viewer_assets(app,versions)
         if browser:
             run([node,app/'node_modules/playwright/cli.js','install','chromium'],env=env)
+        node_layout=select_node_runtime(output/'node',windows)
+        javascript_layout=select_javascript_runtime(app)
         # Retain exact dependency versions and upstream provenance, not a claim
         # that equal package version strings imply equal SDK implementations.
         shared = None
@@ -150,7 +224,9 @@ def build(output, cache, *, browser=True, native_shared=None, native_driver=None
             (output/'native').mkdir()
             name='constellation-native-driver.exe' if windows else 'constellation-native-driver'
             shutil.copy2(native_driver,output/'native'/name)
-            shared={'repository':'microsoft/amplifier-constellation','source':shared_revision,
+            library_name={'Windows':'constellation_native_driver.dll','Darwin':'libconstellation_native_driver.dylib','Linux':'libconstellation_native_driver.so'}[platform.system()]
+            shutil.copy2(native_library,output/'native'/library_name)
+            shared={'abi':1,'library':'native/'+library_name,'library_sha256':sha(output/'native'/library_name),'repository':'microsoft/amplifier-constellation','source':shared_revision,
                     'driver':'native/'+name,'driver_sha256':sha(output/'native'/name)}
         packages = subprocess.check_output([str(python),'-m','pip','list','--format=json'],env=env)
         (output/'python-packages.json').write_bytes(packages)
@@ -161,11 +237,15 @@ def build(output, cache, *, browser=True, native_shared=None, native_driver=None
                   'source_clean':not bool(subprocess.check_output(['git','status','--porcelain','--untracked-files=no'],cwd=ROOT).strip()),
                   'runtimes':spec,'node_version':lock['node_version'],'python_version':lock['python_version'],
                   'sdk':sdk,'sdk_commit':lock['sdk_commit'],'browser_included':browser,'task_helper_version':lock['task_helper_version'],'task_helper_source':lock['task_helper_source'],
+                  'screenshot_assets':screenshot_assets,
+                  'node_layout':node_layout,
+                  'javascript_layout':javascript_layout,
                   'commands':{'python':python.relative_to(output).as_posix(),'node':node.relative_to(output).as_posix(),'task_helper':'task-helper/'+helper_name},
                   'files':inventory(output)}
         if shared:
             manifest['native_platform']=shared
             manifest['commands']['native_driver']=shared['driver']
+            manifest['commands']['native_library']=shared['library']
         (output/'manifest.json').write_text(json.dumps(manifest,sort_keys=True,indent=2)+'\n')
         run([python,'-I',output/'launch.py','doctor'],env=env)
         return manifest
@@ -181,5 +261,6 @@ if __name__ == '__main__':
     parser.add_argument('--without-browser',action='store_true',help='Explicitly incomplete developer bundle only')
     parser.add_argument('--native-shared',type=Path)
     parser.add_argument('--native-driver',type=Path)
+    parser.add_argument('--native-library',type=Path)
     args=parser.parse_args()
-    build(args.output.resolve(),args.cache.resolve(),browser=not args.without_browser,native_shared=args.native_shared.resolve() if args.native_shared else None,native_driver=args.native_driver.resolve() if args.native_driver else None)
+    build(args.output.resolve(),args.cache.resolve(),browser=not args.without_browser,native_shared=args.native_shared.resolve() if args.native_shared else None,native_driver=args.native_driver.resolve() if args.native_driver else None,native_library=args.native_library.resolve() if args.native_library else None)

@@ -241,7 +241,6 @@ class NativeTreeRetentionTests(unittest.TestCase):
 
 
 del _Fixture
-if __name__ == '__main__':unittest.main()
 
 class ObservingTreePeer(TreePeer):
     def __init__(self, cfg):
@@ -342,3 +341,6 @@ class NativeTreeObservationTests(unittest.TestCase):
         identifier,record,_=self.lost_intent()
         self.assertIn('held',self.reconcile(TreePeer(self.cfg)))
         self.assertEqual(self.keep.owned('stage',identifier),record)
+
+
+if __name__ == '__main__':unittest.main()

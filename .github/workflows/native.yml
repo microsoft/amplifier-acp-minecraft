@@ -20,14 +20,22 @@ jobs:
           - {target: windows-arm64, runner: windows-11-arm}
     runs-on: ${{ matrix.runner }}
     steps:
+      - name: Preserve exact Git fixture bytes on Windows
+        if: runner.os == 'Windows'
+        run: git config --global core.autocrlf false
       - uses: actions/checkout@v4
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
       - uses: actions/checkout@v4
         with:
           repository: microsoft/amplifier-constellation
-          ref: 55b31e066a89a18c525974bd2ed229ae471ee01c
+          ref: 268d1d565435d785c2048664b1ba64eb8128cdec
           path: native-shared
+      - uses: actions/checkout@v4
+        with:
+          repository: microsoft/amplifier-constellation-instance
+          ref: 39807674755dff153de372b3311e08a006ba7174
+          path: instance-fixture
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
@@ -48,35 +56,47 @@ jobs:
       - name: Build actual target shared driver
         shell: bash
         run: |
-          cargo +1.93.0 build --locked --manifest-path native-shared/crates/native-platform-driver/Cargo.toml
+          cargo +1.93.0 build --release --locked --manifest-path native-shared/crates/native-platform-driver/Cargo.toml
       - name: Build shared disposable Windows service cleanup fixture
         if: runner.os == 'Windows'
         shell: bash
-        run: cargo +1.93.0 build --locked --manifest-path native-shared/crates/native-platform/Cargo.toml --features installation --example windows_service_fixture
+        run: cargo +1.93.0 build --release --locked --manifest-path native-shared/crates/native-platform/Cargo.toml --features installation --example windows_service_fixture
       - name: Bind and inspect actual native build outputs
         shell: bash
         run: |
           python - <<'PYCODE'
-          import os, pathlib, subprocess, sys
+          import os, pathlib, platform, shutil, subprocess, sys
           shared=pathlib.Path('native-shared').resolve()
-          target=pathlib.Path('target')/os.environ.get('CARGO_BUILD_TARGET','')/'debug'
+          target=pathlib.Path('target')/os.environ.get('CARGO_BUILD_TARGET','')/'release'
           suffix='.exe' if os.name=='nt' else ''
           driver=shared/'crates/native-platform-driver'/target/('constellation-native-driver'+suffix)
           subprocess.run([sys.executable,str(shared/'tests/native_python/inspect_driver.py'),'--driver',str(driver),'--output','native-driver-inspection.json'],check=True)
+          library=driver.parent/{'Windows':'constellation_native_driver.dll','Darwin':'libconstellation_native_driver.dylib','Linux':'libconstellation_native_driver.so'}[platform.system()]
+          subprocess.run([sys.executable,str(shared/'tests/native_python/inspect_library.py'),'--library',str(library),'--output','native-library-inspection.json'],check=True)
           with open(os.environ['GITHUB_ENV'],'a') as output:
+              output.write('MINECRAFT_NATIVE_LIBRARY='+str(library)+'\n')
               output.write('MINECRAFT_NATIVE_DRIVER='+str(driver)+'\n')
               if os.name=='nt':
                   fixture=shared/'crates/native-platform'/target/'examples'/('windows_service_fixture'+suffix)
                   output.write('NATIVE_SERVICE_FIXTURE='+str(fixture)+'\n')
+                  saved=pathlib.Path('qualification-fixtures');saved.mkdir()
+                  shutil.copyfile(fixture,saved/fixture.name)
+                  subprocess.run([sys.executable,str(shared/'tests/native_python/inspect_driver.py'),'--driver',str(saved/fixture.name),'--output',str(saved/'inspection.json')],check=True)
           PYCODE
       - name: Test package validation
         run: python -m unittest discover -s ops/native -p test_*.py -v
       - name: Build private native runtimes and dependencies (Unix)
         if: runner.os != 'Windows'
-        run: python ops/native/build_bundle.py --output bundle --cache runtime-cache --native-shared native-shared --native-driver "${{ env.MINECRAFT_NATIVE_DRIVER }}"
+        run: python ops/native/build_bundle.py --output bundle --cache runtime-cache --native-shared native-shared --native-driver "${{ env.MINECRAFT_NATIVE_DRIVER }}" --native-library "${{ env.MINECRAFT_NATIVE_LIBRARY }}"
       - name: Build private native runtimes and dependencies (Windows)
         if: runner.os == 'Windows'
-        run: python ops/native/build_bundle.py --output bundle --cache runtime-cache --native-shared native-shared --native-driver "${{ env.MINECRAFT_NATIVE_DRIVER }}"
+        run: python ops/native/build_bundle.py --output bundle --cache runtime-cache --native-shared native-shared --native-driver "${{ env.MINECRAFT_NATIVE_DRIVER }}" --native-library "${{ env.MINECRAFT_NATIVE_LIBRARY }}"
+      - name: Qualify packaged release ABI (Unix)
+        if: runner.os != 'Windows'
+        run: bundle/python/bin/python3 -I ops/native/verify_native_boundary.py --bundle bundle --shared native-shared --instance instance-fixture --receipt native-boundary-result.json
+      - name: Qualify packaged release ABI (Windows)
+        if: runner.os == 'Windows'
+        run: bundle/python/python.exe -I ops/native/verify_native_boundary.py --bundle bundle --shared native-shared --instance instance-fixture --receipt native-boundary-result.json
       - name: Prepare disposable Linux native service manager
         if: runner.os == 'Linux'
         shell: bash
@@ -85,6 +105,21 @@ jobs:
           sudo systemctl start "user@$(id -u).service"
           echo "XDG_RUNTIME_DIR=/run/user/$(id -u)" >> "$GITHUB_ENV"
           echo "DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/$(id -u)/bus" >> "$GITHUB_ENV"
+      - name: Install Linux browser OS libraries on disposable runner
+        if: runner.os == 'Linux'
+        run: bundle/node/bin/node bundle/app/node_modules/playwright/cli.js install-deps chromium
+      - name: Verify actual Worker admission and gate ownership (Unix)
+        if: runner.os != 'Windows'
+        run: bundle/python/bin/python3 -I ops/native/verify_worker.py --bundle bundle --source . --shared native-shared --instance instance-fixture --receipt native-worker-result.json
+      - name: Verify actual Worker admission and gate ownership (Windows)
+        if: runner.os == 'Windows'
+        run: bundle/python/python.exe -I ops/native/verify_worker.py --bundle bundle --source . --shared native-shared --instance instance-fixture --receipt native-worker-result.json
+      - name: Verify detached Connect parity (Unix)
+        if: runner.os != 'Windows'
+        run: bundle/python/bin/python3 -I ops/native/verify_connect.py --bundle bundle --source . --shared native-shared --instance instance-fixture --output native-connect-result
+      - name: Verify detached Connect parity (Windows)
+        if: runner.os == 'Windows'
+        run: bundle/python/python.exe -I ops/native/verify_connect.py --bundle bundle --source . --shared native-shared --instance instance-fixture --output native-connect-result
       - name: Verify actual native lifecycle and original session (Unix)
         if: runner.os != 'Windows'
         run: bundle/python/bin/python3 -I ops/native/verify_lifecycle.py --bundle bundle --source . --shared native-shared --driver bundle/native/constellation-native-driver --receipt native-lifecycle-result.json
@@ -103,30 +138,39 @@ jobs:
       - name: Verify packaged scoped tree recovery (Windows)
         if: runner.os == 'Windows'
         run: bundle/python/python.exe -I ops/native/verify_tree_recovery.py --bundle bundle --driver bundle/native/constellation-native-driver.exe --receipt native-tree-recovery-result.json
-      - name: Install Linux browser OS libraries on disposable runner
-        if: runner.os == 'Linux'
-        run: bundle/node/bin/node bundle/app/node_modules/playwright/cli.js install-deps chromium
       - name: Verify packaged client and browser (Unix)
         if: runner.os != 'Windows'
         run: bundle/python/bin/python3 -I ops/native/verify_bundle.py --bundle bundle --source . --receipt native-result.json
       - name: Verify packaged client and browser (Windows)
         if: runner.os == 'Windows'
         run: bundle/python/python.exe -I ops/native/verify_bundle.py --bundle bundle --source . --receipt native-result.json
+      - name: Archive exact setup candidate
+        run: python ops/native/archive_bundle.py --bundle bundle --output minecraft-${{ matrix.target }}.tar.gz
+      - name: Verify fresh setup and full archive staging (Unix)
+        if: runner.os != 'Windows'
+        run: bundle/python/bin/python3 -I ops/native/verify_setup.py --bundle bundle --source . --shared native-shared --archive minecraft-${{ matrix.target }}.tar.gz --receipt native-setup-result.json
+      - name: Verify fresh setup and full archive staging (Windows)
+        if: runner.os == 'Windows'
+        run: bundle/python/python.exe -I ops/native/verify_setup.py --bundle bundle --source . --shared native-shared --archive minecraft-${{ matrix.target }}.tar.gz --receipt native-setup-result.json
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: minecraft-evidence-${{ matrix.target }}
           path: |
             native-driver-inspection.json
+            native-library-inspection.json
+            native-boundary-result.json
+            native-setup-result.json
+            native-worker-result.json
+            native-connect-result/
             native-retention-result.json
             native-tree-recovery-result.json
             native-lifecycle-result.json
             native-result.json
             bundle/manifest.json
             bundle/python-packages.json
+            qualification-fixtures/
           retention-days: 14
-      - name: Archive tested bundle
-        run: python ops/native/archive_bundle.py --bundle bundle --output minecraft-${{ matrix.target }}.tar.gz
       - uses: actions/upload-artifact@v4
         with:
           name: minecraft-${{ matrix.target }}
@@ -134,9 +178,15 @@ jobs:
             minecraft-${{ matrix.target }}.tar.gz
             minecraft-${{ matrix.target }}.tar.gz.json
             native-driver-inspection.json
+            native-library-inspection.json
+            native-boundary-result.json
+            native-setup-result.json
+            native-worker-result.json
+            native-connect-result/
             native-retention-result.json
             native-tree-recovery-result.json
             native-lifecycle-result.json
             native-result.json
             bundle/manifest.json
+            qualification-fixtures/
           retention-days: 7

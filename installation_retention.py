@@ -4,12 +4,13 @@ Called under the installation provider lock. Shared plans are read-only roots;
 never prune those, legacy unmarked directories, or original installation files.
 """
 import hashlib
+import json
 import os
 import shutil
 import time
 import uuid
 from pathlib import Path
-from installation_guard import (ContinuityError, digest, durable_write, read,
+from installation_guard import (ContinuityError, digest, durable_write, read, read_bytes,
                                 enrollment_ids, current_owner_io)
 
 GRACE_SECONDS = 86400
@@ -91,9 +92,9 @@ class Retention:
 
         def document(path):
             if path.is_symlink():raise ContinuityError('Indirect reference journal')
-            raw = path.read_bytes()
+            raw = read_bytes(path)
             signature[str(path)] = hashlib.sha256(raw).hexdigest()
-            return read(path)
+            return json.loads(raw)
 
         state = document(plans.parent/'state.json')
         if state.get('transaction'):

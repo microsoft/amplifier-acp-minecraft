@@ -59,5 +59,53 @@ class BundleTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError,'Cached'):
             self.build.fetch({'url':'https://invalid.example/runtime.tar.gz','sha256':hashlib.sha256(b'expected').hexdigest()},self.root)
 
+    def viewer_assets(self):
+        public=self.root/'node_modules/prismarine-viewer/public'
+        for version in ('1.21.1','1.21.4'):
+            for name in (f'textures/{version}/entity/cow.png',f'textures/{version}.png',f'blocksStates/{version}.json'):
+                p=public/name;p.parent.mkdir(parents=True,exist_ok=True);p.write_bytes(name.encode())
+        (public/'textures/generic.png').write_bytes(b'generic')
+        return public
+
+    def test_asset_selection_preserves_full_admitted_version_and_generic_data(self):
+        public=self.viewer_assets()
+        before={p.relative_to(public):p.read_bytes() for p in public.rglob('*') if p.is_file()}
+        self.build.select_viewer_assets(self.root,['1.21.1'])
+        after={p.relative_to(public):p.read_bytes() for p in public.rglob('*') if p.is_file()}
+        self.assertEqual(after,{p:b for p,b in before.items() if '1.21.4' not in str(p)})
+
+    def test_missing_admitted_assets_refuses_before_pruning_other_versions(self):
+        public=self.viewer_assets();(public/'textures/1.21.1.png').unlink()
+        before=self.build.inventory(self.root)
+        with self.assertRaisesRegex(ValueError,'Complete admitted'):
+            self.build.select_viewer_assets(self.root,['1.21.1'])
+        self.assertEqual(self.build.inventory(self.root),before)
+
+    def test_runtime_layout_preserves_exact_executable_license_and_other_files(self):
+        for windows in (False,True):
+            with tempfile.TemporaryDirectory(dir=self.root) as directory:
+                root=Path(directory);binary=root/('node.exe' if windows else 'bin/node')
+                binary.parent.mkdir(parents=True,exist_ok=True);binary.write_bytes(b'exact upstream executable')
+                (root/'LICENSE').write_bytes(b'upstream license');(root/'retained').write_bytes(b'other runtime data')
+                for name in ('include/node/header.h','lib/node_modules/npm/cli.js','node_modules/corepack/cli.js','npm.cmd'):
+                    path=root/name;path.parent.mkdir(parents=True,exist_ok=True);path.write_bytes(b'build only')
+                result=self.build.select_node_runtime(root,windows)
+                self.assertTrue(result['runtime_only'])
+                self.assertEqual(set(self.build.inventory(root)),{binary.relative_to(root).as_posix(),'LICENSE','retained'})
+                self.assertEqual(binary.read_bytes(),b'exact upstream executable')
+                self.assertEqual((root/'LICENSE').read_bytes(),b'upstream license')
+
+    def test_javascript_layout_removes_only_declarations_and_debug_maps(self):
+        keep=('index.js','index.cjs','index.mjs','source.ts','data.json','terrain.map','LICENSE','image.png')
+        remove=('index.d.ts','index.d.cts','index.d.mts','index.d.ts.map','index.js.map','index.cjs.map','index.mjs.map')
+        for name in (*keep,*remove):
+            path=self.root/'node_modules/package'/name;path.parent.mkdir(parents=True,exist_ok=True);path.write_bytes(name.encode())
+        outside=self.root/'owner.js.map';outside.write_bytes(b'not a dependency')
+        before=self.build.inventory(self.root);result=self.build.select_javascript_runtime(self.root)
+        after=self.build.inventory(self.root)
+        self.assertEqual(after,{name:entry for name,entry in before.items() if name not in {'node_modules/package/'+n for n in remove}})
+        self.assertEqual(result['removed_files'],len(remove));self.assertFalse(result['declarations_and_debug_maps_included'])
+        self.assertEqual(self.build.select_javascript_runtime(self.root)['removed_files'],0)
+
 
 if __name__=='__main__':unittest.main()

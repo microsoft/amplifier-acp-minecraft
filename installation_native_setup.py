@@ -41,8 +41,13 @@ def profiles(cfg, owner_config, bundle, services):
     driver,base_python,node=command('native_driver'),command('python'),command('node')
     if native['driver_sha256']!=hashlib.sha256(driver.read_bytes()).hexdigest():
         raise ValueError('Shared driver provenance differs')
-    if cfg['native_platform']['driver']!=str(driver):
-        raise ValueError('Domain native driver path differs from package')
+    installed_driver=Path(cfg['native_platform']['driver'])
+    if installed_driver!=driver:
+        if (installed_driver!=state/'native'/driver.name or installed_driver.is_symlink()
+                or not installed_driver.is_file()
+                or hashlib.sha256(installed_driver.read_bytes()).hexdigest()!=native['driver_sha256']):
+            raise ValueError('Domain native driver differs from the exact private package copy')
+        driver=installed_driver
     python=Path(cfg['native_platform']['python'])
     if python!=base_python:
         relative=Path(commands['python']).relative_to('python')

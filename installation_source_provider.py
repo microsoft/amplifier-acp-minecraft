@@ -279,10 +279,11 @@ class Provider:
                 self.retention.mark('stage', stage.name, state='ready', last_offered=time.time(),
                                     manifest_hash=digest(manifest))
             except native_errors:
-                # Transport loss invalidates every lock in this Session even
-                # while its Python with-block remains entered. Preserve the
-                # primary error and unwind; recovery must reacquire ownership
-                # and inspect the existing journal, never replay this build.
+                # Executable transport loss invalidates its locks; an in-process
+                # poisoned session retains ownership until unwinding. In either
+                # case preserve the primary error and unwind without cleanup
+                # writes. Recovery re-reads the original journal under ownership
+                # and never replays this build merely because a call failed.
                 raise
             except Exception as error:
                 self.retention.mark('stage', stage.name, state='failed', error_type=type(error).__name__)

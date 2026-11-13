@@ -34,6 +34,29 @@ upstream runtime provenance, installed Python versions and every package file
 or internal link. Do not publish a dirty-source bundle. No personal installation,
 credentials, world or saved session is copied into the package.
 
+Screenshot assets follow the renderer's existing admitted versions in
+`screenshot-ui/versions.json` (currently Java 1.21.1). The build retains that
+version's complete textures and block states plus generic viewer assets, and
+omits version-specific rendering assets for versions the connector rejects.
+Gameplay protocol and `minecraft-data` support are unchanged. The complete
+resulting archive must pass protected extraction, inventory checks and the
+existing 600-second provider staging budget; this is not a partial extraction.
+After dependencies and renderer assets are built, the package omits Node's
+build-only npm/Corepack tools and C/C++ headers. The pinned Node executable and
+license stay byte-identical; consumer source updates use complete archives and
+do not compile or run npm on the installation.
+After renderer compilation, dependency TypeScript declarations and external
+JavaScript debug source maps are omitted from this end-user runtime image.
+Executable JavaScript, JSON/protocol data, assets and licenses stay unchanged.
+Developer type checking and source-map debugging require the source checkout;
+the manifest records the omitted-file count and selection digest.
+
+During protected staging, payloads up to 64 KiB use the existing native
+create-only writer once with their complete bytes. Larger files retain private
+empty-file allocation followed by bounded streaming and flush. Both paths keep
+collision refusal and the final exact inventory check; an uncertain write never
+falls back to another publication or a retry.
+
 Run `minecraft doctor` (`minecraft.cmd doctor` on Windows) from the extracted
 package for read-only verification. The fixed `body --home <absolute-path>` and
 `controller --home <absolute-path>` entry points use the private runtimes; they
@@ -69,10 +92,11 @@ or task conversion is introduced.
 ## Native lifecycle integration
 
 The candidate package can include the separately reviewed Constellation native
-installation driver and its Python binding. Build with both `--native-shared`
-(the exact checkout pinned in `ops/native/shared-driver-lock.json`) and
-`--native-driver` (the binary built for this target). The package records both
-source and binary identity. This is an explicit backend; existing Linux
+installation driver and its Python binding. Supply `--native-shared`
+(the exact checkout pinned in `ops/native/shared-driver-lock.json`),
+`--native-driver`, and `--native-library` (the matched release-mode executable
+and caller-process library built for this target). The package records source
+and both binary identities. This is an explicit backend; existing Linux
 installations do not switch merely because it is present.
 
 Setup uses `installation_native_setup.profiles` to describe fixed body,
@@ -92,6 +116,63 @@ the participant owns game service admission, continuity checks, original-session
 verification, and restoration. Connection controls use the same backend and
 retain the acknowledged quiescence/readiness handoffs. An unknown operation is
 not permission to retry it.
+
+An explicitly enrolled `native_platform.library` and `library_sha256` select
+the shared `NativeSession(library, driver, config)` boundary. The library must
+be an ordinary absolute file matching the enrolled digest before loading. The
+fixed driver remains a separate installation-owned executable; Python's own
+executable is not its replacement. Missing or changed library metadata refuses
+selection, with no fallback to an out-of-process lock. Without these fields the
+existing transport selection is unchanged; ordinary Linux deployments retain
+their existing Python-owned lock path.
+
+ABI 1 runs synchronously and keeps the lock in the calling Python process.
+Cleanup still checks the remaining provider budget before intent/removal, but
+does not pass or silently simulate the transport's per-call timeout. Explicit
+per-call cleanup timeout arguments refuse. The outer operation worker remains
+responsible for its existing deadline and termination; termination never proves
+that a submitted effect failed. Provider/lifecycle budgets and the detached
+Connect probe's journal/status-only reconciliation are unchanged.
+
+This selection is not automatic enrollment or package readiness. The matching
+private library, fixed driver and Python wrapper must be packaged and qualified
+together, including actual Worker contention, Connect lost acknowledgment and
+all target install/update/rollback journeys. Preserve separately required tree
+observation and data-journal capabilities when integrating shared revisions;
+do not replace their acceptance tests with a library-load test.
+
+Optional `native_platform.data_journals: 1` selects the shared data reader and
+replacement writer together. Enrollment requires exact `private_data_read: 1`
+and `private_data_publication: 1` advertisements and both `storage.read_data`
+and `storage.write_data` operations. This option is not inferred from Windows
+or enabled by upgrading a binary. Qualify the paired reader/writer and combined
+driver before enrolling an installation.
+
+Fresh setup creates the fixed journal parent directories before registration.
+An existing installation's migration must establish those private parents before
+selecting this option. A missing or unsafe parent remains a refusal; admission
+and observation do not create directories to turn that refusal into file absence.
+
+The fixed selection covers direct JSON children of owner-state `transactions`,
+`connections`, `provider-receipts`, `native-source-receipts`, and
+`artifact-receipts`, plus `active.json` and `cleanup-last.json`. In the game home
+it covers `app-source.json`, the installation gate/controller acknowledgment,
+and `installation-connections/state.json`. Full workshop history, credentials,
+driver configuration, package manifests/fingerprints, and independently owned
+updater plans retain their separate read/publication paths. Reference collection
+hashes and parses the same read snapshot.
+
+Selected journals have an explicit 1 MiB serialized limit: oversized reads
+refuse, and oversized writes refuse before directory creation or publication.
+Audit existing and projected receipt sizes, including captured continuity
+baselines, before enrollment. No truncation, empty-state fallback, or automatic
+switch back to strict I/O is allowed. Absence remains `FileNotFoundError`; empty
+or invalid JSON, owner/refusal/read errors, and lost transport remain errors.
+Unwind before fresh read-only reconciliation. Executable transport loss releases
+its locks; an in-process poisoned session retains ownership until unwind. Neither
+outcome permits automatic republishing.
+The data reader permits Windows delete sharing; other processes reading these
+journals still require their own compatible-handle qualification.
 
 Native source updates use the stable channel's exact target archive, published
 digest and source tree. They verify the official SDK's immutable provenance and
@@ -165,3 +246,53 @@ Other calls retain the Session default; service, prepare, verify and restore
 budgets do not change. Consumers without an enclosing cleanup deadline keep the
 Session default. The extended per-call API requires the separately qualified
 shared candidate; unit budget tests alone do not qualify a Windows removal.
+
+
+### Fresh local setup
+
+After verifying the downloaded target archive, use its fixed launcher:
+`./minecraft setup --plan /absolute/private/setup.json` on Unix, or
+`minecraft.cmd setup --plan C:\absolute\private\setup.json` on Windows.
+The Windows entry point uses bundled Python; it does not require PowerShell or
+change execution policy. The package directory must remain at its reviewed path.
+
+The local plan has `schema: 1`, a **new** absolute `root`, the normal Minecraft
+`game` configuration (including its control port and token), and the existing
+ACP `endpoint` definition (`command`, `cwd`, and optional environment). An
+optional `service_connection` is the existing owner-defined connection
+metadata. This input may contain credentials: keep it private. Setup does not
+install an engine, copy another account, log in, create a session or authorize
+world work.
+
+Setup creates separate private `home` and `state` directories, copies only
+inventoried application/private-Python/helper bytes, and records its intent.
+Before opening the first caller-process session, the fixed CLI creates new
+private empty driver/library files in that unpublished root. Setup copies and
+hash-verifies the exact bundled bytes there; it does not repair the extracted
+package's permissions or rely on a helper-held lock during copying.
+It then uses that exact private library/driver pair, initializes protected profiles,
+and registers fixed body/controller services **without starting them**. It
+returns the owner configuration and receipt paths. A configured screenshot
+browser defaults to the bundled executable. Existing homes, including empty
+roots and incomplete attempts, refuse; setup is never an implicit recovery or
+registration retry. Retain any uncertain receipt for owner reconciliation.
+
+Registration does not enroll the updater or enable a schedule. Existing
+installation enrollment and Connection controls retain their separate owner
+configuration, continuity checks, and Connect/Disconnect semantics. Updating an
+existing installation's helper/library is a separately qualified migration;
+this new-home command never selects or migrates an existing home.
+
+The disposable `ops/native/verify_setup.py` fixture executes this setup, proves
+services remain stopped, and stages an entire exact archive through the
+production provider using local release metadata/download fixtures. It records
+actual elapsed staging time against the unchanged 600-second provider budget.
+That is separate from archive extraction timing and the offline package check.
+
+The packaged Connect composition calls the pinned Instance worker's actual
+`connection_call`, including its file-backed stdout capture and 30-second action
+bound. It covers both a normal launch and a reply lost after the real launch,
+then status-only original-session verification with no redispatch. The fixture
+can separately run `--capture pipe` to diagnose inherited output-pipe lifetime;
+that is not the worker's production capture path. A pipe diagnostic must not be
+relabeled as successful merely because the worker path passes.

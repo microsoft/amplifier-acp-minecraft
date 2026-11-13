@@ -1,7 +1,7 @@
 // A short-lived, loopback-only renderer. It cannot move the player or fetch external pages.
 const fs=require('node:fs');const path=require('node:path');const crypto=require('node:crypto');const http=require('node:http');
 async function render(bot,camera,{browserPath}={}){
- if(bot.version!=='1.21.1')throw Error('Player screenshots currently support Minecraft Java 1.21.1');
+ if(!require('./screenshot-ui/versions.json').includes(bot.version))throw Error('Player screenshots currently support Minecraft Java 1.21.1');
  const {chromium}=require('playwright');const express=require('express');
  const entry=path.join(__dirname,'screenshot-ui/dist');if(!fs.existsSync(path.join(entry,'capture.js')))throw Error('Screenshot renderer is not installed; run npm run build:screenshots');
  const chunks=[],cx=Math.floor(camera.position.x/16),cz=Math.floor(camera.position.z/16);

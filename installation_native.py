@@ -5,6 +5,8 @@ protected fixed driver configuration and an invocation-scoped official shared
 Session. Domain journals retain operation identity and decide restoration.
 """
 import copy
+import hashlib
+import errno
 import json
 import time
 from contextlib import contextmanager
@@ -14,6 +16,12 @@ from installation_guard import (ContinuityError, native_service, read,
                                 service_active, service_stopped, owner_io)
 from installation_participant import LocalInstallation, verification_seconds
 
+DATA_JOURNAL_DIRECTORIES = {
+    'home': ('installation-updates', 'installation-connections'),
+    'state': ('transactions', 'connections', 'provider-receipts',
+              'native-source-receipts', 'artifact-receipts'),
+}
+
 
 class NativeIO:
     """Fixed roots/lock with protected publication delegated to shared code."""
@@ -21,11 +29,63 @@ class NativeIO:
     def __init__(self, cfg, session, *, cleanup_deadline=None):
         self.session = session
         self.cleanup_deadline = cleanup_deadline
+        self.inprocess = 'library' in cfg.get('native_platform', {})
         self.roots = {key:Path(cfg[key]) for key in ('home', 'state')}
         if any(not path.is_absolute() for path in self.roots.values()):
             raise ValueError('Native owner roots must be absolute')
         if self.roots['home'] == self.roots['state']:
             raise ValueError('Separate game and owner roots required')
+        data = cfg.get('native_platform', {}).get('data_journals')
+        self.data_journals = data is not None
+        if self.data_journals:
+            if type(data) is not int or data != 1:
+                raise ValueError('Unsupported native data journal enrollment')
+            description = session.describe()
+            if (any(type(description.get(key)) is not int or description[key] != 1
+                    for key in ('private_data_read', 'private_data_publication'))
+                    or not {'storage.read_data', 'storage.write_data'}.issubset(
+                        description.get('operations', []))):
+                raise ContinuityError('Native data journals require both reader and writer capabilities')
+
+    def is_data_journal(self, path):
+        """Fixed mutable owner journals only, not package files or full history."""
+        if not self.data_journals:
+            return False
+        path = Path(path)
+        if not path.is_absolute() or '..' in path.parts:
+            raise ValueError('Absolute non-traversing journal path required')
+        matches = [(name, path.relative_to(root)) for name, root in self.roots.items()
+                   if path.is_relative_to(root)]
+        if len(matches) > 1:
+            raise ValueError('Ambiguous native journal root')
+        if not matches:
+            return False  # Independently owned shared plans remain separate.
+        root, relative = matches[0]
+        parts = relative.parts
+        if root == 'home':
+            return relative.as_posix() in {
+                'app-source.json', 'installation-updates/gate.json',
+                'installation-updates/controller-idle.json',
+                'installation-connections/state.json'}
+        return (relative.as_posix() in {'active.json', 'cleanup-last.json'}
+                or (len(parts) == 2 and parts[0] in DATA_JOURNAL_DIRECTORIES['state']
+                    and relative.suffix == '.json'))
+
+    def prepare_data_journal_directories(self):
+        """Explicit setup/migration under the installation lock, never a read fallback."""
+        if not self.data_journals:
+            raise ValueError('Data journal preparation requires explicit enrollment')
+        for root,names in DATA_JOURNAL_DIRECTORIES.items():
+            for name in names:self.session.private_dir(root,name)
+
+    def read_bytes(self, path):
+        if not self.is_data_journal(path):
+            return Path(path).read_bytes()
+        root, relative = self.relative(path)
+        data = self.session.private_read_data(root, relative, max_bytes=1048576)
+        if data is None:
+            raise FileNotFoundError(errno.ENOENT, 'Native journal is absent', str(path))
+        return data
 
     def relative(self, path):
         path = Path(path)
@@ -48,10 +108,15 @@ class NativeIO:
 
     def write(self, path, value):
         root, relative = self.relative(path)
+        data = json.dumps(value, sort_keys=True).encode('utf-8')
+        journal = self.is_data_journal(path)
+        if journal and len(data) > 1048576:
+            raise ContinuityError('Native data journal exceeds the 1 MiB reader bound')
         parts = Path(relative).parts[:-1]
         for length in range(1, len(parts)+1):
             self.session.private_dir(root, Path(*parts[:length]).as_posix())
-        data = json.dumps(value, sort_keys=True).encode('utf-8')
+        if journal:
+            return self.session.private_write_data(root, relative, data)
         return self.session.private_write(root, relative, data)
 
     def mkdir(self, path):
@@ -116,12 +181,18 @@ class NativeIO:
         remaining = self.cleanup_deadline - time.monotonic() - 60
         if remaining < 30:
             raise ContinuityError('Insufficient provider time for native cleanup')
+        if self.inprocess:
+            # ABI 1 is synchronous. The outer operation worker owns termination;
+            # do not pretend the transport's 120-second call timeout exists.
+            return None
         return min(120.0, remaining)
 
     def tree_remove(self, kind, identifier, expected, *, timeout=None):
         from installation_retention import canonical_id_or_false
         if not canonical_id_or_false(identifier) or not isinstance(expected, dict):
             raise ContinuityError('Native removal requires exact artifact identity')
+        if self.inprocess and timeout is not None:
+            raise ValueError('Synchronous native cleanup has no per-call timeout')
         profile = self.tree_profile(kind)
         remaining = self.tree_removal_timeout()
         if remaining is not None:
@@ -243,10 +314,26 @@ def native_scope(cfg, *, session_factory=None, cleanup_deadline=None):
     if native.get('version') != 1 or not driver.is_absolute() or not config.is_absolute():
         raise ValueError('Exact absolute native driver/config enrollment required')
     validate_driver_mapping(cfg, config)
-    if session_factory is None:
-        from constellation_native import Session
-        session_factory = Session
-    with session_factory(driver, config) as session:
+    if 'library' in native or 'library_sha256' in native:
+        library = Path(native.get('library', ''))
+        expected = native.get('library_sha256')
+        if (not library.is_absolute() or library.is_symlink() or not library.is_file()
+                or not isinstance(expected, str) or len(expected) != 64
+                or any(c not in '0123456789abcdef' for c in expected)):
+            raise ValueError('Exact ordinary native library and SHA256 enrollment required')
+        with library.open('rb') as stream:
+            if hashlib.file_digest(stream, 'sha256').hexdigest() != expected:
+                raise ContinuityError('Native library differs from the enrolled package')
+        if session_factory is None:
+            from constellation_native import NativeSession
+            session_factory = NativeSession
+        arguments = (library, driver, config)
+    else:
+        if session_factory is None:
+            from constellation_native import Session
+            session_factory = Session
+        arguments = (driver, config)
+    with session_factory(*arguments) as session:
         description = session.describe()
         required = {'lock.acquire','lock.release','process.identity','service.snapshot',
                     'service.action','storage.write','storage.mkdir','storage.remove'}

@@ -143,8 +143,16 @@ def digest(value):
     return hashlib.sha256(json.dumps(value, sort_keys=True, separators=(',', ':')).encode()).hexdigest()
 
 
+def read_bytes(path):
+    """Read one snapshot; explicit native journal readers retain their errors."""
+    native = _owner_io.get()
+    if native is not None and hasattr(native, 'read_bytes'):
+        return native.read_bytes(Path(path))
+    return Path(path).read_bytes()
+
+
 def read(path):
-    return json.loads(Path(path).read_text())
+    return json.loads(read_bytes(path))
 
 
 @contextmanager
