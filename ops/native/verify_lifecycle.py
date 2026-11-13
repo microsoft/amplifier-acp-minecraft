@@ -6,6 +6,7 @@ import argparse
 parser=argparse.ArgumentParser();parser.add_argument('--source',type=pathlib.Path,required=True);parser.add_argument('--bundle',type=pathlib.Path,required=True);parser.add_argument('--shared',type=pathlib.Path,required=True);parser.add_argument('--driver',type=pathlib.Path,required=True);parser.add_argument('--receipt',type=pathlib.Path,required=True);args=parser.parse_args()
 SOURCE=args.source.resolve();BUNDLE=args.bundle.resolve();SHARED=args.shared.resolve();DRIVER=args.driver.resolve()
 manifest=json.loads((BUNDLE/'manifest.json').read_text())
+LIBRARY=BUNDLE/manifest['commands']['native_library']
 sys.path[:0]=[str(BUNDLE/'app'),str(SHARED/'support/python'),str(SHARED/'tests/native_python')]
 os.environ['CONSTELLATION_NATIVE_DRIVER']=str(DRIVER)
 from test_driver import protect as shared_protect
@@ -13,7 +14,7 @@ from test_driver import protect as shared_protect
 sys.path.insert(0,str(SOURCE/'ops/native'))
 from fixture_security import protect_fixture_path,fixture_application_identities
 from test_service import NativeServiceApplicationTests
-from constellation_native import Session, Refused, initialize_root, initialize_config
+from constellation_native import Session, NativeSession, Refused, initialize_root, initialize_config
 from installation_native import NativeIO,NativeInstallation,validate_driver_mapping,connection_backend
 from installation_guard import owner_io,installation_lock,durable_write,read,service_active,service_stopped
 from installation_participant import Participant
@@ -85,7 +86,7 @@ if os.name=='nt':
 
 report={'source':manifest['source_commit'],'bundle_target':manifest['target'],
  'shared_source':subprocess.check_output(['git','rev-parse','HEAD'],cwd=SHARED,text=True).strip(),
- 'driver_sha256':hashlib.sha256(DRIVER.read_bytes()).hexdigest(),
+ 'driver_sha256':hashlib.sha256(DRIVER.read_bytes()).hexdigest(),'library_sha256':hashlib.sha256(LIBRARY.read_bytes()).hexdigest(),'session_boundary':'NativeSession ABI1',
  'production_operations':False,'model_prompts':0,'actual_os':sys.platform,'cycles':[],
  'cleanup_fixture_sha256':hashlib.sha256(cleanup_fixture.read_bytes()).hexdigest() if os.name=='nt' else None,
  'fixture_protection':{'shared_owner_and_dacl':True,'domain_os_permission_commands':False,'scope':'Synthetic package/input files only; initial roots and driver config use production bootstrap'}}
@@ -104,7 +105,7 @@ try:
  # the fresh temporary parent and the three newly-created empty children above.
  with socket.socket() as sock:sock.bind(('127.0.0.1',0));port=sock.getsockname()[1]
  cfg={'home':str(home),'state':str(state),'session_verification_seconds':12,
-  'native_platform':{'version':1,'python':sys.executable,'services':{'body':'body','controller':'controller'},'driver':str(DRIVER),'config':str(root/'driver.json')},
+  'native_platform':{'version':1,'library':str(LIBRARY),'library_sha256':hashlib.sha256(LIBRARY.read_bytes()).hexdigest(),'python':sys.executable,'services':{'body':'body','controller':'controller'},'driver':str(DRIVER),'config':str(root/'driver.json')},
   'service_connection':{'id':'minecraft-native-fixture','label':'Native fixture','revision':'a'*64,'context_provider_ids':['minecraft:native-fixture']}}
  task={'id':'original','status':'budget_exhausted','turns':8}
  initial(home/'workshop.json',{'task':task,'turn':None,'inbox':[],'unknown_receipts':['preserved']})
@@ -184,7 +185,7 @@ try:
  report['native_owner_registration']={'delta':enrollment,'status_returncode':owner_status.returncode,'status_stdout':owner_status.stdout,'status_stderr':owner_status.stderr}
  assert owner_status.returncode==0,report['native_owner_registration']
  assert json.loads(owner_status.stdout)['version']=='a'*40
- with Session(DRIVER,drivercfg) as session:
+ with NativeSession(LIBRARY,DRIVER,drivercfg) as session:
   io=NativeIO(cfg,session);backend=NativeInstallation(cfg,session)
   with owner_io(io),installation_lock(state/'installation.lock'):
    for kind in ('body','controller'):

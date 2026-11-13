@@ -10,6 +10,8 @@ from pathlib import Path
 import platform
 import re
 import tarfile
+import shutil
+import stat
 import urllib.request
 from installation_guard import ContinuityError, durable_write, current_owner_io
 from native_package import validate
@@ -26,6 +28,94 @@ def private_directory(path):
     if owner is None or not hasattr(owner,'mkdir'):
         raise ContinuityError('Native package staging requires its protected owner storage scope')
     owner.mkdir(path)
+
+
+
+def create_payload_file(path, stream, mode=0o600):
+    """Create ownership before streaming large immutable package contents.
+
+    The whole caller action holds its installation lock. Staging is unpublished;
+    interruption retains the partial stage, never an installed replacement.
+    """
+    owner=current_owner_io()
+    if owner is None:raise ContinuityError('Private payload creation needs owner scope')
+    name,relative=owner.relative(path)
+    owner.session.private_write(name,relative,b'',create_only=True)
+    before=path.stat(follow_symlinks=False)
+    flags=os.O_WRONLY | getattr(os,'O_NOFOLLOW',0) | getattr(os,'O_BINARY',0)
+    fd=os.open(path,flags)
+    with os.fdopen(fd,'wb') as output:
+        opened=os.fstat(output.fileno())
+        if (not stat.S_ISREG(opened.st_mode) or opened.st_size!=0
+                or (before.st_dev,before.st_ino)!=(opened.st_dev,opened.st_ino)):
+            raise ContinuityError('Fresh staged file identity changed before contents')
+        shutil.copyfileobj(stream,output,1024*1024)
+        output.flush();os.fsync(output.fileno())
+    if os.name!='nt':path.chmod(0o700 if mode & 0o111 else 0o600)
+
+
+def extract_private_archive(archive,package):
+    """Extract one exact inventoried archive into an empty protected directory."""
+    with tarfile.open(archive,'r:gz') as source:
+        members=source.getmembers();total=0;names=set();folded=set()
+        for item in members:
+            path=Path(item.name);total+=item.size
+            if (path.is_absolute() or path==Path('.') or '..' in path.parts
+                    or '\\' in item.name or ':' in item.name or item.name in names
+                    or (os.name=='nt' and item.name.casefold() in folded)
+                    or not (item.isfile() or item.isdir() or item.issym())
+                    or total>5*1024**3):
+                raise ContinuityError('Native archive contains an unsafe entry')
+            names.add(item.name);folded.add(item.name.casefold())
+        index=source.getmember('manifest.json')
+        if not index.isfile() or index.size>32*1024**2:
+            raise ContinuityError('Native archive manifest is invalid')
+        manifest=__import__('json').load(source.extractfile(index))
+        payload={m.name for m in members if not m.isdir()}
+        if payload!=set(manifest['files'])|{'manifest.json'}:
+            raise ContinuityError('Native archive contains untracked payload')
+        directories=set()
+        for item in members:
+            path=Path(item.name)
+            directories.update(p for p in path.parents if p!=Path('.'))
+            if item.isdir():directories.add(path)
+        link_names={Path(m.name) for m in members if m.issym()}
+        if directories & link_names:
+            raise ContinuityError('Native archive link cannot be a payload parent')
+        for path in sorted(directories,key=lambda p:(len(p.parts),p.as_posix())):
+            private_directory(package/path)
+        for item in members:
+            path=package/item.name
+            if item.isfile():
+                with source.extractfile(item) as stream:create_payload_file(path,stream,item.mode)
+            elif item.issym():
+                target=Path(item.linkname)
+                if (target.is_absolute() or '\\' in item.linkname or ':' in item.linkname
+                        or not (path.parent/target).resolve().is_relative_to(package.resolve())):
+                    raise ContinuityError('Native archive link escapes package')
+                os.symlink(item.linkname,path)
+    return validate(package)
+
+
+def copy_private_payload(bundle,prefix,destination,manifest):
+    """Copy inventoried files only; no developer cache or untracked source."""
+    private_directory(destination)
+    selected={name[len(prefix)+1:]:entry for name,entry in manifest['files'].items()
+              if name.startswith(prefix+'/')}
+    if not selected:raise ContinuityError('Empty package payload selection')
+    directories={p for name in selected for p in Path(name).parents if p!=Path('.')}
+    for rel in sorted(directories,key=lambda p:(len(p.parts),p.as_posix())):
+        private_directory(destination/rel)
+    for name,entry in selected.items():
+        source=bundle/prefix/name;target=destination/name
+        if 'link' in entry:
+            if not (target.parent/entry['link']).resolve().is_relative_to(destination.resolve()):
+                raise ContinuityError('Copied runtime link escapes selected payload')
+            os.symlink(entry['link'],target)
+        else:
+            with source.open('rb') as stream:create_payload_file(target,stream,source.stat().st_mode)
+            if hashlib.sha256(target.read_bytes()).hexdigest()!=entry['sha256']:
+                raise ContinuityError('Copied package content differs from manifest')
 
 
 def stage_package(provider,revision,previous,stage):
@@ -59,24 +149,7 @@ def stage_package(provider,revision,previous,stage):
     if size!=asset['size'] or h.hexdigest()!=digest[7:]:
         raise ContinuityError('Native archive differs from the published artifact')
     package=stage/'package';private_directory(package)
-    with tarfile.open(archive,'r:gz') as source:
-        total=0
-        members=source.getmembers()
-        for item in members:
-            path=Path(item.name);total+=item.size
-            if (path.is_absolute() or '..' in path.parts or '\\' in item.name or ':' in item.name
-                    or not (item.isfile() or item.isdir() or item.issym()) or total>5*1024**3):
-                raise ContinuityError('Native archive contains an unsafe entry')
-        # Protected roots and directories come from the shared storage owner,
-        # including on Windows. Archive extraction never establishes ACLs.
-        directories=set()
-        for item in members:
-            path=Path(item.name)
-            directories.update(p for p in path.parents if p!=Path('.'))
-            if item.isdir():directories.add(path)
-        for path in sorted(directories,key=lambda p:(len(p.parts),p.as_posix())):
-            private_directory(package/path)
-        source.extractall(package,filter='data')
+    extract_private_archive(archive,package)
     manifest=validate(package)
     if manifest.get('target')!=target() or manifest.get('source_clean') is not True:
         raise ContinuityError('Native package target or source provenance differs')
@@ -89,6 +162,12 @@ def stage_package(provider,revision,previous,stage):
     if (native.get('repository')!='microsoft/amplifier-constellation'
             or native.get('driver_sha256')!=hashlib.sha256(driver.read_bytes()).hexdigest()):
         raise ContinuityError('Shared native driver change requires its separately reviewed installation migration')
+    enrolled=provider.c['native_platform']
+    if 'library' in enrolled:
+        library=Path(enrolled['library'])
+        if (native.get('abi')!=1 or native.get('library_sha256')!=enrolled.get('library_sha256')
+                or hashlib.sha256(library.read_bytes()).hexdigest()!=enrolled['library_sha256']):
+            raise ContinuityError('Native library change requires a separately reviewed installation migration')
     for key in ('python','node'):
         binary=package/manifest['commands'][key]
         if hashlib.sha256(binary.read_bytes()).hexdigest()!=hashlib.sha256(Path(provider.c[key]).read_bytes()).hexdigest():

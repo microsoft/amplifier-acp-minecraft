@@ -7,23 +7,22 @@ for name in ('bundle','driver','receipt'):parser.add_argument('--'+name,type=Pat
 args=parser.parse_args();bundle=args.bundle.resolve()
 sys.path.insert(0,str(bundle/'app'))
 manifest=json.loads((bundle/'manifest.json').read_text())
-from constellation_native import initialize_root,initialize_config,Session,Refused
+from constellation_native import initialize_root,initialize_config,NativeSession,Refused
 from installation_native import NativeIO
 from installation_guard import owner_io,installation_lock,read
 from installation_retention import Retention
 from installation_source_provider import fingerprint
 import shutil
 
-class TrackedSession(Session):
+class TrackedSession(NativeSession):
  calls=[]
  def tree_remove(self,*args,**kwargs):
-  self.calls.append({'timeout':kwargs.get('timeout'),'session_timeout':self.timeout})
+  self.calls.append({'timeout':kwargs.get('timeout'),'synchronous':True})
   result=super().tree_remove(*args,**kwargs)
-  assert self.timeout==30
   return result
 
 def main():
- driver=args.driver.resolve(); checks=[]
+ driver=args.driver.resolve();library=bundle/manifest['commands']['native_library']; checks=[]
  with tempfile.TemporaryDirectory(prefix='minecraft-native-retention-') as temp:
   base=Path(temp).resolve();home=base/'home';state=base/'state';shared=base/'shared';plans=shared/'plans'
   for p in [home,state,shared,plans,state/'stages',state/'backups',home/'app',home/'venv']:
@@ -34,13 +33,13 @@ def main():
   # domain write. Production retention journals below use NativeIO.
   (shared/'state.json').write_text(json.dumps({'state':'checking','transaction':None}),encoding='utf-8')
   cfg={'home':str(home),'state':str(state),'shared_plans':str(plans),'app':str(home/'app'),'venv':str(home/'venv'),
-       'native_platform':{'version':1,'regenerable_tree_removal':1}}
+       'native_platform':{'version':1,'library':str(library),'regenerable_tree_removal':1}}
   owner={'version':1,'roots':{'home':str(home),'state':str(state)},'locks':{'installation':str(state/'installation.lock')},
          'regenerable_trees':{n:{'root':'state','path':n,'lock':'installation'} for n in ('stages','backups')}}
   conf=state/'driver.json';initialize_config(driver,conf,owner)
   keep=Retention(cfg); outside=base/'outside';outside.mkdir();sentinel=outside/'untouched';sentinel.write_text('outside')
   stage_id=str(uuid.uuid4()); retained_id=str(uuid.uuid4()); current_id=str(uuid.uuid4())
-  with TrackedSession(driver,conf) as session,owner_io(NativeIO(cfg,session,cleanup_deadline=time.monotonic()+600)),installation_lock(state/'installation.lock'):
+  with TrackedSession(library,driver,conf) as session,owner_io(NativeIO(cfg,session,cleanup_deadline=time.monotonic()+600)),installation_lock(state/'installation.lock'):
    assert session.describe()['regenerable_tree_removal']==1
    with patch.object(shutil.rmtree,'avoids_symlink_attacks',False):
     assert keep.safe_path('stage',stage_id)==state/'stages'/stage_id
@@ -61,7 +60,7 @@ def main():
    assert result=={'pruned':['stage/'+stage_id]},result
    record=keep.owned('stage',stage_id);assert record['state']=='pruned' and record['expected_tree'] is not None
    assert not path.exists() and sentinel.read_text()=='outside'
-   assert TrackedSession.calls==[{'timeout':120.0,'session_timeout':30.0}],TrackedSession.calls
+   assert TrackedSession.calls==[{'timeout':None,'synchronous':True}],TrackedSession.calls
    checks.append('actual driver removes one unreferenced failed stage after durable expected identity; outside link target preserved')
    assert (state/'stages'/retained_id).exists() and (state/'stages'/current_id).exists()
    checks.append('retained shared plan and current app stage protected')
@@ -70,7 +69,7 @@ def main():
    assert session.tree_inspect('stages',stage_id) is None
    assert 'held' in keep.prune(fingerprint)
    checks.append('absent uncertain pruning record blocks collection; no automatic replay or false recovery')
-  with Session(driver,conf) as session:
+  with NativeSession(library,driver,conf) as session:
    expected=session.tree_inspect('stages',retained_id)
    try:session.tree_remove('stages',retained_id,expected)
    except Refused:pass

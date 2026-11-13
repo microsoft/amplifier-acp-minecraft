@@ -217,3 +217,41 @@ Other calls retain the Session default; service, prepare, verify and restore
 budgets do not change. Consumers without an enclosing cleanup deadline keep the
 Session default. The extended per-call API requires the separately qualified
 shared candidate; unit budget tests alone do not qualify a Windows removal.
+
+
+### Fresh local setup
+
+After verifying the downloaded target archive, use its fixed launcher:
+`./minecraft setup --plan /absolute/private/setup.json` on Unix, or
+`minecraft.cmd setup --plan C:\absolute\private\setup.json` on Windows.
+The Windows entry point uses bundled Python; it does not require PowerShell or
+change execution policy. The package directory must remain at its reviewed path.
+
+The local plan has `schema: 1`, a **new** absolute `root`, the normal Minecraft
+`game` configuration (including its control port and token), and the existing
+ACP `endpoint` definition (`command`, `cwd`, and optional environment). An
+optional `service_connection` is the existing owner-defined connection
+metadata. This input may contain credentials: keep it private. Setup does not
+install an engine, copy another account, log in, create a session or authorize
+world work.
+
+Setup creates separate private `home` and `state` directories, copies only
+inventoried application/private-Python/helper bytes, and records its intent.
+It uses the exact bundled library and driver, initializes protected profiles,
+and registers fixed body/controller services **without starting them**. It
+returns the owner configuration and receipt paths. A configured screenshot
+browser defaults to the bundled executable. Existing homes, including empty
+roots and incomplete attempts, refuse; setup is never an implicit recovery or
+registration retry. Retain any uncertain receipt for owner reconciliation.
+
+Registration does not enroll the updater or enable a schedule. Existing
+installation enrollment and Connection controls retain their separate owner
+configuration, continuity checks, and Connect/Disconnect semantics. Updating an
+existing installation's helper/library is a separately qualified migration;
+this new-home command never selects or migrates an existing home.
+
+The disposable `ops/native/verify_setup.py` fixture executes this setup, proves
+services remain stopped, and stages an entire exact archive through the
+production provider using local release metadata/download fixtures. It records
+actual elapsed staging time against the unchanged 600-second provider budget.
+That is separate from archive extraction timing and the offline package check.

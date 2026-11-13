@@ -82,9 +82,11 @@ def inventory(root):
     return entries
 
 
-def build(output, cache, *, browser=True, native_shared=None, native_driver=None):
+def build(output, cache, *, browser=True, native_shared=None, native_driver=None, native_library=None):
     if bool(native_shared) != bool(native_driver):
         raise ValueError('Shared source and exact native driver must be supplied together')
+    if native_shared and not native_library:
+        raise ValueError('Exact shared caller-process library is required with the driver')
     lock = json.loads((ROOT/'ops/native/runtime-lock.json').read_text())
     selected = target()
     spec = lock['targets'][selected]
@@ -150,7 +152,9 @@ def build(output, cache, *, browser=True, native_shared=None, native_driver=None
             (output/'native').mkdir()
             name='constellation-native-driver.exe' if windows else 'constellation-native-driver'
             shutil.copy2(native_driver,output/'native'/name)
-            shared={'repository':'microsoft/amplifier-constellation','source':shared_revision,
+            library_name={'Windows':'constellation_native_driver.dll','Darwin':'libconstellation_native_driver.dylib','Linux':'libconstellation_native_driver.so'}[platform.system()]
+            shutil.copy2(native_library,output/'native'/library_name)
+            shared={'abi':1,'library':'native/'+library_name,'library_sha256':sha(output/'native'/library_name),'repository':'microsoft/amplifier-constellation','source':shared_revision,
                     'driver':'native/'+name,'driver_sha256':sha(output/'native'/name)}
         packages = subprocess.check_output([str(python),'-m','pip','list','--format=json'],env=env)
         (output/'python-packages.json').write_bytes(packages)
@@ -166,6 +170,7 @@ def build(output, cache, *, browser=True, native_shared=None, native_driver=None
         if shared:
             manifest['native_platform']=shared
             manifest['commands']['native_driver']=shared['driver']
+            manifest['commands']['native_library']=shared['library']
         (output/'manifest.json').write_text(json.dumps(manifest,sort_keys=True,indent=2)+'\n')
         run([python,'-I',output/'launch.py','doctor'],env=env)
         return manifest
@@ -181,5 +186,6 @@ if __name__ == '__main__':
     parser.add_argument('--without-browser',action='store_true',help='Explicitly incomplete developer bundle only')
     parser.add_argument('--native-shared',type=Path)
     parser.add_argument('--native-driver',type=Path)
+    parser.add_argument('--native-library',type=Path)
     args=parser.parse_args()
-    build(args.output.resolve(),args.cache.resolve(),browser=not args.without_browser,native_shared=args.native_shared.resolve() if args.native_shared else None,native_driver=args.native_driver.resolve() if args.native_driver else None)
+    build(args.output.resolve(),args.cache.resolve(),browser=not args.without_browser,native_shared=args.native_shared.resolve() if args.native_shared else None,native_driver=args.native_driver.resolve() if args.native_driver else None,native_library=args.native_library.resolve() if args.native_library else None)

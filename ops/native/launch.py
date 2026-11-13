@@ -64,11 +64,16 @@ def main():
     parser=argparse.ArgumentParser(description='Minecraft connector with private Node, Python and official ACP SDK')
     commands=parser.add_subparsers(dest='command',required=True)
     commands.add_parser('doctor',help='Read-only package/runtime verification')
+    setup=commands.add_parser('setup',help='Prepare a fresh private home and register stopped services')
+    setup.add_argument('--plan',type=Path,required=True)
     for name in ('body','controller'):
         p=commands.add_parser(name);p.add_argument('--home',type=Path,required=True)
     args=parser.parse_args()
     if args.command=='doctor':
         print(json.dumps(doctor(ROOT)));return
+    if args.command=='setup':
+        from installation_native_bootstrap import setup
+        print(json.dumps(setup(ROOT,json.loads(args.plan.read_bytes()))));return
     manifest=validate(ROOT)
     home=args.home.expanduser().resolve()
     if not home.is_dir() or not (home/'config.json').is_file():
