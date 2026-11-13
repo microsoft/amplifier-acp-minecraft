@@ -179,6 +179,7 @@ def run_case(spec, destination, lose_ack):
         from test_driver import protect
         for item in [root,*root.rglob('*')]:
             if not item.is_symlink():protect(item)
+        if os.name!='nt':driver.chmod(0o700)
         initialize_config(driver, config, {'version':1,'roots':{'home':str(home),'state':str(state)},
             'locks':{'installation':str(state/'installation.lock')},'services':services,
             'commands':{
