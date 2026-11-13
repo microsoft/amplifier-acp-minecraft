@@ -20,6 +20,9 @@ jobs:
           - {target: windows-arm64, runner: windows-11-arm}
     runs-on: ${{ matrix.runner }}
     steps:
+      - name: Preserve exact Git fixture bytes on Windows
+        if: runner.os == 'Windows'
+        run: git config --global core.autocrlf false
       - uses: actions/checkout@v4
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
