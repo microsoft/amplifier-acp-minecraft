@@ -3,7 +3,8 @@ import asyncio
 import json
 import sys
 from acp import Agent, InitializeResponse, NewSessionResponse, PromptResponse, run_agent
-from acp.schema import AgentCapabilities, AgentMessageChunk, TextContentBlock, LoadSessionResponse
+from acp.schema import (AgentCapabilities, AgentMessageChunk, TextContentBlock, LoadSessionResponse,
+                        ResumeSessionResponse, SessionCapabilities, SessionResumeCapabilities)
 from acp.exceptions import RequestError
 
 
@@ -13,18 +14,35 @@ class Peer(Agent):
         self.release = asyncio.Event()
 
     async def initialize(self, protocol_version, **kwargs):
+        self.session_calls = []
         return InitializeResponse(protocol_version=protocol_version,
-                                  agent_capabilities=AgentCapabilities(load_session=True),
+                                  agent_capabilities=AgentCapabilities(
+                                      load_session='resume-only' not in sys.argv,
+                                      session_capabilities=SessionCapabilities(resume=SessionResumeCapabilities())),
                                   field_meta=({'com.microsoft.amplifier.context-snapshot': {
                                       'version': 1, 'contentBlocks': True, 'originalHistoryPreserved': True}}
                                       if 'snapshots' in sys.argv else None))
 
     async def new_session(self, cwd, **kwargs):
+        self.session_calls.append({'method': 'new', 'cwd': cwd, 'kwargs': kwargs})
         return NewSessionResponse(session_id='sdk-session')
 
     async def load_session(self, session_id, cwd, **kwargs):
+        self.session_calls.append({'method': 'load', 'session_id': session_id, 'cwd': cwd, 'kwargs': kwargs})
         await self.chunk(session_id, 'archived')
         return LoadSessionResponse()
+
+    async def resume_session(self, session_id, cwd, **kwargs):
+        self.session_calls.append({'method': 'resume', 'session_id': session_id, 'cwd': cwd, 'kwargs': kwargs})
+        if 'resume-fails' in sys.argv:
+            raise RequestError(-32001, 'private resume failure')
+        if 'resume-lost' in sys.argv:
+            import os
+            os._exit(0)
+        if 'resume-stalls' in sys.argv:
+            await asyncio.Event().wait()
+        await self.chunk(session_id, 'archived')
+        return ResumeSessionResponse()
 
     async def chunk(self, session_id, text, message_id=None, meta=None):
         await self.connection.session_update(session_id=session_id, update=AgentMessageChunk(
@@ -62,6 +80,9 @@ class Peer(Agent):
         return PromptResponse(stop_reason='end_turn')
 
     async def ext_method(self, method, params):
+        if method == 'test/session-calls':
+            return json.loads(json.dumps({'calls': self.session_calls}, default=lambda value:
+                value.model_dump(mode='json', by_alias=True, exclude_none=True)))
         if method == 'test/release':
             self.release.set()
             return {'source': params, 'state': 'received'}
