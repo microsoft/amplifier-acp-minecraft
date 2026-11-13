@@ -53,18 +53,18 @@ jobs:
       - name: Build actual target shared driver
         shell: bash
         run: |
-          cargo +1.93.0 build --locked --manifest-path native-shared/crates/native-platform-driver/Cargo.toml
+          cargo +1.93.0 build --release --locked --manifest-path native-shared/crates/native-platform-driver/Cargo.toml
       - name: Build shared disposable Windows service cleanup fixture
         if: runner.os == 'Windows'
         shell: bash
-        run: cargo +1.93.0 build --locked --manifest-path native-shared/crates/native-platform/Cargo.toml --features installation --example windows_service_fixture
+        run: cargo +1.93.0 build --release --locked --manifest-path native-shared/crates/native-platform/Cargo.toml --features installation --example windows_service_fixture
       - name: Bind and inspect actual native build outputs
         shell: bash
         run: |
           python - <<'PYCODE'
           import os, pathlib, platform, subprocess, sys
           shared=pathlib.Path('native-shared').resolve()
-          target=pathlib.Path('target')/os.environ.get('CARGO_BUILD_TARGET','')/'debug'
+          target=pathlib.Path('target')/os.environ.get('CARGO_BUILD_TARGET','')/'release'
           suffix='.exe' if os.name=='nt' else ''
           driver=shared/'crates/native-platform-driver'/target/('constellation-native-driver'+suffix)
           subprocess.run([sys.executable,str(shared/'tests/native_python/inspect_driver.py'),'--driver',str(driver),'--output','native-driver-inspection.json'],check=True)
@@ -85,6 +85,12 @@ jobs:
       - name: Build private native runtimes and dependencies (Windows)
         if: runner.os == 'Windows'
         run: python ops/native/build_bundle.py --output bundle --cache runtime-cache --native-shared native-shared --native-driver "${{ env.MINECRAFT_NATIVE_DRIVER }}" --native-library "${{ env.MINECRAFT_NATIVE_LIBRARY }}"
+      - name: Qualify packaged release ABI (Unix)
+        if: runner.os != 'Windows'
+        run: bundle/python/bin/python3 -I ops/native/verify_native_boundary.py --bundle bundle --shared native-shared --instance instance-fixture --receipt native-boundary-result.json
+      - name: Qualify packaged release ABI (Windows)
+        if: runner.os == 'Windows'
+        run: bundle/python/python.exe -I ops/native/verify_native_boundary.py --bundle bundle --shared native-shared --instance instance-fixture --receipt native-boundary-result.json
       - name: Prepare disposable Linux native service manager
         if: runner.os == 'Linux'
         shell: bash
@@ -147,6 +153,7 @@ jobs:
           path: |
             native-driver-inspection.json
             native-library-inspection.json
+            native-boundary-result.json
             native-setup-result.json
             native-worker-result.json
             native-connect-result/
@@ -165,6 +172,7 @@ jobs:
             minecraft-${{ matrix.target }}.tar.gz.json
             native-driver-inspection.json
             native-library-inspection.json
+            native-boundary-result.json
             native-setup-result.json
             native-worker-result.json
             native-connect-result/
