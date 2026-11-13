@@ -57,7 +57,8 @@ def child(spec_path):
     root = Path(spec['root'])
     fixture = json.loads((root/'synthetic-service-state.json').read_text())
     envelope = spec['envelope']
-    observed = {'pid': os.getpid(), 'calls': [], 'lock_acquired': False}
+    observed = {'pid': os.getpid(), 'calls': [], 'call_timings': [], 'lock_acquired': False,
+                'child_started_monotonic':time.monotonic()}
     caught = None
     with native_scope(cfg) as session, installation_lock(Path(cfg['state'])/'installation.lock'):
         observed['lock_acquired'] = True
@@ -75,7 +76,9 @@ def child(spec_path):
                     observed['intent_before_dispatch'] = journal
                     if spec['mode'] != 'launch':
                         raise AssertionError('STATUS attempted a second probe launch')
+            started=time.monotonic()
             raw = invoke(function, *args)
+            if request:observed['call_timings'].append({'op':request['op'],'seconds':time.monotonic()-started})
             if request and request['op'] == 'process.launch':
                 # Retain the real native identity only in the test observer;
                 # the domain does not receive it when reply loss is injected.
@@ -96,6 +99,7 @@ def child(spec_path):
     # This extra file persists only synthetic service observations for the test.
     write(root/'synthetic-service-state.json', fixture)
     observed['lock_scope_exited'] = True
+    observed['child_finished_monotonic']=time.monotonic()
     write(spec['child_receipt'], observed)
     assert bool(caught) == (spec['mode'] == 'launch' and spec['lose_ack'])
 
@@ -124,6 +128,8 @@ def run_case(spec, destination, lose_ack):
     endpoint_identity = None
     launch_invoked = False
     cleaned = False
+    pending_output=[]
+    callers=[]
     try:
         initialize_root(driver_input, root)
         home, state = root/'home', root/'state'
@@ -221,12 +227,23 @@ def run_case(spec, destination, lose_ack):
             child_receipt=destination/f'{"lost" if lose_ack else "normal"}-{number}-result.json'
             write(child_spec,{**base_child,'mode':mode,'child_receipt':str(child_receipt)})
             started=time.monotonic()
-            completed=subprocess.run([sys.executable,'-I',str(Path(__file__).resolve()),'--child',str(child_spec)],
-                capture_output=True,text=True,timeout=30,close_fds=True)
-            record={'mode':mode,'elapsed':time.monotonic()-started,'returncode':completed.returncode,
-                    'stdout':completed.stdout,'stderr':completed.stderr}
+            process=subprocess.Popen([sys.executable,'-I',str(Path(__file__).resolve()),'--child',str(child_spec)],
+                stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True,close_fds=True)
+            callers.append(process)
+            # Process exit and pipe EOF are different facts on Windows. Retain
+            # PIPE capture, but measure exit independently so leaked inherited
+            # handles cannot turn an endpoint wait into a caller-lifetime claim.
+            code=process.wait(timeout=30)
+            record={'mode':mode,'caller_exit_seconds':time.monotonic()-started,'returncode':code}
+            try:
+                stdout,stderr=process.communicate(timeout=1)
+                record.update(stdout=stdout,stderr=stderr,output_pending_after_caller_exit=False)
+            except subprocess.TimeoutExpired:
+                record.update(stdout='',stderr='',output_pending_after_caller_exit=True)
+                pending_output.append((process,record))
+            record['elapsed']=time.monotonic()-started
             report['invocations'].append(record)
-            assert completed.returncode==0,record
+            assert code==0,record
             record['receipt']=read(child_receipt)
             return record['receipt']
         launch_invoked=True
@@ -292,6 +309,11 @@ def run_case(spec, destination, lose_ack):
             report['failure']={'type':type(primary_error).__name__,'message':str(primary_error)}
         safe_cleanup=not launch_invoked
         try:
+            if cfg:
+                for journal in (Path(cfg['state'])/'connections').glob('*.json'):
+                    saved=read(journal)
+                    if saved.get('probe_result') and Path(saved['probe_result']).is_file():
+                        report['terminal_probe_result_before_cleanup']=read(Path(saved['probe_result']))
             if root.exists():
                 (root/'release-endpoint').touch(exist_ok=True)
             if identity is None and (root/'launch-observation.json').is_file():
@@ -304,7 +326,14 @@ def run_case(spec, destination, lose_ack):
                     if endpoint_identity is not None:
                         wait_for(lambda:not observation.process_matches(endpoint_identity),10,'Owned endpoint cleanup did not settle')
                         safe_cleanup=True
+            unsettled_callers=[process.pid for process in callers if process.poll() is None]
+            if unsettled_callers:
+                report['unsettled_caller_pids']=unsettled_callers
+                safe_cleanup=False
             if safe_cleanup:
+                for process,record in pending_output:
+                    stdout,stderr=process.communicate(timeout=1)
+                    record.update(stdout=stdout,stderr=stderr,output_collected_after_probe_cleanup=True)
                 shutil.rmtree(temporary)
         except Exception as error:
             report['cleanup_error']={'type':type(error).__name__,'message':str(error)}
@@ -313,7 +342,8 @@ def run_case(spec, destination, lose_ack):
             if not cleaned:
                 report['cleanup_unknown_retained_path']=str(temporary)
             report['disposable_home_removed']=cleaned
-            report['passed']=bool(report.get('passed') and cleaned and not report.get('cleanup_error'))
+            report['pipe_lifetime_violation']=bool(pending_output)
+            report['passed']=bool(report.get('passed') and cleaned and not report.get('cleanup_error') and not pending_output)
             write(destination/('lost-ack.json' if lose_ack else 'normal.json'),report)
     assert report['passed'],report
     return report
