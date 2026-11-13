@@ -123,7 +123,7 @@ def wait_for(predicate, seconds, description):
 def run_case(spec, destination, lose_ack, worker=None):
     from constellation_native import NativeSession, initialize_root, initialize_config
     from installation_native import native_scope
-    from installation_guard import installation_lock, durable_write, read
+    from installation_guard import installation_lock, durable_write, read, read_bytes
     from installation_connection import Connection
     from test_installation_connection import Fake
     # Only fresh fixture roots use the shared test preparation helper. Native
@@ -146,6 +146,12 @@ def run_case(spec, destination, lose_ack, worker=None):
     cleaned = False
     pending_output=[]
     callers=[]
+    def owner_snapshot(path, *, raw=False):
+        # Observe concurrently published owner journals through the same
+        # explicit data-reader enrollment as the production Connection path.
+        # Only absence is polled; policy/read/transport failures still escape.
+        with native_scope(cfg):
+            return read_bytes(path) if raw else read(path)
     try:
         initialize_root(driver_input, root)
         home, state = root/'home', root/'state'
@@ -174,7 +180,8 @@ def run_case(spec, destination, lose_ack, worker=None):
             + 'from constellation_native import NativeSession\n'
             + 'with NativeSession('+repr(str(library))+','+repr(str(driver))+','+repr(str(config))+') as session:\n'
             + ' identity=session.process_identity(os.getpid())\n'
-            + '(root/"endpoint-started.json").write_text(json.dumps(identity))\n'
+            + '(root/"endpoint-started.tmp").write_text(json.dumps(identity))\n'
+            + 'os.replace(root/"endpoint-started.tmp",root/"endpoint-started.json")\n'
             + 'until=time.monotonic()+20\n'
             + 'while not (root/"release-endpoint").exists():\n'
             + ' if time.monotonic()>until: raise TimeoutError("bounded disposable endpoint wait")\n'
@@ -286,7 +293,7 @@ def run_case(spec, destination, lose_ack, worker=None):
         assert first['calls'].count('process.launch')==1
         identity=first['actual_launch_response']['result']
         journal_path=state/'connections'/f'{request_id}.json'
-        journal=read(journal_path)
+        journal=owner_snapshot(journal_path)
         assert journal['phase']=='verifying'
         assert ('probe_process' not in journal) if lose_ack else journal['probe_process']==identity
         wait_for(lambda:(root/'endpoint-started.json').exists(),10,'Real supervised endpoint did not start')
@@ -298,7 +305,7 @@ def run_case(spec, destination, lose_ack, worker=None):
             report['short_caller_exited_probe_and_endpoint_alive']=True
             report['probe_identity']=identity
             report['endpoint_identity']=endpoint_identity
-        before_status=journal_path.read_bytes()
+        before_status=owner_snapshot(journal_path,raw=True)
         for _ in range(2):
             status=invoke('status')
             assert status['lock_acquired'] and 'process.launch' not in status['calls']
@@ -307,13 +314,18 @@ def run_case(spec, destination, lose_ack, worker=None):
             else:
                 assert status['result']['context_ready']
                 assert 'process.matches' in status['calls']
-            assert journal_path.read_bytes()==before_status
+            assert owner_snapshot(journal_path,raw=True)==before_status
             assert not Path(journal['probe_result']).exists()
             assert (home/'installation-updates/gate.json').exists()
         report['fresh_status_reacquires_lock_before_probe_terminal']=True
         (root/'release-endpoint').touch()
-        wait_for(lambda:Path(journal['probe_result']).exists(),15,'Original-session receipt did not arrive')
-        report['probe_receipt']=read(journal['probe_result'])
+        observed_receipt={}
+        def receipt_available():
+            try:observed_receipt['value']=owner_snapshot(journal['probe_result'])
+            except FileNotFoundError:return False
+            return True
+        wait_for(receipt_available,15,'Original-session receipt did not arrive')
+        report['probe_receipt']=observed_receipt['value']
         assert report['probe_receipt']['verified'] is True,report['probe_receipt']
         assert report['probe_receipt']['saved_session_loaded'] is True
         assert report['probe_receipt']['new_session_created'] is False
@@ -322,14 +334,14 @@ def run_case(spec, destination, lose_ack, worker=None):
             status=invoke('status')
             if status['result']['settled']:break
         assert status['result']['state']=='connected' and status['result']['settled']
-        terminal=journal_path.read_bytes()
+        terminal=owner_snapshot(journal_path,raw=True)
         assert invoke('status')['result']==status['result']
-        assert journal_path.read_bytes()==terminal
+        assert owner_snapshot(journal_path,raw=True)==terminal
         assert sum(r['receipt']['calls'].count('process.launch') for r in report['invocations'])==1
         assert {p.name:p.read_bytes() for p in home.iterdir() if p.is_file()}==protected
         report['acp_events']=[json.loads(line) for line in (root/'acp.jsonl').read_text().splitlines()]
         assert report['acp_events']==[{'action':'initialize'},{'action':'load','session':'original-fixture-session'}]
-        report['terminal']=read(journal_path)
+        report['terminal']=owner_snapshot(journal_path)
         report['original_files_unchanged']=True
         report['one_launch_no_redispatch']=True
         with NativeSession(library,driver,config) as observation:
@@ -345,9 +357,9 @@ def run_case(spec, destination, lose_ack, worker=None):
         try:
             if cfg:
                 for journal in (Path(cfg['state'])/'connections').glob('*.json'):
-                    saved=read(journal)
+                    saved=owner_snapshot(journal)
                     if saved.get('probe_result') and Path(saved['probe_result']).is_file():
-                        report['terminal_probe_result_before_cleanup']=read(Path(saved['probe_result']))
+                        report['terminal_probe_result_before_cleanup']=owner_snapshot(Path(saved['probe_result']))
             if root.exists():
                 (root/'release-endpoint').touch(exist_ok=True)
             if identity is None and (root/'launch-observation.json').is_file():
