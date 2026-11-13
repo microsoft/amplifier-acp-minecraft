@@ -14,7 +14,7 @@ import uuid
 
 from installation_guard import ContinuityError, owner_io, service_stopped
 from installation_native import NativeIO
-from installation_native_package import copy_private_payload, target
+from installation_native_package import copy_private_payload, fill_created_payload_file, target
 from installation_native_setup import profiles
 from native_package import validate
 
@@ -52,7 +52,7 @@ def plan_paths(bundle,plan):
 
 
 def setup(bundle,plan):
-    from constellation_native import NativeSession, initialize_root, initialize_config
+    from constellation_native import Session, NativeSession, initialize_root, initialize_config
     bundle=Path(bundle).resolve();root,home,state=plan_paths(bundle,plan)
     manifest=validate(bundle)
     if manifest.get('target')!=target() or manifest.get('source_clean') is not True:
@@ -80,6 +80,23 @@ def setup(bundle,plan):
     base={'version':1,'roots':{'home':str(home),'state':str(state)},
           'locks':{'installation':str(state/'installation.lock')}}
     initialize_config(driver,bootstrap,base)
+    # Initial setup has exclusive allocation of a new, unpublished home, not a
+    # helper-held installation lease. Use the fixed CLI only to allocate private
+    # empty files. Close it before copying, and never reuse a partial setup root.
+    # All subsequent lock-dependent work uses the actual caller-process ABI.
+    packaged_driver,packaged_library=driver,library
+    copies=[(packaged_driver,state/'native'/driver.name,native['driver_sha256']),
+            (packaged_library,state/'native'/library.name,native['library_sha256'])]
+    with Session(packaged_driver,bootstrap) as initial:
+        initial.private_write('state','setup.json',encoded(intent),create_only=True)
+        initial.private_dir('state','native')
+        for _,destination,_ in copies:
+            initial.private_write('state',destination.relative_to(state).as_posix(),b'',create_only=True)
+    for source,destination,digest in copies:
+        with source.open('rb') as stream:fill_created_payload_file(destination,stream,0o700)
+        if hashlib.sha256(destination.read_bytes()).hexdigest()!=digest:
+            raise ContinuityError('Private native copy differs from verified package')
+    driver,library=copies[0][1],copies[1][1]
     python=bundle/manifest['commands']['python'];node=bundle/manifest['commands']['node']
     relative_python=Path(manifest['commands']['python']).relative_to('python')
     helper_name=Path(manifest['commands']['task_helper']).name

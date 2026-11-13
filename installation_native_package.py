@@ -41,6 +41,11 @@ def create_payload_file(path, stream, mode=0o600):
     if owner is None:raise ContinuityError('Private payload creation needs owner scope')
     name,relative=owner.relative(path)
     owner.session.private_write(name,relative,b'',create_only=True)
+    fill_created_payload_file(path,stream,mode)
+
+
+def fill_created_payload_file(path,stream,mode):
+    """Fill a newly allocated private file, never replace an existing payload."""
     before=path.stat(follow_symlinks=False)
     flags=os.O_WRONLY | getattr(os,'O_NOFOLLOW',0) | getattr(os,'O_BINARY',0)
     fd=os.open(path,flags)

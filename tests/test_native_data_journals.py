@@ -102,7 +102,7 @@ class NativeDataJournalTests(unittest.TestCase):
     def test_missing_parent_is_not_repaired_during_read(self):
         self.peer.error=RuntimeError('missing protected parent')
         with owner_io(self.io),self.assertRaisesRegex(RuntimeError,'missing protected parent'):
-            read(self.path,default={})
+            read(self.path)
         self.assertEqual([c[0] for c in self.peer.calls],['read'])
         self.assertFalse(self.path.parent.exists())
 

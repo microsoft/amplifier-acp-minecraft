@@ -242,7 +242,11 @@ world work.
 
 Setup creates separate private `home` and `state` directories, copies only
 inventoried application/private-Python/helper bytes, and records its intent.
-It uses the exact bundled library and driver, initializes protected profiles,
+Before opening the first caller-process session, the fixed CLI creates new
+private empty driver/library files in that unpublished root. Setup copies and
+hash-verifies the exact bundled bytes there; it does not repair the extracted
+package's permissions or rely on a helper-held lock during copying.
+It then uses that exact private library/driver pair, initializes protected profiles,
 and registers fixed body/controller services **without starting them**. It
 returns the owner configuration and receipt paths. A configured screenshot
 browser defaults to the bundled executable. Existing homes, including empty

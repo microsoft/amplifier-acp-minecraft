@@ -38,7 +38,8 @@ class BootstrapTests(unittest.TestCase):
                    'endpoint':{'command':[str(self.engine)],'cwd':str(self.base)}}
         owner=self
         class Session:
-            def __init__(self,library,driver,config):
+            def __init__(self,*args):
+                config=args[-1];self.bootstrap_cli=len(args)==2
                 self.config=json.loads(Path(config).read_bytes());self.locked=False;owner.sessions.append(self)
             def describe(self):return {'private_data_read':1,'private_data_publication':1,'operations':['storage.read_data','storage.write_data']}
             def private_write_data(self,root,rel,data):return self.private_write(root,rel,data)
@@ -50,7 +51,7 @@ class BootstrapTests(unittest.TestCase):
                 try:yield
                 finally:self.locked=False
             def path(self,root,rel):
-                assert self.locked
+                assert self.locked or self.bootstrap_cli
                 p=Path(self.config['roots'][root])/rel
                 assert '..' not in Path(rel).parts
                 return p
@@ -70,7 +71,7 @@ class BootstrapTests(unittest.TestCase):
         def initialize_config(driver,path,value):
             owner.calls.append(('config',str(path)))
             with path.open('xb') as stream:stream.write(json.dumps(value).encode())
-        self.module=types.SimpleNamespace(NativeSession=Session,initialize_root=initialize_root,initialize_config=initialize_config)
+        self.module=types.SimpleNamespace(Session=Session,NativeSession=Session,initialize_root=initialize_root,initialize_config=initialize_config)
     def save_manifest(self):(self.bundle/'manifest.json').write_text(json.dumps(self.manifest))
     def run_setup(self):
         with patch.dict(sys.modules,{'constellation_native':self.module}),patch('installation_native_bootstrap.target',return_value='linux-arm64'):
@@ -85,6 +86,9 @@ class BootstrapTests(unittest.TestCase):
             for name in names:self.assertTrue((self.root/root/name).is_dir())
         self.assertEqual(json.loads((self.root/'home/endpoint.json').read_text()),self.plan['endpoint'])
         fixed=json.loads((self.root/'state/native.json').read_text())
+        self.assertEqual((self.root/'state/native/driver').read_bytes(),b'native_driver')
+        self.assertEqual((self.root/'state/native/library').read_bytes(),b'native_library')
+        self.assertEqual(fixed['registrations']['body']['executable'],str(self.root/'state/native/driver'))
         self.assertTrue(all(x['autostart'] is False for x in fixed['registrations'].values()))
         self.assertTrue(all(c[1] is False for c in self.calls if c[0]=='close'))
         before=len(self.calls)
