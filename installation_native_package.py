@@ -60,7 +60,8 @@ def extract_private_archive(archive,package):
         members=source.getmembers();total=0;names=set();folded=set()
         for item in members:
             path=Path(item.name);total+=item.size
-            if (path.is_absolute() or path==Path('.') or '..' in path.parts
+            if (path.is_absolute() or path==Path('.') or path.as_posix()!=item.name
+                    or '..' in path.parts or item.size<0
                     or '\\' in item.name or ':' in item.name or item.name in names
                     or (os.name=='nt' and item.name.casefold() in folded)
                     or not (item.isfile() or item.isdir() or item.issym())
@@ -141,11 +142,19 @@ def stage_package(provider,revision,previous,stage):
         raise ContinuityError('Native release artifact route/size is invalid')
     if stage.exists():raise ContinuityError('Native build destination must be a fresh unreferenced stage')
     private_directory(stage);archive=stage/'release.tar.gz';h=hashlib.sha256();size=0
-    with urllib.request.urlopen(url,timeout=120) as response,archive.open('xb') as out:
-        while block:=response.read(1024*1024):
+    class CheckedDownload:
+        def __init__(self,response):self.response=response
+        def read(self,amount):
+            nonlocal size
+            block=self.response.read(amount)
             size+=len(block)
             if size>asset['size']:raise ContinuityError('Native archive exceeded declared size')
-            h.update(block);out.write(block)
+            h.update(block)
+            return block
+    with urllib.request.urlopen(url,timeout=120) as response:
+        # The downloaded archive is also an owner-managed file. Establish its
+        # private owner before streaming, just as for its extracted payload.
+        create_payload_file(archive,CheckedDownload(response))
     if size!=asset['size'] or h.hexdigest()!=digest[7:]:
         raise ContinuityError('Native archive differs from the published artifact')
     package=stage/'package';private_directory(package)
