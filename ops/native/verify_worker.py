@@ -41,7 +41,7 @@ def main():
  import constellation_native
  spec={'app':str(bundle/'app'),'source':str(source),'shared':str(shared),'facade':str(Path(constellation_native.__file__).resolve().parents[1])};load(spec)
  from constellation_native import initialize_root,initialize_config,NativeSession
- from installation_native import native_scope
+ from installation_native import native_scope,NativeIO
  from installation_guard import installation_lock,durable_write
  from test_native_service_evidence import NativeFixture
  from test_driver import protect
@@ -63,10 +63,12 @@ def main():
    if scenario.endswith('disabled'):fixture.units[scenario.split('-')[0]].update(start_allowed=False,enabled=False)
    else:fixture.body.update(busy=True,turn_active=True)
    native_config=state/'native.json';owner=state/'owner.json'
-   cfg={'home':str(home),'state':str(state),'native_platform':{'version':1,'driver':str(driver),'library':str(library),
+   cfg={'home':str(home),'state':str(state),'native_platform':{'version':1,'data_journals':1,'driver':str(driver),'library':str(library),
      'library_sha256':hashlib.sha256(library.read_bytes()).hexdigest(),'config':str(native_config),'python':sys.executable,'services':{'body':'body','controller':'controller'}}}
    initialize_config(driver,native_config,{'version':1,'roots':{'home':str(home),'state':str(state)},'locks':{'installation':str(state/'installation.lock')},
       'services':{k:{'manager':manager,'name':'unused-worker-fixture-'+k+('.service' if sys.platform=='linux' else ''),'definition_path':None} for k in ('body','controller')}})
+   with NativeSession(library,driver,native_config) as session,session.lock('installation'):
+    NativeIO(cfg,session).prepare_data_journal_directories()
    # Fixed fixture inputs only; actual participant writes use native storage.
    owner.write_text(json.dumps(cfg));protect(owner)
    for p in home.rglob('*'):protect(p)

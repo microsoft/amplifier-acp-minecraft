@@ -135,7 +135,7 @@ def run_case(spec, destination, lose_ack):
         owner_config = state/'owner.json'
         config = state/'driver.json'
         cfg = {'home': str(home), 'state': str(state), 'session_verification_seconds': 12,
-               'native_platform': {'version': 1, 'driver': str(driver), 'config': str(config),
+               'native_platform': {'version': 1,'data_journals':1, 'driver': str(driver), 'config': str(config),
                   'library': str(library), 'library_sha256': sha(library),
                   'python': sys.executable, 'services': {'body':'body','controller':'controller'}},
                'service_connection': {'id':'minecraft-probe-fixture','label':'Disposable probe',
@@ -189,6 +189,8 @@ def run_case(spec, destination, lose_ack):
                     'cwd':str(root),'timeout_seconds':60,'result_root':'state'}}})
         # All fixture setup then goes through production domain/native I/O.
         with native_scope(cfg) as session, installation_lock(state/'installation.lock'):
+            from installation_native import NativeIO
+            NativeIO(cfg,session).prepare_data_journal_directories()
             durable_write(owner_config,cfg)
             disconnect_id, request_id = str(uuid.uuid4()), str(uuid.uuid4())
             def connection(identifier, action='status'):

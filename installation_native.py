@@ -16,6 +16,12 @@ from installation_guard import (ContinuityError, native_service, read,
                                 service_active, service_stopped, owner_io)
 from installation_participant import LocalInstallation, verification_seconds
 
+DATA_JOURNAL_DIRECTORIES = {
+    'home': ('installation-updates', 'installation-connections'),
+    'state': ('transactions', 'connections', 'provider-receipts',
+              'native-source-receipts', 'artifact-receipts'),
+}
+
 
 class NativeIO:
     """Fixed roots/lock with protected publication delegated to shared code."""
@@ -62,10 +68,15 @@ class NativeIO:
                 'installation-updates/controller-idle.json',
                 'installation-connections/state.json'}
         return (relative.as_posix() in {'active.json', 'cleanup-last.json'}
-                or (len(parts) == 2 and parts[0] in {
-                    'transactions', 'connections', 'provider-receipts',
-                    'native-source-receipts', 'artifact-receipts'}
+                or (len(parts) == 2 and parts[0] in DATA_JOURNAL_DIRECTORIES['state']
                     and relative.suffix == '.json'))
+
+    def prepare_data_journal_directories(self):
+        """Explicit setup/migration under the installation lock, never a read fallback."""
+        if not self.data_journals:
+            raise ValueError('Data journal preparation requires explicit enrollment')
+        for root,names in DATA_JOURNAL_DIRECTORIES.items():
+            for name in names:self.session.private_dir(root,name)
 
     def read_bytes(self, path):
         if not self.is_data_journal(path):

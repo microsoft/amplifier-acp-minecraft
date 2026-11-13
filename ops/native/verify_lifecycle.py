@@ -105,7 +105,7 @@ try:
  # the fresh temporary parent and the three newly-created empty children above.
  with socket.socket() as sock:sock.bind(('127.0.0.1',0));port=sock.getsockname()[1]
  cfg={'home':str(home),'state':str(state),'session_verification_seconds':12,
-  'native_platform':{'version':1,'library':str(LIBRARY),'library_sha256':hashlib.sha256(LIBRARY.read_bytes()).hexdigest(),'python':sys.executable,'services':{'body':'body','controller':'controller'},'driver':str(DRIVER),'config':str(root/'driver.json')},
+  'native_platform':{'version':1,'data_journals':1,'library':str(LIBRARY),'library_sha256':hashlib.sha256(LIBRARY.read_bytes()).hexdigest(),'python':sys.executable,'services':{'body':'body','controller':'controller'},'driver':str(DRIVER),'config':str(root/'driver.json')},
   'service_connection':{'id':'minecraft-native-fixture','label':'Native fixture','revision':'a'*64,'context_provider_ids':['minecraft:native-fixture']}}
  task={'id':'original','status':'budget_exhausted','turns':8}
  initial(home/'workshop.json',{'task':task,'turn':None,'inbox':[],'unknown_receipts':['preserved']})
@@ -188,6 +188,7 @@ try:
  with NativeSession(LIBRARY,DRIVER,drivercfg) as session:
   io=NativeIO(cfg,session);backend=NativeInstallation(cfg,session)
   with owner_io(io),installation_lock(state/'installation.lock'):
+   io.prepare_data_journal_directories()
    for kind in ('body','controller'):
     dispatched.append((*units[0 if kind=='body' else 1],drivercfg,state/(kind+'-identity.json'),kind))
     assert session.service_register(kind)=={'created':True}

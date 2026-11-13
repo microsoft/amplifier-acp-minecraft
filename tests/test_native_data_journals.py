@@ -99,6 +99,13 @@ class NativeDataJournalTests(unittest.TestCase):
             read(self.path)
         self.assertEqual(len(self.peer.calls),1)
 
+    def test_missing_parent_is_not_repaired_during_read(self):
+        self.peer.error=RuntimeError('missing protected parent')
+        with owner_io(self.io),self.assertRaisesRegex(RuntimeError,'missing protected parent'):
+            read(self.path,default={})
+        self.assertEqual([c[0] for c in self.peer.calls],['read'])
+        self.assertFalse(self.path.parent.exists())
+
     def test_oversize_write_refuses_before_directory_or_publication(self):
         with owner_io(self.io), self.assertRaisesRegex(ContinuityError,'1 MiB'):
             durable_write(self.path, {'data':'x'*1048576})

@@ -27,7 +27,7 @@ for scenario in ('same-scope','replaced-root','changed-profile','legacy-missing-
   for p in (home,state,shared,plans,state/'stages',state/'backups',home/'app',home/'venv'):initialize_root(DRIVER,p)
   (shared/'state.json').write_text(json.dumps({'state':'succeeded','transaction':None}))
   protected=home/'session.json';protected.write_text('{"original":"unchanged"}')
-  cfg={'home':str(home),'state':str(state),'app':str(home/'app'),'venv':str(home/'venv'),'shared_plans':str(plans),'native_platform':{'version':1,'library':str(LIBRARY),'regenerable_tree_removal':1}}
+  cfg={'home':str(home),'state':str(state),'app':str(home/'app'),'venv':str(home/'venv'),'shared_plans':str(plans),'native_platform':{'version':1,'data_journals':1,'library':str(LIBRARY),'regenerable_tree_removal':1}}
   # Publish inside the production-initialized owner root, not the disposable
   # harness parent (which may be Administrators-owned on Windows runners).
   conf=state/'driver.json';doc={'version':1,'roots':{'home':str(home),'state':str(state)},'locks':{'installation':str(state/'installation.lock')},'regenerable_trees':{n:{'root':'state','path':n,'lock':'installation'} for n in ('stages','backups')}}
@@ -35,6 +35,7 @@ for scenario in ('same-scope','replaced-root','changed-profile','legacy-missing-
   with LostAcknowledgment(LIBRARY,DRIVER,conf) as session:
    try:
     with owner_io(NativeIO(cfg,session,cleanup_deadline=time.monotonic()+600)),installation_lock(state/'installation.lock'):
+     NativeIO(cfg,session).prepare_data_journal_directories()
      session.private_dir('state','stages/'+ident);session.private_write('state','stages/'+ident+'/partial',b'regenerable')
      keep.mark('stage',ident,state='failed',created_at=1)
      keep.prune(fingerprint,failed=ident)

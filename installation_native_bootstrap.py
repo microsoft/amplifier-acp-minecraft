@@ -108,6 +108,9 @@ def setup(bundle,plan):
         io=NativeIO(cfg,session)
         with owner_io(io):
             io.write(state/'setup.json',intent)
+            # Missing parents are not absent journals. Create fixed parents at
+            # fresh setup, never as a repair during admission or observation.
+            io.prepare_data_journal_directories()
             for directory in ('stages','backups'):io.mkdir(state/directory)
             for prefix,destination in [('app',home/'app'),('python',home/'venv'),('task-helper',home/'task-helpers')]:
                 copy_private_payload(bundle,prefix,destination,manifest)

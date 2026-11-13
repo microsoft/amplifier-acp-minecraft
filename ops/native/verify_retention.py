@@ -33,13 +33,14 @@ def main():
   # domain write. Production retention journals below use NativeIO.
   (shared/'state.json').write_text(json.dumps({'state':'checking','transaction':None}),encoding='utf-8')
   cfg={'home':str(home),'state':str(state),'shared_plans':str(plans),'app':str(home/'app'),'venv':str(home/'venv'),
-       'native_platform':{'version':1,'library':str(library),'regenerable_tree_removal':1}}
+       'native_platform':{'version':1,'data_journals':1,'library':str(library),'regenerable_tree_removal':1}}
   owner={'version':1,'roots':{'home':str(home),'state':str(state)},'locks':{'installation':str(state/'installation.lock')},
          'regenerable_trees':{n:{'root':'state','path':n,'lock':'installation'} for n in ('stages','backups')}}
   conf=state/'driver.json';initialize_config(driver,conf,owner)
   keep=Retention(cfg); outside=base/'outside';outside.mkdir();sentinel=outside/'untouched';sentinel.write_text('outside')
   stage_id=str(uuid.uuid4()); retained_id=str(uuid.uuid4()); current_id=str(uuid.uuid4())
   with TrackedSession(library,driver,conf) as session,owner_io(NativeIO(cfg,session,cleanup_deadline=time.monotonic()+600)),installation_lock(state/'installation.lock'):
+   NativeIO(cfg,session).prepare_data_journal_directories()
    assert session.describe()['regenerable_tree_removal']==1
    with patch.object(shutil.rmtree,'avoids_symlink_attacks',False):
     assert keep.safe_path('stage',stage_id)==state/'stages'/stage_id

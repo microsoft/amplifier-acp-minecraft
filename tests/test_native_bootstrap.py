@@ -80,6 +80,9 @@ class BootstrapTests(unittest.TestCase):
         self.assertEqual([c for c in self.calls if c[0]=='register'],[('register','body'),('register','controller')])
         self.assertFalse(result['enrolled']);self.assertFalse(result['start_requested'])
         self.assertFalse((self.root/'home/session.json').exists())
+        for root,names in {'home':('installation-updates','installation-connections'),
+                'state':('transactions','connections','provider-receipts','native-source-receipts','artifact-receipts')}.items():
+            for name in names:self.assertTrue((self.root/root/name).is_dir())
         self.assertEqual(json.loads((self.root/'home/endpoint.json').read_text()),self.plan['endpoint'])
         fixed=json.loads((self.root/'state/native.json').read_text())
         self.assertTrue(all(x['autostart'] is False for x in fixed['registrations'].values()))

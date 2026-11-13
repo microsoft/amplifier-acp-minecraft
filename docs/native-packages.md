@@ -124,6 +124,11 @@ and `storage.write_data` operations. This option is not inferred from Windows
 or enabled by upgrading a binary. Qualify the paired reader/writer and combined
 driver before enrolling an installation.
 
+Fresh setup creates the fixed journal parent directories before registration.
+An existing installation's migration must establish those private parents before
+selecting this option. A missing or unsafe parent remains a refusal; admission
+and observation do not create directories to turn that refusal into file absence.
+
 The fixed selection covers direct JSON children of owner-state `transactions`,
 `connections`, `provider-receipts`, `native-source-receipts`, and
 `artifact-receipts`, plus `active.json` and `cleanup-last.json`. In the game home
