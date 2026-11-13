@@ -47,7 +47,7 @@ def main():
  from installation_guard import installation_lock,durable_write,owner_io
  from test_native_service_evidence import NativeFixture
  from test_driver import protect
- pin=json.loads((shared/'tests/native_python/fixtures/worker_source.json').read_bytes())
+ pin=json.loads((source/'ops/native/instance-worker-lock.json').read_bytes())
  path=args.instance.resolve()/pin['path'];assert hashlib.sha256(path.read_bytes()).hexdigest()==pin['sha256']
  module=importlib.util.spec_from_file_location('qualified_actual_worker',path);worker=importlib.util.module_from_spec(module);module.loader.exec_module(worker)
  manifest=json.loads((bundle/'manifest.json').read_bytes());input_driver=bundle/manifest['commands']['native_driver'];library=bundle/manifest['commands']['native_library'];results=[]

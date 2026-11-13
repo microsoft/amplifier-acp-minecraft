@@ -35,6 +35,11 @@ jobs:
         with:
           repository: microsoft/amplifier-constellation-instance
           ref: 39807674755dff153de372b3311e08a006ba7174
+          path: instance-boundary-fixture
+      - uses: actions/checkout@v4
+        with:
+          repository: microsoft/amplifier-constellation-instance
+          ref: d77dc2d8794bcbfce7a0118d5fb1c01ff429ec18
           path: instance-fixture
       - uses: actions/setup-python@v5
         with:
@@ -100,10 +105,10 @@ jobs:
         run: python ops/native/build_bundle.py --output bundle --cache runtime-cache --native-shared native-shared --native-driver "${{ env.MINECRAFT_NATIVE_DRIVER }}" --native-library "${{ env.MINECRAFT_NATIVE_LIBRARY }}"
       - name: Qualify packaged release ABI (Unix)
         if: runner.os != 'Windows'
-        run: bundle/python/bin/python3 -I ops/native/verify_native_boundary.py --bundle bundle --shared native-shared --instance instance-fixture --receipt native-boundary-result.json
+        run: bundle/python/bin/python3 -I ops/native/verify_native_boundary.py --bundle bundle --shared native-shared --instance instance-boundary-fixture --receipt native-boundary-result.json
       - name: Qualify packaged release ABI (Windows)
         if: runner.os == 'Windows'
-        run: bundle/python/python.exe -I ops/native/verify_native_boundary.py --bundle bundle --shared native-shared --instance instance-fixture --receipt native-boundary-result.json
+        run: bundle/python/python.exe -I ops/native/verify_native_boundary.py --bundle bundle --shared native-shared --instance instance-boundary-fixture --receipt native-boundary-result.json
       - name: Prepare disposable Linux native service manager
         if: runner.os == 'Linux'
         shell: bash
@@ -121,6 +126,12 @@ jobs:
       - name: Verify actual Worker admission and gate ownership (Windows)
         if: runner.os == 'Windows'
         run: bundle/python/python.exe -I ops/native/verify_worker.py --bundle bundle --source . --shared native-shared --instance instance-fixture --receipt native-worker-result.json
+      - name: Verify latest Instance lifetime and enrollment (Unix)
+        if: runner.os != 'Windows'
+        run: bundle/python/bin/python3 -I ops/native/verify_worker_lifetime.py --bundle bundle --source . --shared native-shared --instance instance-fixture --receipt native-worker-lifetime-result.json
+      - name: Verify latest Instance lifetime and enrollment (Windows)
+        if: runner.os == 'Windows'
+        run: bundle/python/python.exe -I ops/native/verify_worker_lifetime.py --bundle bundle --source . --shared native-shared --instance instance-fixture --receipt native-worker-lifetime-result.json
       - name: Verify detached Connect parity (Unix)
         if: runner.os != 'Windows'
         run: bundle/python/bin/python3 -I ops/native/verify_connect.py --bundle bundle --source . --shared native-shared --instance instance-fixture --output native-connect-result
@@ -190,6 +201,7 @@ jobs:
             native-boundary-result.json
             native-setup-result.json
             native-worker-result.json
+            native-worker-lifetime-result.json
             native-connect-result/
             native-connect-pipe-result/
             native-retention-result.json
@@ -213,6 +225,7 @@ jobs:
             native-boundary-result.json
             native-setup-result.json
             native-worker-result.json
+            native-worker-lifetime-result.json
             native-connect-result/
             native-connect-pipe-result/
             native-retention-result.json

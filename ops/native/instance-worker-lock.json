@@ -1,0 +1,12 @@
+{
+  "repository": "https://github.com/microsoft/amplifier-constellation-instance",
+  "commit": "d77dc2d8794bcbfce7a0118d5fb1c01ff429ec18",
+  "version": "0.22.2",
+  "path": "ops/updates/worker.py",
+  "sha256": "22fb7a7ba75e7f2737316d0226c599aa00d123274b40b951ad1258960d6aa8ea",
+  "files": {
+    "ops/updates/install.py": "9d982d7759ec0443ba8d33335a20d8a1246e7f228273d9e1bd6fc493e6ece7a4",
+    "ops/updates/test_enrollment_race.py": "36f567ad55e65921e25d8ddd862b50dc5f8dff50af4d7a13baf0c4deda726b95"
+  },
+  "scope": "Minecraft domain Worker, Connect capture and enrollment/lifetime composition; historical shared ABI fixture remains separately pinned"
+}

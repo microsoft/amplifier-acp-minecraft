@@ -423,7 +423,7 @@ def main():
     worker_pin=None
     if args.capture=='worker':
         if args.instance is None:parser.error('--instance is required for actual Worker capture')
-        worker_pin=json.loads((args.shared/'tests/native_python/fixtures/worker_source.json').read_bytes())
+        worker_pin=json.loads((args.source/'ops/native/instance-worker-lock.json').read_bytes())
         path=args.instance.resolve()/worker_pin['path']
         assert sha(path)==worker_pin['sha256']
         module=importlib.util.spec_from_file_location('qualified_connect_worker',path)
