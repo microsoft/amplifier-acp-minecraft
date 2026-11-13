@@ -14,7 +14,7 @@ os.environ['CONSTELLATION_NATIVE_DRIVER']=str(DRIVER)
 from test_driver import protect as shared_protect
 # Explicit script directory is needed with the bundled interpreter -I flag.
 sys.path.insert(0,str(SOURCE/'ops/native'))
-from fixture_security import protect_fixture_path,fixture_application_identities,copy_fixture_driver
+from fixture_security import protect_fixture_path,fixture_application_identities,copy_fixture_driver,wait_fixture_exit
 from test_service import NativeServiceApplicationTests
 from constellation_native import Session, NativeSession, Refused, initialize_root, initialize_config
 from installation_native import NativeIO,NativeInstallation,validate_driver_mapping,connection_backend
@@ -275,13 +275,32 @@ finally:
    except Exception as error:report['failure_snapshot_error']={'type':type(error).__name__,'message':str(error)}
  cleanup_errors=[]
  for name,definition,config,identity,kind in dispatched:
-  try:FixtureCleanup(kind).cleanup(name,definition,config,identity)
+  try:
+   cleanup=FixtureCleanup(kind)
+   if sys.platform=='darwin':
+    # bootout acceptance is not application/supervisor exit. Keep the private
+    # root intact until captured generations can no longer write diagnostics.
+    with NativeSession(LIBRARY,DRIVER,config) as observation:
+     captured=cleanup.receipt_identities(identity)
+     cleanup.cleanup(name,definition,config,identity)
+     settled=wait_fixture_exit(observation,identity,kind,captured)
+     report.setdefault('cleanup_generations',{})[kind]=settled
+   else:cleanup.cleanup(name,definition,config,identity)
   except Exception as error:cleanup_errors.append({'service':name,'error':repr(error)})
  if 'root' in globals() and (root/'controller-fixture-error.json').is_file():
   report['controller_fixture_error']=json.loads((root/'controller-fixture-error.json').read_bytes())
+ if temp and not cleanup_errors:
+  try:temp.cleanup()
+  except Exception as error:cleanup_errors.append({'directory':temp.name,'error':repr(error)})
+ if temp and cleanup_errors:
+  # Preserve an unresolved fixture, including any partial cleanup, rather than
+  # let TemporaryDirectory retry at interpreter exit and hide the first failure.
+  temp._finalizer.detach()
+  report['disposable_directory_retained']=temp.name
  report['cleanup_errors']=cleanup_errors
- if temp:temp.cleanup()
  report['disposable_units_removed']=not cleanup_errors
  args.receipt.write_text(json.dumps(report,indent=2)+'\n')
- if cleanup_errors:raise RuntimeError('Disposable native service cleanup failed; see retained receipt')
+ if cleanup_errors:
+  if failure is not None:failure.add_note('Disposable cleanup also failed; see retained receipt')
+  else:raise RuntimeError('Disposable native service cleanup failed; see retained receipt')
 print(json.dumps({'passed':report.get('passed',False),'target':manifest['target'],'cycles':len(report['cycles']),'original_session_loads':len(report.get('acp_events',[]))//2}))
