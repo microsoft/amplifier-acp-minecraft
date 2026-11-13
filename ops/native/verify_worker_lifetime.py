@@ -6,6 +6,7 @@ this is not production enrollment or another Instance release qualification.
 """
 import argparse
 import contextlib
+import errno
 import hashlib
 import importlib.util
 import json
@@ -75,8 +76,14 @@ def main():
             else:
                 with worker.single_worker(args.probe_root):
                     pass
-        except worker.LockBusy:
-            print(json.dumps({'outcome': 'busy'}))
+        except OSError as error:
+            # This is an explicitly held-lock fixture observation, not a
+            # production error classifier. Windows may refuse the pre-lock
+            # byte write before the newer Worker constructs LockBusy.
+            if error.errno not in (errno.EACCES, errno.EAGAIN):
+                raise
+            print(json.dumps({'outcome': 'refused', 'error': type(error).__name__,
+                              'errno': error.errno}))
         else:
             print(json.dumps({'outcome': 'acquired'}))
         return
@@ -94,23 +101,27 @@ def main():
         assert hashlib.sha256(path.read_bytes()).hexdigest() == manifest['native_platform'][role + '_sha256']
     os.environ['CONSTELLATION_ENROLLMENT_SOURCE'] = str(instance / 'ops/updates')
     race = load(instance / 'ops/updates/test_enrollment_race.py', 'latest_enrollment_fixture')
+    lock_observations = []
 
     class PackagedLifetimeTests(race.EnrollmentRaceTests):
         def native_setup(self):
+            # Upstream race fixtures allow the OS temporary-directory alias
+            # (for example macOS /var). Native enrollment requires the real
+            # existing path; resolve only these newly allocated fixture paths.
+            state = self.state.resolve()
             for path in (self.root, self.home, self.home / 'bin', self.state):
-                protect(path)
+                protect(path.resolve())
             for name in ('worker.lock', 'enrollment.lock'):
                 path = self.state / name
                 path.write_bytes(b'0')
                 protect(path)
-            self.native_config = self.state / 'native.json'
+            self.native_config = state / 'native.json'
             initialize_config(driver, self.native_config, {
-                'version': 1, 'roots': {'state': str(self.state)},
-                'locks': {'worker': str(self.state / 'worker.lock'),
-                          'enrollment': str(self.state / 'enrollment.lock')},
+                'version': 1, 'roots': {'state': str(state)},
+                'locks': {'worker': str(state / 'worker.lock')},
                 'services': {},
             })
-            self.native_driver = copy_fixture_driver(driver, self.state, self.native_config)
+            self.native_driver = copy_fixture_driver(driver, state, self.native_config)
 
         def native(self):
             return NativeSession(library, self.native_driver, self.native_config)
@@ -122,7 +133,10 @@ def main():
                 command.append('--startup-probe')
             result = subprocess.run(command, capture_output=True, text=True, timeout=20)
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-            return json.loads(result.stdout)['outcome']
+            observation = json.loads(result.stdout)
+            lock_observations.append({'test': self._testMethodName,
+                                      'startup': startup, **observation})
+            return observation['outcome']
 
         def test_latest_singleton_contends_with_packaged_native_both_directions(self):
             self.native_setup()
@@ -138,17 +152,19 @@ def main():
             stdout, stderr = child.communicate(timeout=5)
             self.assertEqual(child.returncode, 0, stdout + stderr)
             with self.native() as native, native.lock('worker'):
-                self.assertEqual(self.probe(), 'busy')
-                self.assertEqual(self.probe(startup=True), 'busy')
+                self.assertEqual(self.probe(), 'refused')
+                self.assertEqual(self.probe(startup=True), 'refused')
             self.assertEqual(self.probe(), 'acquired')
             after = (self.state / 'worker.lock').stat()
             self.assertEqual((identity.st_dev, identity.st_ino), (after.st_dev, after.st_ino))
             self.assertEqual((self.state / 'state.json').read_bytes(), before)
 
-        def test_latest_startup_waits_outside_singleton_during_native_admission(self):
+        def test_latest_startup_waits_outside_singleton_during_owner_admission(self):
             self.native_setup()
             before = (self.state / 'state.json').read_bytes()
-            with self.native() as native, native.lock('enrollment'):
+            # The published installer uses this exact Worker-owned guard.
+            # It does not enroll a NativeSession lock on enrollment.lock.
+            with self.native() as native, race.w.enrollment_guard(self.state):
                 child = subprocess.Popen([sys.executable, '-I', str(Path(__file__).resolve()),
                     '--instance', str(instance), '--probe-root', str(self.state), '--wait-startup'],
                     stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
@@ -213,6 +229,7 @@ def main():
                'driver_sha256': manifest['native_platform']['driver_sha256'],
                'library_sha256': manifest['native_platform']['library_sha256'],
                'tests': result.testsRun, 'passed': result.passed,
+               'lock_observations': lock_observations,
                'skipped': [(t.id(), why) for t, why in result.skipped],
                'success': result.wasSuccessful() and not result.skipped and result.testsRun == 13,
                'scope': __doc__, 'production_operations': False}
