@@ -26,7 +26,11 @@ def child(file,action):
   backend.action=lambda *a:(_ for _ in ()).throw(AssertionError('Forbidden domain service action'))
   return backend
  sys.argv=['installation_participant','--config',spec['owner'],action]
- with patch('installation_native.NativeInstallation',side_effect=factory):main()
+ try:
+  with patch('installation_native.NativeInstallation',side_effect=factory):main()
+ except Exception as error:
+  with (file.parent/'child-errors.jsonl').open('a') as log:log.write(json.dumps({'action':action,'type':type(error).__name__,'message':str(error)})+'\n')
+  raise
 
 def main():
  parser=argparse.ArgumentParser();parser.add_argument('--child',type=Path);parser.add_argument('--action')
@@ -91,7 +95,8 @@ def main():
    assert not any(x.get('drain') is True for x in reports)
    assert {p.name:p.read_bytes() for p in home.iterdir() if p.is_file()}==saved
    if scenario.endswith('disabled'):
-    assert 'masked, disabled' in failure,failure
+    failures=[json.loads(line) for line in (base/'child-errors.jsonl').read_text().splitlines()]
+    assert any(x['action']=='prepare' and x['type']=='NotIdle' and 'masked, disabled' in x['message'] for x in failures),failures
     assert not gate.exists() and not (state/'active.json').exists()
     assert not list((state/'transactions').glob('*.json'))
    elif scenario=='owned-gate':assert not gate.exists()
