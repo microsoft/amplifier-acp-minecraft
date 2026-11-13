@@ -308,3 +308,14 @@ are made after caller return and endpoint readiness, not atomically at exit.
 The accepted PR69 shared source isolates Windows detached-spawn inheritance;
 the earlier captured-PIPE failure remains historical evidence. No deadline or
 supervisor lifetime is widened by this package qualification.
+
+The current domain composition pins published Instance 0.22.2 (`d77dc2d`) in
+`ops/native/instance-worker-lock.json`, including exact Worker, installer and
+race-fixture hashes. `verify_worker_lifetime.py` runs its real-process enrollment
+and lifetime cases with synthetic manager/network boundaries, plus packaged
+NativeSession contention in both directions, startup waiting outside the
+singleton during enrollment, and the actual reporting thread's settlement.
+The domain admission and Connect fixtures use this same latest Worker.
+The accepted shared ABI suite retains its separate historical `3980767` fixture
+pin and labels it in its receipt; that baseline is not latest-Instance evidence.
+Existing immutable package receipts retain their original source identities.

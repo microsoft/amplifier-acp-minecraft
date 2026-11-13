@@ -22,6 +22,7 @@ required=('test_actual_library_abi_and_named_operations','test_helper_death_does
  'test_actual_worker_lock_blocks_native_then_releases_same_file','test_native_lock_blocks_actual_worker_before_domain_dispatch')
 missing=[name for name in required if not any(x.endswith('.'+name) for x in r.passed)]
 receipt={'target':manifest['target'],'source':manifest['source_commit'],'shared':manifest['native_platform']['source'],
+ 'historical_shared_worker_fixture':json.loads((shared/'tests/native_python/fixtures/worker_source.json').read_bytes()),
  'driver_sha256':manifest['native_platform']['driver_sha256'],'library_sha256':manifest['native_platform']['library_sha256'],
  'profile':'release','tests':r.testsRun,'passed':r.passed,'skipped':[(t.id(),reason) for t,reason in r.skipped],
  'missing_required':missing,'success':r.wasSuccessful() and not missing,'scope':'actual accepted ABI/fork/Worker/capability cases against new packaged release bytes'}
