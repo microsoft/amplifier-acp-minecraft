@@ -37,6 +37,9 @@ def main():
   owner={'version':1,'roots':{'home':str(home),'state':str(state)},'locks':{'installation':str(state/'installation.lock')},
          'regenerable_trees':{n:{'root':'state','path':n,'lock':'installation'} for n in ('stages','backups')}}
   conf=state/'driver.json';initialize_config(driver,conf,owner)
+  sys.path.insert(0,str(Path(__file__).resolve().parent))
+  from fixture_security import copy_fixture_driver
+  driver=copy_fixture_driver(driver,state,conf)
   keep=Retention(cfg); outside=base/'outside';outside.mkdir();sentinel=outside/'untouched';sentinel.write_text('outside')
   stage_id=str(uuid.uuid4()); retained_id=str(uuid.uuid4()); current_id=str(uuid.uuid4())
   with TrackedSession(library,driver,conf) as session,owner_io(NativeIO(cfg,session,cleanup_deadline=time.monotonic()+600)),installation_lock(state/'installation.lock'):

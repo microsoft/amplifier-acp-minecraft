@@ -37,6 +37,8 @@ def main():
  for n in ('bundle','source','shared','instance','receipt'):parser.add_argument('--'+n,type=Path)
  args=parser.parse_args()
  if args.child:return child(args.child,args.action)
+ sys.path.insert(0,str(Path(__file__).resolve().parent))
+ from fixture_security import copy_fixture_driver
  bundle=args.bundle.resolve();source=args.source.resolve();shared=args.shared.resolve()
  import constellation_native
  spec={'app':str(bundle/'app'),'source':str(source),'shared':str(shared),'facade':str(Path(constellation_native.__file__).resolve().parents[1])};load(spec)
@@ -48,8 +50,9 @@ def main():
  pin=json.loads((shared/'tests/native_python/fixtures/worker_source.json').read_bytes())
  path=args.instance.resolve()/pin['path'];assert hashlib.sha256(path.read_bytes()).hexdigest()==pin['sha256']
  module=importlib.util.spec_from_file_location('qualified_actual_worker',path);worker=importlib.util.module_from_spec(module);module.loader.exec_module(worker)
- manifest=json.loads((bundle/'manifest.json').read_bytes());driver=bundle/manifest['commands']['native_driver'];library=bundle/manifest['commands']['native_library'];results=[]
+ manifest=json.loads((bundle/'manifest.json').read_bytes());input_driver=bundle/manifest['commands']['native_driver'];library=bundle/manifest['commands']['native_library'];results=[]
  for scenario in ('body-disabled','controller-disabled','owned-gate','foreign-gate'):
+  driver=input_driver
   with tempfile.TemporaryDirectory(prefix='minecraft-worker-domain-') as tmp:
    base=Path(tmp).resolve();protect(base);home=base/'home';state=base/'state';wr=base/'worker'
    for p in (home,state,wr):initialize_root(driver,p)
@@ -67,6 +70,7 @@ def main():
      'library_sha256':hashlib.sha256(library.read_bytes()).hexdigest(),'config':str(native_config),'python':sys.executable,'services':{'body':'body','controller':'controller'}}}
    initialize_config(driver,native_config,{'version':1,'roots':{'home':str(home),'state':str(state)},'locks':{'installation':str(state/'installation.lock')},
       'services':{k:{'manager':manager,'name':'unused-worker-fixture-'+k+('.service' if sys.platform=='linux' else ''),'definition_path':None} for k in ('body','controller')}})
+   driver=copy_fixture_driver(driver,state,native_config);cfg['native_platform']['driver']=str(driver)
    with NativeSession(library,driver,native_config) as session,session.lock('installation'):
     NativeIO(cfg,session).prepare_data_journal_directories()
    # Fixed fixture inputs only; actual participant writes use native storage.

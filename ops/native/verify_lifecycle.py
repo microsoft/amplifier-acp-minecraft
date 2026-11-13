@@ -12,7 +12,7 @@ os.environ['CONSTELLATION_NATIVE_DRIVER']=str(DRIVER)
 from test_driver import protect as shared_protect
 # Explicit script directory is needed with the bundled interpreter -I flag.
 sys.path.insert(0,str(SOURCE/'ops/native'))
-from fixture_security import protect_fixture_path,fixture_application_identities
+from fixture_security import protect_fixture_path,fixture_application_identities,copy_fixture_driver
 from test_service import NativeServiceApplicationTests
 from constellation_native import Session, NativeSession, Refused, initialize_root, initialize_config
 from installation_native import NativeIO,NativeInstallation,validate_driver_mapping,connection_backend
@@ -103,6 +103,9 @@ try:
   report['bootstrap']['roots'][directory.name]={'created':created,'validated_existing':existing}
  # Existing private directories alone are not unused-slot proof. This test owns
  # the fresh temporary parent and the three newly-created empty children above.
+ bootstrap=state/'fixture-bootstrap.json'
+ initialize_config(DRIVER,bootstrap,{'version':1,'roots':{'state':str(state)}})
+ DRIVER=copy_fixture_driver(DRIVER,state,bootstrap)
  with socket.socket() as sock:sock.bind(('127.0.0.1',0));port=sock.getsockname()[1]
  cfg={'home':str(home),'state':str(state),'session_verification_seconds':12,
   'native_platform':{'version':1,'data_journals':1,'library':str(LIBRARY),'library_sha256':hashlib.sha256(LIBRARY.read_bytes()).hexdigest(),'python':sys.executable,'services':{'body':'body','controller':'controller'},'driver':str(DRIVER),'config':str(root/'driver.json')},

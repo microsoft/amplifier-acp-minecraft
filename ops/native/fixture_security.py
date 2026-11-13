@@ -5,7 +5,22 @@ The qualified shared fixture helper owns platform permissions and ownership.
 Minecraft only restricts its use to paths within this fresh disposable root.
 """
 import json
+import hashlib
 from pathlib import Path
+
+
+def copy_fixture_driver(source, state, config):
+    """Allocate one private input in this new fixture; no helper lease claimed."""
+    from constellation_native import Session
+    from installation_native_package import fill_created_payload_file
+    source,state=Path(source),Path(state)
+    destination=state/('fixture-driver'+source.suffix)
+    with Session(source,config) as initial:
+        initial.private_write('state',destination.name,b'',create_only=True)
+    with source.open('rb') as stream:fill_created_payload_file(destination,stream,0o700)
+    if hashlib.sha256(destination.read_bytes()).digest()!=hashlib.sha256(source.read_bytes()).digest():
+        raise ValueError('Disposable driver copy changed')
+    return destination
 
 
 def protect_fixture_path(path, root, shared_protect):

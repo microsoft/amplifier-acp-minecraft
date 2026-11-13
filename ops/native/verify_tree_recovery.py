@@ -22,6 +22,7 @@ class LostAcknowledgment(NativeSession):
   raise self._lost('response_lost','Simulated lost reply after real committed removal',True)
 results=[]
 for scenario in ('same-scope','replaced-root','changed-profile','legacy-missing-scope'):
+ DRIVER=args.driver.resolve()
  with tempfile.TemporaryDirectory(prefix='minecraft-scoped-recovery-') as tmp:
   base=Path(tmp).resolve();home=base/'home';state=base/'state';shared=base/'shared';plans=shared/'plans'
   for p in (home,state,shared,plans,state/'stages',state/'backups',home/'app',home/'venv'):initialize_root(DRIVER,p)
@@ -32,6 +33,9 @@ for scenario in ('same-scope','replaced-root','changed-profile','legacy-missing-
   # harness parent (which may be Administrators-owned on Windows runners).
   conf=state/'driver.json';doc={'version':1,'roots':{'home':str(home),'state':str(state)},'locks':{'installation':str(state/'installation.lock')},'regenerable_trees':{n:{'root':'state','path':n,'lock':'installation'} for n in ('stages','backups')}}
   initialize_config(DRIVER,conf,doc);ident=str(uuid.uuid4());keep=Retention(cfg);old_count=LostAcknowledgment.deletions
+  sys.path.insert(0,str(Path(__file__).resolve().parent))
+  from fixture_security import copy_fixture_driver
+  DRIVER=copy_fixture_driver(DRIVER,state,conf)
   with LostAcknowledgment(LIBRARY,DRIVER,conf) as session:
    try:
     with owner_io(NativeIO(cfg,session,cleanup_deadline=time.monotonic()+600)),installation_lock(state/'installation.lock'):
@@ -58,5 +62,5 @@ for scenario in ('same-scope','replaced-root','changed-profile','legacy-missing-
   assert LostAcknowledgment.deletions==old_count+1
   assert protected.read_text()=='{"original":"unchanged"}'
   results.append({'case':scenario,'one_actual_deletion':True,'result':result,'session_preserved':True})
-args.receipt.write_text(json.dumps({'driver_sha256':hashlib.sha256(DRIVER.read_bytes()).hexdigest(),'shared':manifest['native_platform']['source'],'minecraft':manifest['source_commit'],'target':manifest['target'],'cases':results,'scope':'Actual packaged Minecraft journal with real target-native lock/removal; lost reply simulated after confirmed driver deletion; no services/ACP/model/world'},indent=2)+'\n')
+args.receipt.write_text(json.dumps({'driver_sha256':hashlib.sha256(args.driver.read_bytes()).hexdigest(),'shared':manifest['native_platform']['source'],'minecraft':manifest['source_commit'],'target':manifest['target'],'cases':results,'scope':'Actual packaged Minecraft journal with real target-native lock/removal; lost reply simulated after confirmed driver deletion; no services/ACP/model/world'},indent=2)+'\n')
 print('PASS',len(results),'actual consumer cases, exactly',LostAcknowledgment.deletions,'deletions total')

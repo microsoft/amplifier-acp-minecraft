@@ -19,8 +19,23 @@ from unittest.mock import patch
 
 parser=argparse.ArgumentParser()
 for name in ('bundle','source','shared','archive','receipt'):parser.add_argument('--'+name,type=Path,required=True)
+parser.add_argument('--child-root',type=Path)
 args=parser.parse_args();bundle=args.bundle.resolve();source=args.source.resolve();shared=args.shared.resolve()
 sys.path[:0]=[str(bundle/'app'),str(shared/'tests/native_python')]
+if args.child_root is None:
+ # The ABI retains loaded libraries for process lifetime (fork hooks). Reap the
+ # actual caller before removing its private library on Windows.
+ from test_driver import protect
+ base=Path(tempfile.mkdtemp(prefix='minecraft-packaged-setup-')).resolve();protect(base)
+ result=subprocess.run([sys.executable,'-I',str(Path(__file__).resolve()),*sys.argv[1:],'--child-root',str(base)])
+ if args.receipt.exists():
+  receipt=json.loads(args.receipt.read_bytes())
+  if not receipt.get('cleanup_errors'):
+   shutil.rmtree(base);receipt['disposable_removed']=True
+  else:receipt['retained_disposable_root']=str(base)
+  args.receipt.write_text(json.dumps(receipt,indent=2)+'\n')
+ else:print('Retained unqualified fixture root:',base,file=sys.stderr)
+ raise SystemExit(result.returncode)
 from constellation_native import NativeSession
 from installation_native_bootstrap import setup
 from installation_native import native_scope
@@ -37,7 +52,7 @@ report={'scope':'disposable actual packaged fresh setup/no-start services and fu
 class Cleanup(NativeServiceApplicationTests):
  def receipt_identities(self,receipt):return [] # Fresh setup never starts.
 
-base=Path(tempfile.mkdtemp(prefix='minecraft-packaged-setup-')).resolve();root=base/'installation'
+base=args.child_root.resolve();root=base/'installation'
 cleanup_ok=False;registered={}
 try:
  plan={'schema':1,'root':str(root),'game':{'control_port':1234,'token':'disposable-no-server','screenshots':{'enabled':True}},
@@ -99,8 +114,7 @@ finally:
     Cleanup().cleanup(name,Path(profile['definition_path']),root/'state/native.json',root/'state'/(role+'-identity.json'))
   except Exception as error:errors.append(repr(error))
  report['cleanup_errors']=errors
- if not errors:
-  shutil.rmtree(base);cleanup_ok=True
+ if not errors:report['parent_cleanup_after_caller_exit']=True
  else:report['retained_disposable_root']=str(root)
  report['disposable_removed']=cleanup_ok
  args.receipt.write_text(json.dumps(report,indent=2)+'\n')
