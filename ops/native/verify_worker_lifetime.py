@@ -48,6 +48,8 @@ def main():
         worker = load(instance / pin['path'], 'latest_worker_probe')
         if args.wait_startup:
             original_guard = worker.enrollment_guard
+            real_sleep = time.sleep
+            observation_done = False
             @contextlib.contextmanager
             def observed_guard(root):
                 try:
@@ -59,6 +61,21 @@ def main():
                         marker.write_text(json.dumps({'pid': os.getpid(), 'actual_lock_busy': True}))
                     raise
             worker.enrollment_guard = observed_guard
+            def observe_released_singleton(seconds):
+                nonlocal observation_done
+                # run_worker's .05 wait occurs only after candidate.close().
+                # Pause this disposable child there so a read-only lock probe
+                # cannot race its next legitimate singleton acquisition.
+                if seconds == .05 and not observation_done:
+                    observation_done = True
+                    (args.probe_root.parent / 'singleton-released').touch()
+                    deadline = time.monotonic() + 10
+                    while not (args.probe_root.parent / 'lock-observation-complete').exists():
+                        if time.monotonic() >= deadline:
+                            raise AssertionError('Owned singleton observation was not released')
+                        real_sleep(.01)
+                real_sleep(seconds)
+            worker.time.sleep = observe_released_singleton
             worker.ssl.create_default_context = lambda **kwargs: None
             def once_tick(value):
                 assert not value.state.get('enrollment')
@@ -172,19 +189,13 @@ def main():
                 # The barrier follows a real failed enrollment-lock attempt,
                 # so slow child startup cannot masquerade as admission fencing.
                 race.wait_file(self.root / 'native-admission-observed.json')
+                race.wait_file(self.root / 'singleton-released')
                 self.assertIsNone(child.poll())
                 self.assertFalse((self.root / 'successor-ready').exists())
-                deadline = time.monotonic() + 5
-                while True:
-                    try:
-                        with native.lock('worker'):
-                            self.assertFalse((self.root / 'successor-ready').exists())
-                        break
-                    except Busy:
-                        if time.monotonic() >= deadline:
-                            raise
-                        time.sleep(.01)
+                with native.lock('worker'):
+                    self.assertFalse((self.root / 'successor-ready').exists())
                 self.assertEqual((self.state / 'state.json').read_bytes(), before)
+                (self.root / 'lock-observation-complete').touch()
             stdout, stderr = child.communicate(timeout=5)
             self.assertEqual(child.returncode, 0, stdout + stderr)
             self.assertTrue((self.root / 'successor-ready').exists())
