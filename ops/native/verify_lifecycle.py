@@ -44,8 +44,8 @@ def wait_services(backend):
     raise RuntimeError('Disposable native services did not become observable')
 
 fixture=r'''
-import argparse,http.server,json,pathlib,sys,time
-p=argparse.ArgumentParser();p.add_argument('--role');p.add_argument('--home');p.add_argument('--driver');p.add_argument('--driver-config');p.add_argument('--shared');a=p.parse_args()
+import argparse,http.server,json,pathlib,sys,time,traceback
+p=argparse.ArgumentParser();p.add_argument('--role');p.add_argument('--home');p.add_argument('--driver');p.add_argument('--driver-config');p.add_argument('--shared');p.add_argument('--app');p.add_argument('--owner');a=p.parse_args()
 home=pathlib.Path(a.home);cfg=json.loads((home/'config.json').read_text())
 if a.role=='body':
  class Handler(http.server.BaseHTTPRequestHandler):
@@ -59,18 +59,21 @@ if a.role=='body':
    self.send_response(200);self.end_headers();self.wfile.write(json.dumps(data).encode())
  http.server.HTTPServer(('127.0.0.1',cfg['control_port']),Handler).serve_forever()
 else:
- sys.path.insert(0,a.shared)
- from constellation_native import Session
- with Session(a.driver,a.driver_config) as driver:
-  me=driver.process_identity(__import__('os').getpid())
-  while True:
-   gate=home/'installation-updates/gate.json'
-   if gate.exists():
-    g=json.loads(gate.read_text());ack={'transaction_id':g['transaction_id'],**me}
-    dest=home/'installation-updates/controller-idle.json'
-    if not dest.exists() or json.loads(dest.read_text())!=ack:
-     driver.private_write('home','installation-updates/controller-idle.json',json.dumps(ack).encode())
-   time.sleep(.05)
+ sys.path[:0]=[a.app,a.shared]
+ from installation_native import native_scope
+ from update_admission import held
+ owner=json.loads(pathlib.Path(a.owner).read_text())
+ try:
+  with native_scope(owner):
+   while True:
+    # Actual controller gate/read/ack implementation; this idle fixture runs
+    # no conversation, model or world work and invents no PID-only acknowledgment.
+    held(home,acknowledge=True)
+    time.sleep(.05)
+ except BaseException as error:
+  (home.parent/'controller-fixture-error.json').write_text(json.dumps(
+   {'type':type(error).__name__,'message':str(error),'traceback':traceback.format_exc()}))
+  raise
 '''
 class FixtureCleanup(NativeServiceApplicationTests):
  def __init__(self,service):
@@ -87,6 +90,7 @@ if os.name=='nt':
 report={'source':manifest['source_commit'],'bundle_target':manifest['target'],
  'shared_source':subprocess.check_output(['git','rev-parse','HEAD'],cwd=SHARED,text=True).strip(),
  'driver_sha256':hashlib.sha256(DRIVER.read_bytes()).hexdigest(),'library_sha256':hashlib.sha256(LIBRARY.read_bytes()).hexdigest(),'session_boundary':'NativeSession ABI1',
+ 'controller_admission':'actual update_admission.held with NativeSession/data journals; idle synthetic controller',
  'production_operations':False,'model_prompts':0,'actual_os':sys.platform,'cycles':[],
  'cleanup_fixture_sha256':hashlib.sha256(cleanup_fixture.read_bytes()).hexdigest() if os.name=='nt' else None,
  'fixture_protection':{'shared_owner_and_dacl':True,'domain_os_permission_commands':False,'scope':'Synthetic package/input files only; initial roots and driver config use production bootstrap'}}
@@ -159,7 +163,7 @@ try:
    manager='scheduled_task';name='constellation-driver-test-'+uuid.uuid4().hex
   if definition:definition.parent.mkdir(parents=True,exist_ok=True)
   units.append((name,definition))
-  argv=[str(script),'--role',role,'--home',str(home),'--driver',str(DRIVER),'--driver-config',str(drivercfg),'--shared',str(SHARED/'support/python')]
+  argv=[str(script),'--role',role,'--home',str(home),'--driver',str(DRIVER),'--driver-config',str(drivercfg),'--shared',str(SHARED/'support/python'),'--app',str(BUNDLE/'app'),'--owner',str(ownercfg)]
   service_map[role]={'manager':manager,'name':name,'definition_path':str(definition) if definition else None}
   registrations[role]={'executable':str(DRIVER),'args':['--config',str(drivercfg),'service-run','--service',role],
      'cwd':str(root),'description':'Disposable Minecraft lifecycle '+role,'autostart':False}
@@ -257,10 +261,21 @@ try:
   assert report['acp_events']==[{'action':'initialize'},{'action':'load','session':'original-fixture-session'}]*4
  report['passed']=True
 finally:
+ failure=sys.exc_info()[1]
+ if failure is not None:
+  report['failure']={'type':type(failure).__name__,'message':str(failure)}
+  if 'p' in globals() and hasattr(p,'value'):report['failed_participant']=p.value
+  if 'drivercfg' in globals() and drivercfg.is_file():
+   try:
+    with NativeSession(LIBRARY,DRIVER,drivercfg) as observation:
+     report['failure_service_snapshots']={role:observation.service_snapshot(role) for role in ('body','controller')}
+   except Exception as error:report['failure_snapshot_error']={'type':type(error).__name__,'message':str(error)}
  cleanup_errors=[]
  for name,definition,config,identity,kind in dispatched:
   try:FixtureCleanup(kind).cleanup(name,definition,config,identity)
   except Exception as error:cleanup_errors.append({'service':name,'error':repr(error)})
+ if 'root' in globals() and (root/'controller-fixture-error.json').is_file():
+  report['controller_fixture_error']=json.loads((root/'controller-fixture-error.json').read_bytes())
  report['cleanup_errors']=cleanup_errors
  if temp:temp.cleanup()
  report['disposable_units_removed']=not cleanup_errors
