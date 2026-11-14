@@ -60,4 +60,23 @@ function settleReplies(data,{error=false,budgetLimited=false,at=new Date().toISO
  }
  data.input_outcomes=receipts.slice(-500);
 }
-module.exports={packets,replySources,confirmEcho,settleReplies};
+// Review an old conversation-change cancellation without resending its prefix.
+// A submitting/unknown packet is never a settled cancellation.
+function settledPartial(turn,name,args,end){
+ if(end.error!=='Public conversation changed or was not checked. Read conversation, reconsider the message or handoff, and use its revision.'||turn.reply_recipient||turn.reply_route)return false;
+ const key=require('node:crypto').createHash('sha256').update(JSON.stringify([name,args.player||null,args.intent||null,args.text,turn.reply_recipient||null,args.audience||'reply',turn.reply_route||null])).digest('hex');
+ const matches=(turn.speech_operations||[]).filter(o=>o.key===key),op=matches[0];
+ if(matches.length!==1||op.status!=='incomplete'||!Array.isArray(op.packets)||op.result)return false;
+ const marker={request:'',update:'[FYI] ',ack:'[ACK] '}[args.intent]||'';
+ let expected;try{expected=packets(args.text,name==='tell'?'@'+args.player+' '+marker:'');}catch{return false;}
+ if(op.packets.length!==expected.length)return false;
+ let submitted=0,cancelled=0;
+ for(let i=0;i<expected.length;i++){
+  const p=op.packets[i];if(p.text!==expected[i])return false;
+  if(p.status==='submitted'&&!cancelled&&p.receipt?.sent===p.text)submitted++;
+  else if(p.status==='cancelled'&&!Object.hasOwn(p,'receipt')&&!p.server_echo)cancelled++;
+  else return false;
+ }
+ return submitted>0&&cancelled>0;
+}
+module.exports={packets,replySources,confirmEcho,settleReplies,settledPartial};

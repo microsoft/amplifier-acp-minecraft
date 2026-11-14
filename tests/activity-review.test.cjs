@@ -114,3 +114,46 @@ for(const mode of ['confirmed','unknown','prefix','later_missing','later_earlier
  if(mode==='confirmed'){assert.equal(review(h,cfg,input,observation).activity_allowed,true);assert.equal(policy.canContinue(h,cfg),false);assert.deepEqual(h.data.events,before.events);assert.deepEqual(h.data.task,before.task);assert.equal(policy.allowed(new WorkshopState(h.file),cfg),true);}
  else{assert.throws(()=>review(h,cfg,input,observation));assert.deepEqual(h.data,before);}
 });
+
+function partialSpeechFixture(t){
+ const f=fixture(t),{h,input}=f,args={player:'Builder',intent:'update',text:'A complete long description. '.repeat(20),conversation_revision:'old'};
+ h.data.last_turn.actions=[{id:'partial',status:'uncertain'}];input.reviews=[input.reviews[1]];
+ h.data.events=h.data.events.filter(e=>e.action_id==='partial');
+ for(const e of h.data.events){e.action='tell';e.arguments=args;if(e.kind==='action_failed')e.error='Public conversation changed or was not checked. Read conversation, reconsider the message or handoff, and use its revision.';}
+ const packets=require('../speech.cjs').packets(args.text,'@Builder [FYI] ');
+ const key=digest(['tell','Builder','update',args.text,null,'reply',null]);
+ h.data.last_turn.speech_operations=[{id:'speech',key,status:'incomplete',packets:packets.map((text,i)=>i?{text,status:'cancelled'}:{text,status:'submitted',receipt:{sent:text}})}];
+ input.reviews[0].outcome='settled_partial_speech';input.reviews[0].receipt_sha256=digest(h.data.events.at(-1));input.expected_turn_sha256=digest(h.data.last_turn);h.save();return f;
+}
+test('reviewed partial speech preserves submitted/cancelled packets, never replays or resumes',t=>{
+ const {h,input,observation}=partialSpeechFixture(t),before=structuredClone(h.data);
+ assert.equal(review(h,cfg,input,observation).activity_allowed,true);
+ assert.equal(policy.canContinue(h,cfg),false);assert.equal(h.data.last_turn.actions[0].status,'uncertain');
+ assert.deepEqual(h.data.last_turn.speech_operations,before.last_turn.speech_operations);assert.deepEqual(h.data.events,before.events);assert.deepEqual(h.data.task,before.task);
+ const reloaded=new WorkshopState(h.file);assert.equal(review(reloaded,cfg,input,observation).duplicate,true);
+ reloaded.data.activity_stop={at:1};assert.equal(policy.allowed(reloaded,cfg),false);
+});
+for(const change of ['submitting','unknown','unsent','missing_receipt','wrong_receipt','cancelled_receipt','cancelled_echo','reordered','changed_text','duplicate_operation','transport_error','no_effect','active','interrupted'])test('partial speech refuses '+change,t=>{
+ const {h,input,observation}=partialSpeechFixture(t),op=h.data.last_turn.speech_operations[0];
+ if(['submitting','unknown','unsent'].includes(change))op.packets[1].status=change;
+ if(change==='missing_receipt')delete op.packets[0].receipt;
+ if(change==='wrong_receipt')op.packets[0].receipt.sent='different';
+ if(change==='cancelled_receipt')op.packets[1].receipt={sent:op.packets[1].text};
+ if(change==='cancelled_echo')op.packets[1].server_echo={at:'later'};
+ if(change==='reordered')op.packets.reverse();
+ if(change==='changed_text')op.packets[1].text='changed';
+ if(change==='duplicate_operation')h.data.last_turn.speech_operations.push(structuredClone(op));
+ if(change==='transport_error'){h.data.events.at(-1).error='Connection lost';input.reviews[0].receipt_sha256=digest(h.data.events.at(-1));}
+ if(change==='no_effect')input.reviews[0].outcome='no_effect';
+ if(change==='active')h.data.turn={};if(change==='interrupted')h.data.last_turn.interrupted=true;
+ input.expected_turn_sha256=digest(h.data.last_turn);const before=JSON.stringify(h.data);
+ assert.throws(()=>review(h,cfg,input,observation));assert.equal(JSON.stringify(h.data),before);
+});
+for(const error of ['Meet the recipient within 2.5 blocks first; give does not chase players','Recipient moved before the handoff; nothing was dropped','Connection closed'])test('give review distinguishes initial pure refusal from later uncertainty: '+error,t=>{
+ const {h,input,observation}=fixture(t);
+ for(const e of h.data.events.filter(e=>e.action_id==='partial')){e.action='give';e.arguments={player:'Builder',item:'stick',count:1};if(e.kind==='action_failed')e.error=error;}
+ input.reviews[1].outcome='no_effect';input.reviews[1].receipt_sha256=digest(h.data.events.at(-1));
+ const before=JSON.stringify(h.data);
+ if(error.startsWith('Meet the recipient')){assert.equal(review(h,cfg,input,observation).activity_allowed,true);assert.equal(policy.canContinue(h,cfg),false);}
+ else{assert.throws(()=>review(h,cfg,input,observation));assert.equal(JSON.stringify(h.data),before);}
+});
