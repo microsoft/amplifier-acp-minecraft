@@ -74,6 +74,8 @@ exact host `notAccepted` or `promptRequired` receipt with explicit
 `incorporated: false` can promote a previously steered input to its first ordinary
 prompt, using that same input ID and source set. Missing legacy binding, changed
 binding, unavailable evidence or an earlier ordinary dispatch does not qualify.
+An uncertain legacy record with an original source ID but no revision cannot be
+reclassified as a fresh input when metadata support is added.
 This is not a replay queue or an automatic retry policy. Both local journal and
 host retention remain bounded; absence does not establish non-delivery.
 

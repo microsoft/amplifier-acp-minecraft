@@ -91,7 +91,9 @@ class Awareness:
             return {json.dumps(s, sort_keys=True) for s in sources(values)}
         requested = signature(facts)
         prior = [r for r in self.receipts if r.get('session_id') == self.client.session
-                 and requested.intersection(signature(r.get('sources')))
+                 and (requested.intersection(signature(r.get('sources')))
+                      or (not sources(r.get('sources'))
+                          and any(identity in r.get('source_ids', []) for identity in ids)))
                  and (r.get('kind') == 'ordinary' or r.get('state') != 'history_only'
                       or r.get('reason') == 'no_matching_active_prompt')]
         key = 'minecraft-ordinary-' + hashlib.sha256(json.dumps(

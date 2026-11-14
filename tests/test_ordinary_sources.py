@@ -109,6 +109,19 @@ class OrdinarySources(unittest.IsolatedAsyncioTestCase):
             with self.assertRaisesRegex(RuntimeError,'inspect.*replay'):await a.ordinary_prompt([{'id':key,'source_fact':source}])
         self.assertEqual(self.recorded()['prompts'],[])
 
+    async def test_legacy_uncertain_source_id_without_revision_does_not_become_fresh(self):
+        a=self.awareness()
+        a.receipts.append({'input_id':'legacy-steering','session_id':self.client.session,
+                           'source_ids':[SOURCE['id']],'state':'unknown'})
+        a._save()
+        with self.assertRaisesRegex(RuntimeError,'inspect.*replay'):
+            await a.ordinary_prompt(MESSAGES)
+        self.assertFalse(self.state.exists())
+        # A retained but never dispatched history row is not a delivery record.
+        a.receipts[0].update(state='history_only',reason='unsupported');a._save()
+        meta,_=await self.send(a)
+        self.assertEqual(meta['sources'],[SOURCE]);self.assertEqual(len(self.recorded()['prompts']),1)
+
     async def test_batch_order_and_overlap_do_not_create_another_send(self):
         other={**SOURCE,'id':'second'}
         messages=[{'id':f['id'],'source_fact':f} for f in [SOURCE,other]]
