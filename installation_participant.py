@@ -20,6 +20,23 @@ from update_admission import process_identity
 from connection_state import deferred as connection_deferred
 
 COMPONENTS = {'minecraft', 'task-helpers', 'instance', 'runtime', 'engine', 'container-image'}
+SERVICE_PROPERTIES = '--property=ActiveState,MainPID,ExecMainStartTimestamp,LoadState,UnitFileState,FragmentPath'
+
+
+def system_manager(cfg):
+    """An owner-enrolled Linux service user, never privilege for the participant."""
+    if 'system_manager' not in cfg:
+        return None
+    value = cfg['system_manager']
+    if (not isinstance(value, dict) or set(value) != {'version','uid','gid','actions'}
+            or type(value['version']) is not int or value['version'] != 1
+            or any(type(value[k]) is not int or value[k] <= 0 for k in ('uid','gid'))
+            or value['actions'] not in ('direct','sudo') or 'native_platform' in cfg):
+        raise ValueError('Enroll the exact system service user and action authorization')
+    if (not hasattr(os, 'geteuid') or os.geteuid() != value['uid']
+            or os.getegid() != value['gid']):
+        raise ValueError('Run the participant as the enrolled service user and group')
+    return value
 
 
 def verification_seconds(cfg):
@@ -46,22 +63,47 @@ def context(value, cfg=None):
 class LocalInstallation:
     def __init__(self, cfg):
         self.c = cfg
+        self.system = system_manager(cfg)
         verification_seconds(cfg)
         self.home = Path(cfg['home'])
         for key in ('home', 'state'):
             if not Path(cfg[key]).is_absolute():
                 raise ValueError('Absolute installation-owned paths required')
+        units = cfg['units']
+        if (not isinstance(units, dict) or set(units) != {'body','controller'}
+                or any(not isinstance(v, str) for v in units.values())
+                or len(set(units.values())) != 2):
+            raise ValueError('Enroll only the exact body and controller units')
+        pattern = (r'[A-Za-z0-9][A-Za-z0-9_.@-]*\.service' if self.system else
+                   r'acp-minecraft-(body|agent)-[A-Za-z0-9_.-]+\.service')
         for kind in ('body', 'controller'):
-            if not re.fullmatch(r'acp-minecraft-(body|agent)-[A-Za-z0-9_.-]+\.service', cfg['units'][kind]):
+            if not isinstance(units[kind], str) or not re.fullmatch(pattern, units[kind]):
                 raise ValueError('Enroll exact Minecraft unit names')
+        if 'session_python' in cfg and (not isinstance(cfg['session_python'], str)
+                                       or not Path(cfg['session_python']).is_absolute()):
+            raise ValueError('Enroll the exact packaged Python executable')
+        if 'session_client' in cfg and not isinstance(cfg['session_client'], dict):
+            raise ValueError('Enroll the exact client source')
 
     def command(self, *args):
+        if self.system:
+            units = self.c['units'].values()
+            readonly = ((len(args) == 2 and args[0] == 'cat' and args[1] in units)
+                        or (len(args) == 3 and args[0] == 'show' and args[1] in units
+                            and args[2] == SERVICE_PROPERTIES))
+            mutation = (len(args) == 3 and args[0] in ('start','stop')
+                        and args[1] == '--no-block' and args[2] in units)
+            if not readonly and not mutation:
+                raise ValueError('Only exact enrolled service observation and start/stop are supported')
+            prefix = ['/usr/bin/sudo','-n'] if mutation and self.system['actions'] == 'sudo' else []
+            return subprocess.check_output(
+                [*prefix, '/bin/systemctl','--system','--no-ask-password',*args], text=True, timeout=8)
         return subprocess.check_output(['systemctl', '--user', *args], text=True, timeout=8)
 
     def services(self):
         result = {}
         for kind, unit in self.c['units'].items():
-            raw = self.command('show', unit, '--property=ActiveState,MainPID,ExecMainStartTimestamp,LoadState,UnitFileState,FragmentPath')
+            raw = self.command('show', unit, SERVICE_PROPERTIES)
             state = dict(line.split('=', 1) for line in raw.splitlines() if '=' in line)
             fragment = state.get('FragmentPath')
             if state.get('LoadState') == 'masked':
@@ -77,6 +119,8 @@ class LocalInstallation:
 
     def action(self, kind, action):
         # Gate + controller acknowledgment is established before any stop.
+        if kind not in ('body','controller') or action not in ('start','stop'):
+            raise ValueError('Only exact enrolled body/controller start and stop are supported')
         self.command(action, '--no-block', self.c['units'][kind])
 
     def capture(self):
@@ -123,7 +167,8 @@ class LocalInstallation:
         return {'sha256': hashlib.sha256(Path(command).read_bytes()).hexdigest(), 'capabilities': caps}
 
     def session_arguments(self):
-        return []
+        return (['--client-source', json.dumps(self.c['session_client'])]
+                if 'session_client' in self.c else [])
 
     def session(self, timeout):
         # Use the enrolled installation SDK, not the owner helper interpreter.
@@ -148,11 +193,12 @@ class LocalInstallation:
         return value
 
     def session_python(self):
-        return Path(self.c['venv'])/'bin/python'
+        return Path(self.c['session_python']) if 'session_python' in self.c else Path(self.c['venv'])/'bin/python'
 
 
 class Participant:
     def __init__(self, cfg, envelope, backend=None):
+        system_manager(cfg)  # Before creating even the owner state directory.
         self.c, self.envelope = cfg, envelope
         verification_seconds(cfg)
         self.plan = context(envelope, cfg)
@@ -361,6 +407,7 @@ def main():
     args = parser.parse_args()
     os.umask(0o077)
     cfg = read(args.config)
+    system_manager(cfg)  # Before installation_lock can create directories/files.
     envelope = read(os.environ['CONSTELLATION_UPDATE_PLAN'])
     outcome = os.environ['CONSTELLATION_UPDATE_OUTCOME']
     if outcome not in ('unchanged', 'applied', 'rolled_back'):

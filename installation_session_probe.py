@@ -8,8 +8,10 @@ import asyncio
 import hashlib
 import json
 import os
+import re
 import signal
 import sys
+import types
 from pathlib import Path
 
 
@@ -53,11 +55,58 @@ def supervised_endpoint(endpoint, driver, config):
                                   'exec','--command','session_endpoint']}
 
 
-async def probe(home, timeout, client_factory=None, *, idle_timeout=None, native_driver=None):
+def qualified_client(source):
+    """Load the enrolled client and its local dependency from verified bytes.
+
+    A packaged controller may use an overlay rather than home/app. Do not let a
+    previously imported client or dependency silently substitute another source.
+    The official SDK still comes from the enrolled interpreter environment.
+    """
+    names = ('prompt_lifecycle.py','acp_client.py')
+    if (not isinstance(source, dict) or set(source) != {'directory','sha256'}
+            or not isinstance(source['directory'], str) or not Path(source['directory']).is_absolute()
+            or not isinstance(source['sha256'], dict) or set(source['sha256']) != set(names)
+            or any(not isinstance(v, str) or not re.fullmatch('[0-9a-f]{64}', v)
+                   for v in source['sha256'].values())):
+        raise ValueError('Enroll the exact client source directory and both SHA256 digests')
+    directory = Path(source['directory'])
+    contents = {name:(directory/name).read_bytes() for name in names}
+    if any(hashlib.sha256(contents[name]).hexdigest() != source['sha256'][name] for name in names):
+        raise ValueError('Qualified client source changed')
+    modules = {}
+    previous = sys.modules.get('prompt_lifecycle')
+    try:
+        for name in names:
+            module = types.ModuleType(name[:-3])
+            module.__file__ = str(directory/name)
+            exec(compile(contents[name], module.__file__, 'exec'), module.__dict__)
+            modules[name] = module
+            if name == 'prompt_lifecycle.py':
+                sys.modules['prompt_lifecycle'] = module
+    finally:
+        if previous is None:
+            sys.modules.pop('prompt_lifecycle', None)
+        else:
+            sys.modules['prompt_lifecycle'] = previous
+    return modules['acp_client.py'].Client
+
+
+def client_source_argument(value):
+    source = json.loads(value)
+    if not isinstance(source, dict):
+        raise ValueError('Enroll the exact client source')
+    return source
+
+
+async def probe(home, timeout, client_factory=None, *, idle_timeout=None, native_driver=None, client_source=None):
     idle_timeout = min(30, timeout) if idle_timeout is None else idle_timeout
     if not 0 < timeout <= 180 or not 0 < idle_timeout <= min(30, timeout):
         raise ValueError("Bounded verification and independent inactivity budgets required")
     original = saved_endpoint(home)
+    if client_source is not None:
+        if client_factory is not None:
+            raise ValueError('Select one enrolled client factory')
+        client_factory = qualified_client(client_source)
     if client_factory is None:
         if not (home/'app/acp_client.py').is_file():
             raise ValueError('Installed Minecraft client is unavailable')
@@ -105,10 +154,12 @@ if __name__ == '__main__':
     parser.add_argument('--idle-timeout', type=float)
     parser.add_argument('--native-driver', type=Path)
     parser.add_argument('--native-driver-config', type=Path)
+    parser.add_argument('--client-source', type=client_source_argument)
     args = parser.parse_args()
     if not args.home.is_absolute() or not 0 < args.timeout <= 180:
         parser.error('Absolute home and bounded verification timeout required')
     if bool(args.native_driver) != bool(args.native_driver_config):
         parser.error('Native driver and fixed configuration are required together')
     native=(args.native_driver,args.native_driver_config) if args.native_driver else None
-    print(json.dumps(asyncio.run(probe(args.home,args.timeout,idle_timeout=args.idle_timeout,native_driver=native))))
+    print(json.dumps(asyncio.run(probe(args.home,args.timeout,idle_timeout=args.idle_timeout,
+                                     native_driver=native,client_source=args.client_source))))

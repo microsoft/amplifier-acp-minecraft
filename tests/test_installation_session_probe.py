@@ -6,6 +6,7 @@ import shutil
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 from installation_session_probe import probe, supervised_endpoint
 from installation_participant import LocalInstallation
 
@@ -98,6 +99,58 @@ class SessionProbeTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(result['initialized']);self.assertFalse(result['saved_session_loaded'])
         self.assertEqual(self.events(),[{'action':'initialize'}])
         self.assertFalse((self.home/'session.json').exists())
+
+    def packaged_client(self):
+        directory = self.home/'qualified-controller'
+        (self.home/'app').rename(directory)
+        return {'directory':str(directory), 'sha256':{
+            name:hashlib.sha256((directory/name).read_bytes()).hexdigest()
+            for name in ('acp_client.py','prompt_lifecycle.py')}}
+
+    async def test_packaged_python_and_qualified_overlay_load_original_via_actual_sdk(self):
+        before = {name:(self.home/name).read_bytes()
+                  for name in ('config.json','endpoint.json','session.json')}
+        source = self.packaged_client()
+        cfg = {'home':str(self.home), 'state':str(self.home/'owner-state'),
+               'session_python':sys.executable, 'session_client':source,
+               'system_manager':{'version':1,'uid':999,'gid':990,'actions':'sudo'},
+               'units':{'body':'anchor-minecraft-body.service',
+                        'controller':'anchor-minecraft-controller.service'}}
+        with patch.multiple('installation_participant.os', geteuid=lambda:999, getegid=lambda:990):
+            backend = LocalInstallation(cfg)
+            result = await asyncio.to_thread(backend.session, 10)
+        self.assertTrue(result['saved_session_loaded'])
+        self.assertEqual(self.events(), [{'action':'initialize'}, {'action':'load','session':self.saved['session']}])
+        self.assertFalse((self.home/'app').exists())
+        self.assertFalse((self.home/'venv').exists())
+        for name, content in before.items(): self.assertEqual((self.home/name).read_bytes(),content)
+
+    async def test_overlay_hashes_fail_before_endpoint_contact(self):
+        source = self.packaged_client()
+        for name in ('acp_client.py','prompt_lifecycle.py'):
+            path = Path(source['directory'])/name; original = path.read_bytes()
+            path.write_bytes(original+b'\n# changed after qualification\n')
+            with self.assertRaisesRegex(ValueError,'client source'):
+                await probe(self.home,3,client_source=source)
+            path.write_bytes(original)
+        for invalid in ({**source,'directory':'relative'},
+                        {**source,'sha256':{'acp_client.py':source['sha256']['acp_client.py']}},
+                        {**source,'sha256':{**source['sha256'],'../other.py':'0'*64}}):
+            with self.assertRaises(ValueError): await probe(self.home,3,client_source=invalid)
+        self.assertEqual(self.events(), [])
+
+    async def test_overlay_does_not_reuse_previously_imported_client_or_dependency(self):
+        import types
+        source = self.packaged_client()
+        poison = types.ModuleType('prompt_lifecycle')
+        poison.PromptLifecycle = lambda *a,**k: (_ for _ in ()).throw(AssertionError('wrong source'))
+        wrong = types.ModuleType('acp_client'); wrong.Client = poison.PromptLifecycle
+        with patch.dict(sys.modules, {'prompt_lifecycle':poison,'acp_client':wrong}):
+            result = await probe(self.home,3,client_source=source)
+            self.assertIs(sys.modules['prompt_lifecycle'],poison)
+            self.assertIs(sys.modules['acp_client'],wrong)
+        self.assertTrue(result['saved_session_loaded'])
+        self.assertEqual(self.events(), [{'action':'initialize'}, {'action':'load','session':self.saved['session']}])
 
     async def test_session_appearing_during_initialize_is_not_accepted(self):
         (self.home/'session.json').unlink()
