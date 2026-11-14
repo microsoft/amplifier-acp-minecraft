@@ -764,6 +764,7 @@ const server=http.createServer(async(req,res)=>{
     else if(req.method==='POST'&&['/activity/review-settled-moves','/activity/review-settled-actions','/task/review-settled-actions'].includes(req.url)){
       const a=await json(req);
       if(!ready||busy||actionSequence.active||bot.currentWindow||Date.now()<turnUntil||a.generation!==generation)throw Error('Activity review superseded or player not idle');
+      if(Array.isArray(a.reviews)&&a.reviews.some(r=>r?.outcome==='settled_failed_furnace_collection')&&bot.inventory?.selectedItem!==null)throw Error('Furnace review requires a known empty raw cursor');
       if(Array.isArray(a.reviews)&&a.reviews.some(r=>r?.outcome==='settled_failed_crafting_preparation')){
         // inventorySnapshot normalizes missing/falsy items to null. Require
         // known empty raw state before that projection for this review only.

@@ -25,7 +25,7 @@ test('animal interactions reject out-of-reach and obstructed targets',()=>{
 });
 test('cancellation after opening a furnace closes its window before any transfer',async()=>{
  const {bot}=fixture();let opened=false,closed=false;
- bot.blockAt=()=>({name:'furnace'});bot.openFurnace=async()=>{opened=true;return {close:()=>{closed=true;}};};
+ bot.blockAt=()=>({name:'furnace'});bot.openFurnace=async()=>{opened=true;return {selectedItem:null,close:()=>{closed=true;}};};
  await assert.rejects(furnace(bot,new Vec3(1,0,0),{operation:'inspect'},()=>{if(opened)throw Error('Stopped');}),/Stopped/);
  assert.equal(closed,true);
 });
@@ -55,10 +55,38 @@ test('furnace target and reach are observable preflight facts',()=>{
 });
 test('fuel transfer failure after input is retained as a possible partial load',async()=>{
  const {bot}=fixture();const calls=[];bot.blockAt=()=>({name:'furnace'});
- bot.openFurnace=async()=>({inputItem:()=>null,outputItem:()=>null,fuelItem:()=>null,
+ bot.openFurnace=async()=>({selectedItem:null,inputItem:()=>null,outputItem:()=>null,fuelItem:()=>null,
   items:()=>[{name:'raw_iron',count:2},{name:'stone',count:1}],
   putInput:async()=>calls.push('input'),putFuel:async()=>{calls.push('fuel');throw Error('Server rejected fuel');},
   close:()=>calls.push('close')});
  await assert.rejects(furnace(bot,new Vec3(1,0,0),{operation:'load',item:'raw_iron',count:1,fuel:'stone',fuel_count:1},()=>{}),/Server rejected fuel/);
  assert.deepEqual(calls,['input','fuel','close']);
+});
+for(const mode of ['confirmed','full','cursor','pickup_error','deposit_error','stopped'])test('furnace collection uses confirmed clicks: '+mode,async()=>{
+ const {bot}=fixture(),windows=require('prismarine-windows')(bot.registry),Item=require('prismarine-item')(bot.registry);
+ const f=windows.createWindow(1,'minecraft:furnace','Furnace'),calls=[];let closed=false;
+ const iron=new Item(bot.registry.itemsByName.iron_ingot.id,1);f.updateSlot(2,iron);
+ f.inputItem=()=>f.slots[0];f.fuelItem=()=>f.slots[1];f.outputItem=()=>f.slots[2];f.fuel=0;f.progress=0;
+ if(mode==='full')for(let i=f.inventoryStart;i<f.inventoryEnd;i++)f.updateSlot(i,new Item(bot.registry.itemsByName.cobblestone.id,64));
+ if(mode==='cursor')f.selectedItem=new Item(bot.registry.itemsByName.dirt.id,1);
+ f.close=()=>{closed=true;bot.currentWindow=null;};f.takeOutput=async()=>{throw Error('optimistic takeOutput must not be used');};
+ bot.currentWindow=null;bot.blockAt=()=>({name:'furnace'});bot.openFurnace=async()=>{bot.currentWindow=f;return f;};
+ bot._client=inventoryClient((name,p)=>{
+  if(p.mode===0){
+   calls.push(p.slot);
+   if(mode==='pickup_error'&&p.slot===2||mode==='deposit_error'&&p.slot!==2)throw Error('unknown click reply');
+   if(p.slot===2){f.selectedItem=f.slots[2];f.updateSlot(2,null);}
+   else{f.updateSlot(p.slot,f.selectedItem);f.selectedItem=null;}
+  }
+  bot.emit('setWindowItems:'+p.windowId);
+ });
+ const check=()=>{if(mode==='stopped'&&calls.length)throw Error('Stopped');};
+ if(mode==='confirmed'){
+  const result=await furnace(bot,new Vec3(1,0,0),{operation:'collect'},check);
+  assert.deepEqual(result.collected,{name:'iron_ingot',count:1});assert.equal(result.inventory.find(i=>i.name==='iron_ingot').count,1);assert.deepEqual(calls,[2,3]);assert.equal(f.selectedItem,null);assert.equal(closed,true);
+ }else{
+  await assert.rejects(furnace(bot,new Vec3(1,0,0),{operation:'collect'},check));
+  assert.ok(calls.filter(s=>s===2).length<=1,'never repeat output pickup');
+  if(['full','cursor','pickup_error','deposit_error','stopped'].includes(mode))assert.equal(closed,false,'do not close a held cursor');
+ }
 });
