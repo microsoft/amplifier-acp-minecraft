@@ -1,0 +1,21 @@
+{
+  "schema": 1,
+  "repository": "microsoft/amplifier-constellation",
+  "base": "8062eda22ea4fe9c333798be8397ce7fa4f6f2ee",
+  "fixture_commit": "63e9890b03b4e521f002dc2415673f3c11ef6c9d",
+  "files": {
+    "fixture_close_evidence.py": {
+      "sha256": "a3feec985ed71f441696f42fc979e6492a32beb31c649c0379ac9c6299324f9e",
+      "base_sha256": null
+    },
+    "test_fixture_close_evidence.py": {
+      "sha256": "813c6c9f62f56a2656d7fbba6a844642530527751c934099839deb412669c103",
+      "base_sha256": null
+    },
+    "test_inprocess_capabilities.py": {
+      "sha256": "8c718fe10411e3708852827190607efc1cb8b468b3f7bdfd5929ecb503f9a413",
+      "base_sha256": "72fbb9a230d12573d68b71eefa6ffed59870e69bc7ee0aaf3226b64ec70c1f84"
+    }
+  },
+  "scope": "Test-only observations; cleanup remains fatal and original Windows file holder unknown."
+}

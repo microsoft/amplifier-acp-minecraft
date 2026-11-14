@@ -199,6 +199,7 @@ jobs:
             native-build-result.json
             native-library-inspection.json
             native-boundary-result.json
+            native-boundary-result.cleanup.log
             native-setup-result.json
             native-worker-result.json
             native-worker-lifetime-result.json
@@ -223,6 +224,7 @@ jobs:
             native-build-result.json
             native-library-inspection.json
             native-boundary-result.json
+            native-boundary-result.cleanup.log
             native-setup-result.json
             native-worker-result.json
             native-worker-lifetime-result.json
