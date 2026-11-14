@@ -18,8 +18,10 @@ The Minecraft prompt supplies world context, speech routing and continuation
 semantics. It does not prescribe a universal inspect/map/route/meeting checklist,
 ban other authorized tools, or require renewed permission for routine choices
 within ongoing work. Tool descriptions retain mechanics such as reach, required
-revisions, inventory selection and partial results. Tool responses retain lease
+revisions, inventory selection and partial results. Tool responses retain operation bounds
 and capacity facts without appending the same behavioral warning on every call.
+Controller lease IDs/expiry stay on the authenticated control interface, where
+renewal belongs, rather than appearing as a model reasoning deadline.
 A verified result may be reported as verified; `review` is a continuation state,
 not a prohibition on describing completion.
 

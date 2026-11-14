@@ -613,3 +613,21 @@ test('invalid movement and blocked storage preflight never poison future activit
  assert.equal(JSON.stringify(f.history.data.turn.actions),before);
  assert.equal(f.history.data.events.filter(e=>e.kind==='action_started').length,0);
 });
+
+test('controller lease is not presented as a model deadline in MCP results',async()=>{
+ const {Client}=realRequire('@modelcontextprotocol/sdk/client/index.js');
+ const {InMemoryTransport}=realRequire('@modelcontextprotocol/sdk/inMemory.js');
+ const f=fixture('BuilderOne',false,{human_engagement:{enabled:true,task_optional:true}});
+ const server=f.mcpServer(),client=new Client({name:'lease-boundary-fixture',version:'1'});
+ try{
+  f.bot.pathfinder={setGoal(){}};f.bot.clearControlStates=()=>{};
+  f.readyFixture();await f.request('/turn',{activity:true,renewable_lease:true});
+  const original=(await f.request('/status')).action_lease;assert.ok(original.lease_id);assert.equal(original.renewable,true);
+  const [a,b]=InMemoryTransport.createLinkedPair();await server.connect(b);await client.connect(a);
+  const result=await client.callTool({name:'task_capabilities',arguments:{}}),parts=result.content.map(c=>JSON.parse(c.text));
+  assert.equal(parts[0].activity_allowed,true);
+  assert.ok(parts.every(p=>!('action_lease' in p)),'control lease is not a task deadline');
+  const renewed=await f.request('/turn/renew',{lease_id:original.lease_id,task_id:null});
+  assert.equal(renewed.lease_id,original.lease_id);assert.equal(renewed.renewable,true);
+ }finally{await client.close();await server.close();f.close();}
+});

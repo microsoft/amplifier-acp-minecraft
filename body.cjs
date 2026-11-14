@@ -613,7 +613,7 @@ function mcpServer(){
   const m=new McpServer({name:'minecraft-player',version:'0.1.0'});
   require('./screenshots.cjs').registerTools(m,screenshots);
   for(const [name,[description,inputSchema]]of Object.entries(definitions).filter(([name])=>cfg.agent_watches||!name.startsWith('attention_')))m.registerTool(name,{description,inputSchema},async a=>{
-    try{const result=await operate(name,a),changed=conversation.updates();return {content:[{type:'text',text:JSON.stringify(result)},...(changed?[{type:'text',text:JSON.stringify({conversation:changed})}]:[]),{type:'text',text:JSON.stringify({action_lease:lease.view(history.task()),actions_remaining:actionsRemaining(),operation_timeout_seconds:60})}]};}
+    try{const result=await operate(name,a),changed=conversation.updates();return {content:[{type:'text',text:JSON.stringify(result)},...(changed?[{type:'text',text:JSON.stringify({conversation:changed})}]:[]),{type:'text',text:JSON.stringify({actions_remaining:actionsRemaining(),operation_timeout_seconds:60})}]};}
     catch(e){const changed=conversation.updates();return {isError:true,content:[{type:'text',text:JSON.stringify({error:e.message,...(e.details||{}),...(changed?{conversation:changed}:{})})}]};}
   });return m;
 }
