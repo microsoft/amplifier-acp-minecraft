@@ -189,3 +189,19 @@ test('scoped installation input retains caller-asserted human and original audie
   assert.equal(saved.actor.name,'Fixture human');assert.equal(saved.actor.identity_asserted_by,caller.id);assert.equal(saved.actor.server_player_uuid,null);assert.deepEqual(saved.audience,source.audience);assert.deepEqual(saved.installation_source,{caller:{id:caller.id,label:caller.label},...source});assert.equal(saved.message,'Original request');assert.equal(saved.transport.kind,'authenticated_operator_control');
  }finally{f.close();}
 });
+
+test('effective capability labels preserve real chat-only, Stop and unknown restrictions',()=>{
+ const f=fixture();try{
+  f.cfg.human_task_intake.enabled=false;f.human();
+  let c=f.intake.capabilities();assert.equal(c.configured_chat_only,true);assert.equal(c.conversation_only,true);assert.equal(c.reply_work_allowed,false);
+  f.cfg.human_engagement={enabled:true,task_optional:true};
+  c=f.intake.capabilities();assert.equal(c.configured_chat_only,false);assert.equal(c.conversation_only,false);assert.equal(c.activity_allowed,true);
+  f.h.data.activity_stop={at:Date.now()};
+  c=f.intake.capabilities();assert.equal(c.conversation_only,true);assert.equal(c.reply_work_allowed,false);assert.equal(c.activity_blocked_reason,'explicit_stop');
+  delete f.h.data.activity_stop;
+  f.h.data.last_turn={activity:true,interrupted:true,actions:[{id:'original',status:'uncertain'}]};
+  const before=JSON.stringify(f.h.data);
+  c=f.intake.capabilities();assert.equal(c.conversation_only,true);assert.equal(c.reply_work_allowed,false);assert.equal(c.activity_blocked_reason,'unresolved_activity_effects');
+  assert.equal(JSON.stringify(f.h.data),before);
+ }finally{f.close();}
+});

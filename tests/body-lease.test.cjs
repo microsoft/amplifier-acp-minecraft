@@ -801,3 +801,20 @@ for(const mode of ['known-clear','missing-cursor','undefined-cursor','false-curs
   }
  }finally{f.close();}
 });
+
+test('effective play permissions never label allowed peer work as chat-only',async()=>{
+ const f=fixture(optionalConfig,{move:async()=>({reached:true})});try{
+  const {Vec3}=realRequire('vec3');f.bot.entity.position=new Vec3(0,64,0);
+  f.bot.findBlocks=()=>[];f.bot.inventory={items:()=>[]};f.bot.time={timeOfDay:0};
+  f.history.data.task.status='blocked';const task=JSON.stringify(f.history.task());
+  const e=incoming(f,'agent');await f.request('/turn',{conversation_only:true,message_ids:[e.id]});
+  const capabilities=await f.operate('task_capabilities');
+  assert.equal(capabilities.mode,'task_optional');assert.equal(capabilities.activity_allowed,true);
+  assert.equal(capabilities.configured_chat_only,false);assert.equal(capabilities.conversation_only,false);
+  const view=await f.operate('observe',{detail:'full'});
+  assert.equal(view.incoming_chat_only,false);assert.equal(view.conversation_only,false);
+  assert.equal(f.history.data.turn.conversation_only,true,'permission description does not rewrite admission history');
+  await f.operate('move',{x:1,y:64,z:0,mode:'walk_only'});
+  assert.equal(f.history.data.turn.activity,true);assert.equal(JSON.stringify(f.history.task()),task);
+ }finally{f.close();}
+});

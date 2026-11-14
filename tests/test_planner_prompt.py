@@ -12,7 +12,7 @@ class PlannerPrompt(unittest.TestCase):
         facts=json.loads(text[len(INSTRUCTIONS):])
         self.assertEqual(facts['world'],world);self.assertEqual(facts['messages'],messages)
         self.assertEqual(facts['attention_notifications'],[{'wake':True}])
-        self.assertLess(len(INSTRUCTIONS.encode()),5600)
+        self.assertLess(len(INSTRUCTIONS.encode()),1800)
         self.assertNotIn('220 seconds',text)
 
     def test_chat_only_does_not_promise_capacity_retry(self):
@@ -55,6 +55,21 @@ class TaskOptionalPrompt(unittest.TestCase):
         self.assertNotIn('Only a human request authorizes continuing work',text)
         self.assertNotIn('No physical effects until a subsequent authorized work turn',text)
         self.assertLess(text.index('"messages":'),text.index('"world":'))
+
+    def test_optional_play_has_no_route_or_approval_workflow_and_preserves_real_limits(self):
+        text=planner_prompt([],{'task_capabilities':{'task_optional':True,'activity_allowed':False,
+                                                    'activity_blocked_reason':'explicit_stop'}})
+        self.assertIn('when activity_allowed is true',text)
+        self.assertIn('routine choices and peer coordination do not require renewed human permission',text)
+        self.assertIn('waiting suspends it',text)
+        self.assertIn('Unknown effects need reconciliation',text)
+        for obsolete in ['Use short back-to-back plans','map/inspect the actual site',
+                         'Use only the offered minecraft MCP tools','Keep a safe return route',
+                         'Never claim verified completion','TASK-TRACKED WORK']:
+            self.assertNotIn(obsolete,text)
+        self.assertIn('"activity_blocked_reason": "explicit_stop"',text)
+        self.assertLess(len(text),2500)
+
 
 class CurrentInputProjection(unittest.TestCase):
     def fixture(self):

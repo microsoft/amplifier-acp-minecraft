@@ -26,7 +26,7 @@ function eventView(event){
   ...(args?{argument_details_omitted:true}:{}),...(observation?{observation_omitted:true}:{})};
 }
 function worldView(state){
- const {task,events=[],receipts=[],public_chat,...current}=state;
+ const {task,events=[],receipts=[],public_chat,action_lease,...current}=state;
  const messages=new Map((current.conversation?.messages||[]).map(m=>[m.id,m]));
  const compactEvents=events.map(event=>{
   const message=messages.get(event.id);
