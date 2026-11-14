@@ -60,9 +60,12 @@ test('actual body provides compact and explicit full observations under the same
   const before=fs.readFileSync(f.file,'utf8');
   const summary=await f.request('/observation'),full=await f.request('/state');
   assert.equal(summary.status,200);assert.equal(summary.value.task.progress.length,5);assert.equal(full.value.task.progress.length,30);
+  assert.ok('action_lease' in full.value,'control state retains lease');
+  assert.equal('action_lease' in summary.value,false,'planner observation excludes control deadline');
   assert.equal((await f.request('/observation','Bearer wrong')).status,401);
   assert.equal((await f.operate('observe')).task.progress.length,5);
   const detailed=await f.operate('observe',{detail:'full'});
+  assert.equal('action_lease' in detailed,false,'full model observation still excludes control deadline');
   assert.deepEqual(clone(detailed.task),f.initial.task);assert.equal(fs.readFileSync(f.file,'utf8'),before);
  }finally{f.close();}
 });

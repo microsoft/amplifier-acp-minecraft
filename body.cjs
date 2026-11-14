@@ -330,7 +330,7 @@ async function operate(name,a={},sequenceId=null){
       record('reply_work_started',{task_id:history.data.turn.task_id,consumed_turns:history.data.turn.activity?null:history.task().turns});
     }
   }
-  if(name==='observe')return a.detail==='full'?snapshot():worldView(snapshot());
+  if(name==='observe'){const {action_lease,...state}=snapshot();return a.detail==='full'?state:worldView(state);}
   if(name==='conversation')return a.query||a.queries?conversation.search(a):conversation.expose();
   if(name==='entities')return survival.entities(bot,a);
   if(name==='inventory'){if(busy)throw Error('Wait for the current action before refreshing inventory');return refreshInventory(bot);}
