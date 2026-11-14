@@ -1,6 +1,7 @@
 // Ordinary survival interactions. Loaded entities and server state are evidence;
 // neither a successful packet write nor a dropped item proves collection.
 const {refreshInventory}=require('./inventory.cjs');
+const {click,parkCursor}=require('./crafting.cjs');
 const delay=ms=>new Promise(r=>setTimeout(r,ms));
 const colors=['white','orange','magenta','light_blue','yellow','lime','pink','gray','light_gray','cyan','purple','blue','brown','green','red','black'];
 function metadata(bot,e,key){const index=bot.registry.entitiesByName[e.name]?.metadataKeys?.indexOf(key);return index>=0?e.metadata?.[index]:undefined;}
@@ -72,7 +73,7 @@ function furnacePreflight(bot,p,a){
 async function furnace(bot,p,a,check){
  const block=furnacePreflight(bot,p,a);
  await refreshInventory(bot);check();
- let f;
+ let f,collectionPending=false;
  try{
   f=await bot.openFurnace(block);check();await refreshInventory(bot);check();
   if(a.operation==='load'){
@@ -89,12 +90,17 @@ async function furnace(bot,p,a,check){
   if(a.operation==='collect'&&f.outputItem()){
    collected=stack(f.outputItem());
    const before=f.items().filter(i=>i.name===collected.name).reduce((n,i)=>n+i.count,0);
-   await f.takeOutput();check();await refreshInventory(bot);check();
+   if(f.selectedItem!==null)throw Error('Furnace cursor must be empty before collecting output');
+   // The translated protocol may leave an optimistic takeOutput on the cursor.
+   // Reuse authoritative clicks; never retry a missing acknowledgment.
+   collectionPending=true;await click(bot,2,0,check);await parkCursor(bot,f,check);
+   await refreshInventory(bot);check();
    const after=f.items().filter(i=>i.name===collected.name).reduce((n,i)=>n+i.count,0);
    if(after-before<collected.count)throw Error('Output pickup not confirmed; inspect inventory before retrying');
+   collectionPending=false;
   }
   const inventory=await refreshInventory(bot);check();
   return {position:p,operation:a.operation,...furnaceState(f),collected,inventory:inventory.items,guidance:'Smelting continues in the world after closing. Inspect later; collect only reports items verified in inventory. Coordinate furnace ownership through game chat.'};
- }finally{if(f)f.close();}
+ }finally{if(f&&!collectionPending&&f.selectedItem===null)f.close();}
 }
 module.exports={entities,describe,sheepTarget,shear,furnace,validLoad,furnacePreflight};
