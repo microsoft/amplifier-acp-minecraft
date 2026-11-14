@@ -402,13 +402,14 @@ async def run(home):
                 reply_calls.append(time.time());save(reply_calls_path,reply_calls)
             else:
                 calls.append(time.time());save(calls_path,calls)
-            awareness=Awareness(home,client,world.get('conversation',{}),observe)
+            awareness=Awareness(home,client,world.get('conversation',{}),observe,binding=identity)
             operator_awareness=None
             try:
-                operator_awareness=Awareness(home,client,await request('/operator-inputs'),observe,audience='operator')
+                operator_awareness=Awareness(home,client,await request('/operator-inputs'),observe,audience='operator',binding=identity)
             except Exception as error:
                 observe('operator_awareness_unavailable',category=type(error).__name__,fallback='queued_input')
-            pending=asyncio.create_task(client.prompt(prompt,attention_offer=attention_offer,
+            source_metadata=await awareness.ordinary_prompt(messages)
+            pending=asyncio.create_task(client.prompt(prompt,attention_offer=attention_offer,source_metadata=source_metadata,
                 snapshot_retained=retained_request(messages,world),snapshot_key=identity))
             last_renewed=time.monotonic()
             last_huddle_checked=time.monotonic()
