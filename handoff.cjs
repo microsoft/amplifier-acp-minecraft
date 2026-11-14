@@ -25,13 +25,17 @@ function pickupTracker({item,count,origin,existing,recipient,sender}){
   }
  };
 }
-async function give(bot,a,check,{beforeTransfer=()=>{}}={}){
+function preflight(bot,a){
  if(a.player===bot.username)throw Error('Choose another player');
  const target=bot.players[a.player]?.entity;
  const near=()=>bot.players[a.player]?.entity===target&&target&&target.position.distanceTo(bot.entity.position)<=2.5;
  if(!near())throw Error('Meet the recipient within 2.5 blocks first; give does not chase players');
  const spacing=()=>Math.hypot(target.position.x-bot.entity.position.x,target.position.z-bot.entity.position.z)>=1.8&&Math.abs(target.position.y-bot.entity.position.y)<=.5;
  if(!spacing())throw Error('Stand about two blocks apart on the same level (1.8–2.5 blocks); closer drops can be picked back up by the sender');
+ return {target,near,spacing};
+}
+async function give(bot,a,check,{beforeTransfer=()=>{}}={}){
+ const {target,near,spacing}=preflight(bot,a);
  const initial=target.position.clone();await delay(500);check();
  if(!near()||target.position.distanceTo(initial)>.15)throw Error('Recipient is moving; agree on a meeting spot and wait until they stand still');
  await refreshInventory(bot);check();
@@ -64,4 +68,4 @@ async function give(bot,a,check,{beforeTransfer=()=>{}}={}){
   return {...result,item:a.item,requested:a.count,recipient:a.player,sender_inventory_change:after-before,inventory:inventory.items,position:bot.entity.position.clone(),evidence:'Nearby new item entities and server pickup packets, plus sender inventory snapshot',guidance:result.status==='pickup_observed'?'Pickup observed for the intended recipient. Send an update only if useful; no acknowledgment loop is needed.':'Do not repeat give automatically. Inspect drop positions and ask the recipient to collect or verify inventory. Drops can merge or be collected by someone else.'};
  }finally{bot.removeListener('itemDrop',onDrop);bot._client.removeListener('collect',onCollect);}
 }
-module.exports={give,pickupTracker};
+module.exports={give,preflight,pickupTracker};

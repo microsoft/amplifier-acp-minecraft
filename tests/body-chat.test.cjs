@@ -319,18 +319,44 @@ test('late public message fences an automatic final without sending or starting 
   assert.equal(sent.length,1);assert.deepEqual(f.history.task(),f.task);
  }finally{f.close();}
 });
-test('stick deposit prevents a cancellation composed against older conversation evidence',async()=>{
+test('ordinary incoming chat does not cancel or gate an explicit utterance',async()=>{
  const f=fixture('BuilderOne');try{
-  const sent=[];f.bot.chat=t=>sent.push(t);f.startFixtureTurn();
-  f.bot.emit('chat','BuilderTwo','I will bring the sticks.');
-  const old=await f.request('/conversation');
-  f.bot.emit('chat','BuilderTwo','The sticks are now in the chest.');
-  await assert.rejects(f.operate('tell',{player:'BuilderTwo',intent:'request',text:'Cancel those sticks.',conversation_revision:old.revision}),/conversation changed/);
-  await assert.rejects(f.operate('chat',{text:'Still waiting for sticks.'}),/conversation changed/);
-  assert.equal(sent.length,0);assert.equal(f.history.data.events.filter(e=>e.kind==='action_started').length,0);
-  const fresh=await f.request('/conversation');
-  await f.operate('tell',{player:'BuilderTwo',intent:'update',text:'Checking the chest before using the delivery.',conversation_revision:fresh.revision});
-  assert.equal(sent.length,1);assert.ok(sent[0].includes('Checking the chest'));
+  const sent=[];f.startFixtureTurn();
+  f.bot.chat=text=>{sent.push(text);if(sent.length===1)f.bot.emit('chat','BuilderTwo','The sticks are now in the chest.');};
+  const text='Thanks for the update. '+ 'We can adapt the room together. '.repeat(18);
+  const result=await f.operate('tell',{player:'BuilderTwo',intent:'update',text,conversation_revision:'empty'});
+  assert.ok(result.packet_count>1);assert.equal(sent.length,result.packet_count);
+  assert.equal(f.history.data.turn.speech_operations[0].status,'submitted');
+  assert.ok(f.history.data.events.some(e=>e.kind==='chat'&&e.message==='The sticks are now in the chest.'));
+  const duplicate=await f.operate('tell',{player:'BuilderTwo',intent:'update',text});
+  assert.equal(duplicate.duplicate,true);assert.equal(sent.length,result.packet_count);
+  await f.operate('chat',{text:'I will use the updated information.'});
+  assert.equal(sent.at(-1),'I will use the updated information.');
+  assert.ok(f.history.data.turn.actions.every(a=>a.status==='succeeded'));
+ }finally{f.close();}
+});
+test('speech still cancels unsent packets when its turn ends',async()=>{
+ const f=fixture('BuilderOne');try{
+  const sent=[];f.startFixtureTurn();
+  f.bot.chat=text=>{sent.push(text);f.endFixtureTurn();};
+  const turn=f.history.data.turn;
+  await assert.rejects(f.operate('chat',{text:'Long utterance. '.repeat(40),conversation_revision:'empty'}),/Speech interrupted/);
+  assert.equal(sent.length,1);assert.equal(turn.speech_operations[0].status,'incomplete');
+  assert.equal(turn.speech_operations[0].packets[0].status,'submitted');
+  assert.ok(turn.speech_operations[0].packets.slice(1).every(p=>p.status==='cancelled'));
+ }finally{f.close();}
+});
+test('initial out-of-range handoff refusal creates no uncertain action or game effect',async()=>{
+ const f=fixture('BuilderOne');try{
+  const {Vec3}=realRequire('vec3');f.startFixtureTurn();
+  f.bot.entity={position:new Vec3(0,64,0)};
+  f.bot.players.BuilderTwo.entity={position:new Vec3(4,64,0)};
+  f.bot.inventory={items(){assert.fail('No inventory preparation before range refusal');}};
+  f.bot.lookAt=()=>assert.fail('No aiming');f.bot.tossStack=()=>assert.fail('No toss');
+  await assert.rejects(f.operate('give',{player:'BuilderTwo',item:'stick',count:1,conversation_revision:'empty'}),/within 2.5 blocks/);
+  assert.equal(f.history.data.events.filter(e=>e.kind==='action_started').length,0);
+  assert.equal(f.history.data.turn.actions?.length||0,0);
+  assert.equal(f.history.data.events.at(-1).effect_attempted,false);
  }finally{f.close();}
 });
 
@@ -612,4 +638,22 @@ test('invalid movement and blocked storage preflight never poison future activit
  await assert.rejects(f.operate('container',{x:8,y:64,z:0,operation:'inspect',expected:'barrel'}),/within four/);
  assert.equal(JSON.stringify(f.history.data.turn.actions),before);
  assert.equal(f.history.data.events.filter(e=>e.kind==='action_started').length,0);
+});
+
+test('controller lease is not presented as a model deadline in MCP results',async()=>{
+ const {Client}=realRequire('@modelcontextprotocol/sdk/client/index.js');
+ const {InMemoryTransport}=realRequire('@modelcontextprotocol/sdk/inMemory.js');
+ const f=fixture('BuilderOne',false,{human_engagement:{enabled:true,task_optional:true}});
+ const server=f.mcpServer(),client=new Client({name:'lease-boundary-fixture',version:'1'});
+ try{
+  f.bot.pathfinder={setGoal(){}};f.bot.clearControlStates=()=>{};
+  f.readyFixture();await f.request('/turn',{activity:true,renewable_lease:true});
+  const original=(await f.request('/status')).action_lease;assert.ok(original.lease_id);assert.equal(original.renewable,true);
+  const [a,b]=InMemoryTransport.createLinkedPair();await server.connect(b);await client.connect(a);
+  const result=await client.callTool({name:'task_capabilities',arguments:{}}),parts=result.content.map(c=>JSON.parse(c.text));
+  assert.equal(parts[0].activity_allowed,true);
+  assert.ok(parts.every(p=>!('action_lease' in p)),'control lease is not a task deadline');
+  const renewed=await f.request('/turn/renew',{lease_id:original.lease_id,task_id:null});
+  assert.equal(renewed.lease_id,original.lease_id);assert.equal(renewed.renewable,true);
+ }finally{await client.close();await server.close();f.close();}
 });

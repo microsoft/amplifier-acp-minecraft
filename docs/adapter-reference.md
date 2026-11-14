@@ -763,9 +763,13 @@ No model is polled to discover messages. Injected context can cause additional
 model work inside the existing prompt: steering receipts are **not** model
 request counts or proof of cost savings.
 
-Before `chat`, `tell` or `give`, use the latest public context `revision` as
-`conversation_revision`; read `conversation` to refresh it. A stale cancellation
-or report is rejected before sending, just like a stale item handoff. Before a `container` deposit/withdrawal, also inspect
+Explicit `chat` and `tell` calls may use the context the model has already read.
+Ordinary new conversation does not cancel a sentence midway through its packets;
+the existing turn, Stop, private audience and unknown-submission checks still apply.
+`conversation_revision` is accepted for compatibility but is not a speech gate.
+
+Before `give`, use the latest public context `revision` as `conversation_revision`.
+Before a `container` deposit/withdrawal, also inspect
 that container and supply its `contents_revision`. The body rechecks public
 context immediately before delivery, including after asynchronous preparation;
 containers compare a fresh server contents fingerprint before the first click.
