@@ -50,3 +50,39 @@ retained terminal returns `admitted` with `reason: "terminal_not_retained"`.
 Missing/evicted evidence returns `unknown` with `reason: "not_retained"`.
 Neither case permits replay. Queued state is read from the existing live inbox.
 This evidence is not added to model context or public presence.
+
+## Optional host source receipts
+
+An ACP host may advertise the source-delivery profile in
+`_meta["io.github.bkrabach.agent-instance"].inputContinuity.sourceDelivery`.
+Minecraft uses ordinary-prompt metadata only with exact version 1,
+`metadata: "com.microsoft.amplifier.source-delivery"`,
+`receiptsMethod: "_amplifier/source_receipts"`, `ordinaryPrompts: true` and
+`promptRetry: "inspectOnly"`. Plain ACP remains supported without that profile.
+
+For an admitted public input whose complete original `source_fact` set is
+available, the controller sends original IDs, revisions and occurrence times
+alongside any existing attention offer. It records the input ID and original
+endpoint/session binding in the existing awareness journal before dispatch.
+Continuations, legacy private inputs and incomplete source sets do not acquire
+invented source metadata. A retained dispatch cannot escape inspection by losing
+its metadata or by downgrading host capabilities.
+
+A lost reply is inspection-only on the original loaded session. Reordering or
+splitting the same retained source set cannot create another send. Only a fresh,
+exact host `notAccepted` or `promptRequired` receipt with explicit
+`incorporated: false` can promote a previously steered input to its first ordinary
+prompt, using that same input ID and source set. Missing legacy binding, changed
+binding, unavailable evidence or an earlier ordinary dispatch does not qualify.
+This is not a replay queue or an automatic retry policy. Both local journal and
+host retention remain bounded; absence does not establish non-delivery.
+
+With `workReferences: true`, the journal also retains host work references and
+coverage separately from delivery facts. A host's proposed or accepted work
+record does not accept, amend, resume or complete a Minecraft task. Delivery
+receipt correlation requires the original input ID; work references are scoped
+to the exact original source revision and may survive delivery-record eviction.
+Missing/malformed work evidence is `coverage: "unknown"`, not proof of no work.
+The body remains authoritative for task bounds, Stop and physical effects;
+`completion` remains `not_established`. No host work record is created by this
+integration, and these private receipt details are not posted into public chat.

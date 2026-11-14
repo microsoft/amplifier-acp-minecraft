@@ -19,6 +19,53 @@ def source_delivery(info):
             and cap.get('metadata') == SOURCE_META and cap.get('receiptsMethod') == SOURCE_METHOD)
 
 
+def ordinary_sources(info):
+    cap = mapping(mapping(instance(info).get('inputContinuity')).get('sourceDelivery'))
+    return (source_delivery(info) and cap.get('ordinaryPrompts') is True
+            and cap.get('promptRetry') == 'inspectOnly')
+
+
+def source_work(info):
+    cap = mapping(mapping(instance(info).get('inputContinuity')).get('sourceDelivery'))
+    return source_delivery(info) and cap.get('workReferences') is True
+
+
+def ordinary_metadata(info, value):
+    """Validate the negotiated wire shape; never infer a source from prompt text."""
+    v = mapping(value)
+    facts = sources(v.get('sources'))
+    identity = v.get('inputId')
+    if (not ordinary_sources(info) or set(v) != {'version', 'inputId', 'sources'}
+            or type(v.get('version')) is not int or v['version'] != 1
+            or not isinstance(identity, str) or not 1 <= len(identity.encode()) <= 512
+            or not facts):
+        raise ValueError('Ordinary source metadata is invalid or not negotiated')
+    return {'version': 1, 'inputId': identity, 'sources': facts}
+
+
+def work_references(row, info):
+    """Host responsibility references are separate from Minecraft task authority."""
+    if not source_work(info):
+        return None
+    unknown = {'references': [], 'coverage': 'unknown'}
+    refs = mapping(row).get('work')
+    coverage = mapping(row).get('workCoverage')
+    if (not isinstance(refs, list) or len(refs) > 64
+            or coverage not in ('partial', 'retained_session_records')):
+        return unknown
+    result, seen = [], set()
+    for item in refs:
+        item = mapping(item)
+        if (any(not isinstance(item.get(k), str) or not 1 <= len(item[k].encode()) <= 512
+                for k in ('id', 'ownerAgentId', 'inputId', 'state'))
+                or type(item.get('revision')) is not int or item['revision'] < 0
+                or item['id'] in seen):
+            return unknown
+        seen.add(item['id'])
+        result.append({k: item[k] for k in ('id', 'ownerAgentId', 'revision', 'state', 'inputId')})
+    return {'references': result, 'coverage': coverage}
+
+
 def maintenance(info):
     cap = mapping(instance(info).get('maintenance'))
     return (type(cap.get('version')) is int and cap['version'] == 1

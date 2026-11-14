@@ -1,4 +1,4 @@
-"""Deliver public world evidence to an existing prompt, never start work.
+"""Bind admitted inputs and optional awareness to original source evidence.
 
 Optional Instance steering is capability-negotiated. The source still owns its
 inbox and attention opportunities; delivery here does not consume or authorize
@@ -9,24 +9,30 @@ import hashlib
 import json
 import os
 from pathlib import Path
-from harness_capabilities import source_delivery, sources, SOURCE_META, SOURCE_METHOD
+from harness_capabilities import source_delivery, ordinary_sources, work_references, sources, SOURCE_META, SOURCE_METHOD
 
 
 class Awareness:
-    def __init__(self, home, client, initial, observe, *, limit=16, audience="public"):
+    def __init__(self, home, client, initial, observe, *, limit=16, audience="public", binding=None):
         if audience not in ("public", "operator"):
             raise ValueError("Unknown awareness audience")
         self.audience = audience
         self.path = Path(home) / ('operator-awareness-receipts.json' if audience == 'operator' else 'awareness-receipts.json')
         self.client, self.observe = client, observe
+        self.binding = binding or hashlib.sha256(json.dumps(
+            getattr(client, "endpoint", {}), sort_keys=True).encode()).hexdigest()
         self.cursor = initial.get('revision', 'empty')
         self.initial_revision = self.cursor
         self.source_revisions={}
+        self.initial_sources={}
         self.changed_sources=set()
         for message in initial.get('messages',[]):
             fact=sources([message.get('source_fact')])
-            if fact:self.source_revisions[fact[0]['id']]=fact[0]['revision']
+            if fact:
+                self.source_revisions[fact[0]['id']]=fact[0]['revision']
+                self.initial_sources[fact[0]['id']]=fact[0]
         self.limit, self.sent = limit, []
+        self.ordinary = []
         self.deferred_revision = None
         self.available = True
         try:
@@ -59,6 +65,66 @@ class Awareness:
             self.available = False
             self.observe('awareness_journal_unavailable', fallback='tool_context_only')
             return False
+
+    async def ordinary_prompt(self, messages):
+        """Bind actual queued sources using the existing delivery journal.
+
+        A continuation, private legacy input or incomplete source set remains
+        plain ACP. This does not create a responsibility or amend a game task.
+        """
+        if not messages:
+            return None
+        ids = [m.get('id') if isinstance(m, dict) else None for m in messages]
+        facts = sources([m.get('source_fact', self.initial_sources.get(m.get('id')))
+                         if isinstance(m, dict) else None for m in messages])
+        if not facts or any(identity != fact['id'] for identity, fact in zip(ids, facts)):
+            previous = [r for r in self.receipts if (r.get('kind') == 'ordinary'
+                        or r.get('state') != 'history_only' or r.get('reason') == 'no_matching_active_prompt')
+                        and r.get('session_id') == self.client.session
+                        and any(identity in r.get('source_ids', []) for identity in ids if identity)]
+            if previous:
+                await self.source_receipts(previous)
+                raise RuntimeError('Dispatched source lacks current revision evidence; inspect, do not replay')
+            return None
+        facts.sort(key=lambda fact: fact['id'])
+        def signature(values):
+            return {json.dumps(s, sort_keys=True) for s in sources(values)}
+        requested = signature(facts)
+        prior = [r for r in self.receipts if r.get('session_id') == self.client.session
+                 and requested.intersection(signature(r.get('sources')))
+                 and (r.get('kind') == 'ordinary' or r.get('state') != 'history_only'
+                      or r.get('reason') == 'no_matching_active_prompt')]
+        key = 'minecraft-ordinary-' + hashlib.sha256(json.dumps(
+            [self.binding, self.client.session, facts], sort_keys=True).encode()).hexdigest()
+        if prior:
+            if any(r.get('binding') != self.binding for r in prior):
+                raise RuntimeError('Source binding changed or was not retained; inspect, do not replay')
+            await self.source_receipts(prior)
+            # Only the host's explicit steering refusal can promote that SAME
+            # input once. Unknown/ordinary/overlapping batches are inspection-only.
+            old = prior[0]
+            evidence = old.get('source_delivery', [])
+            if (len(prior) != 1 or old.get('kind') == 'ordinary'
+                    or old.get('source_receipt_current') is not True
+                    or signature(old.get('sources')) != requested
+                    or len(evidence) != len(facts)
+                    or any(e.get('evidence_origin') != 'host_source_receipt'
+                           or e.get('state') not in ('notAccepted', 'promptRequired')
+                           or e.get('incorporated') is not False for e in evidence)
+                    or not ordinary_sources(getattr(self.client, 'info', None))):
+                raise RuntimeError('Source input already dispatched; inspect its receipts, do not replay')
+            key, facts = old['input_id'], sources(old['sources'])
+        elif not ordinary_sources(getattr(self.client, 'info', None)):
+            return None
+        if not self.available:
+            raise RuntimeError('Cannot retain original source delivery intent')
+        receipt = {'kind': 'ordinary', 'input_id': key, 'session_id': self.client.session, 'binding': self.binding,
+                   'sources': facts, 'source_ids': [f['id'] for f in facts], 'state': 'sending'}
+        self.receipts.append(receipt)
+        if not self._save():
+            raise RuntimeError('Cannot retain original source delivery intent')
+        self.ordinary.append(receipt)
+        return {'version': 1, 'inputId': key, 'sources': facts}
 
     async def consider(self, snapshot):
         revision = snapshot.get('revision')
@@ -107,7 +173,7 @@ class Awareness:
         if any(r['input_id'] == key for r in self.receipts):
             return
         prompt_id = self.client.active_prompt_id
-        receipt = {'input_id': key, 'session_id': self.client.session, 'prompt_id': prompt_id,
+        receipt = {'input_id': key, 'session_id': self.client.session, 'binding': self.binding, 'prompt_id': prompt_id,
                    'source_ids': ids, 'revision': revision, 'state': 'history_only', 'gap': gap}
         if source_facts:receipt['sources']=source_facts
         self.receipts.append(receipt)
@@ -157,9 +223,11 @@ class Awareness:
                      reason=receipt.get('reason'), source_count=len(ids), gap=gap)
 
     async def finish(self):
+        for receipt in self.ordinary:
+            receipt['state'] = 'response_received'
+        await self.source_receipts()
         if not self.sent:
             return
-        await self.source_receipts()
         if not self.client.supports_input_receipts():
             # An injected acknowledgment is not proof of incorporation. Leave
             # the journal intact, with no probe, replay or new prompt fallback.
@@ -181,17 +249,22 @@ class Awareness:
             self.observe('awareness_receipt_unavailable', category=type(error).__name__)
         self._save()
 
-    async def source_receipts(self):
+    async def source_receipts(self, records=None):
         """Keep host delivery facts separate from existing final-answer freshness.
 
         Even an incorporated fact is not completion, responsibility acceptance,
-        an inbox consumption flag, or a reason to replay/suppress a prompt.
+        an inbox consumption flag, or permission to replay a prompt.
         """
         if not source_delivery(getattr(self.client,'info',None)):
             return
-        for receipt in self.sent:
+        for receipt in [*self.sent, *self.ordinary] if records is None else records:
+            if receipt.get('session_id') != self.client.session or receipt.get('binding', self.binding) != self.binding:
+                continue
             requested=sources(receipt.get('sources'))
             if not requested:continue
+            # Keep old observations on failure, but never use them as a fresh
+            # refusal authorizing steering-to-prompt promotion.
+            receipt['source_receipt_current'] = False
             try:
                 response=await asyncio.wait_for(self.client.request(SOURCE_METHOD,{
                     'sessionId':self.client.session,'sources':requested}),3)
@@ -201,16 +274,21 @@ class Awareness:
                 if not isinstance(rows,list) or len(rows)>40:raise ValueError('Invalid source receipts')
                 facts=[]
                 for source in requested:
-                    matches=[r for r in rows if isinstance(r,dict) and
+                    matching_sources=[r for r in rows if isinstance(r,dict) and
                              r.get('sourceId')==source['id'] and r.get('revision')==source['revision'] and
-                             r.get('occurredAt')==source['occurredAt'] and r.get('inputId')==receipt['input_id']]
-                    remote=matches[0] if len(matches)==1 else {}
+                             r.get('occurredAt')==source['occurredAt']]
+                    source_row=matching_sources[0] if len(matching_sources)==1 else {}
+                    remote=source_row if source_row.get('inputId')==receipt['input_id'] else {}
                     state=remote.get('state')
                     if state not in ('received','submitted','remoteQueued','incorporated','notAccepted','promptRequired','unknown'):state='unknown'
-                    facts.append({**source,'state':state,'incorporated':remote.get('incorporated') is True,
+                    fact={**source,'state':state,'incorporated':remote.get('incorporated') if type(remote.get('incorporated')) is bool else None,
                                   'evidence_origin':'host_source_receipt' if remote else 'no_matching_host_receipt',
-                                  'completion':'not_established'})
+                                  'completion':'not_established'}
+                    work=work_references(source_row,getattr(self.client,'info',None))
+                    if work is not None:fact['instance_work']=work
+                    facts.append(fact)
                 receipt['source_delivery']=facts
+                receipt['source_receipt_current'] = True
                 self.observe('source_delivery_receipts',input_id=receipt['input_id'],source_count=len(facts),
                              states=[f['state'] for f in facts],completion='not_established')
             except Exception as error:

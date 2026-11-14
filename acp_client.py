@@ -392,9 +392,13 @@ class Client:
                     self.update_queue.get_nowait()
                     self.update_queue.task_done()
 
-    async def prompt(self, text, timeout=None, on_chunk=None, attention_offer=None, snapshot_retained=None, snapshot_key='default'):
+    async def prompt(self, text, timeout=None, on_chunk=None, attention_offer=None, snapshot_retained=None, snapshot_key='default', source_metadata=None):
         if self.maintenance_active:
             raise ProtocolError('Maintenance is still settling; no game prompt sent')
+        metadata = {"com.microsoft.amplifier.attention": attention_offer} if attention_offer else {}
+        if source_metadata is not None:
+            from harness_capabilities import ordinary_metadata, SOURCE_META
+            metadata[SOURCE_META] = ordinary_metadata(self.info, source_metadata)
         self.lifecycle = PromptLifecycle(self.observe)
         parts, characters = [], 0
         messages = {}
@@ -464,7 +468,7 @@ class Client:
             result = await asyncio.wait_for(self.request("session/prompt", {
                 "sessionId": self.session, "prompt": blocks(self.info, permission_text, text,
                     snapshot_retained, key, permissions['policy_revision']),
-                **({"_meta":{"com.microsoft.amplifier.attention":attention_offer}} if attention_offer else {}),
+                **({"_meta": metadata} if metadata else {}),
             }, update), timeout)
             unsettled=[tid for tid,call in self.tool_calls.items() if call.get('status') not in ('completed','failed')]
             candidates = [''.join(group['parts']) for group in messages.values()

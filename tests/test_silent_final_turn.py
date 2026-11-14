@@ -57,9 +57,10 @@ class SilentFinalTurn(unittest.IsolatedAsyncioTestCase):
                 return {'text':text,'final_text':text,'stop_reason':'end_turn','unsettled_tools':[]}
 
         class Awareness:
-            def __init__(self,home,client,initial,observe,*,audience='public'):
+            def __init__(self,home,client,initial,observe,*,audience='public',binding=None):
                 self.initial_revision=initial['revision']
                 self.cursor='new-input' if changed==audience else self.initial_revision
+            async def ordinary_prompt(self,messages):return None
             async def finish(self):pass
             def final_revision(self,snapshot):return snapshot['revision']
 
