@@ -157,7 +157,7 @@ By default the probe receives a 12-second operation budget within the legacy
 leases. Lost restore acknowledgment still skips all re-verification and resumes
 restoration only; no session load runs after listeners may have resumed.
 
-Before enrollment, the controller must use the stable enrolled
+For source-provider enrollment, the controller must use the stable enrolled
 `venv/bin/python` and `app/adapter.py` paths; the body must use the enrolled app.
 Configure `task_helpers.command` to the separate helper path once during initial
 setup. These bootstrap path changes are not performed by a scheduled update.
@@ -183,6 +183,70 @@ assignments, replays unknown inputs, changes engine families, or enables a
 previously disabled work policy. Enabling hourly idle installation is a separate
 generic updater policy setting. The provider never prompts a model to resume:
 restored controllers continue only authority already valid in their saved state.
+
+### Packaged Linux installations with system services
+
+An existing packaged connection can enroll **only the lifecycle participant**
+for shared Instance/Runtime updates. It need not relocate its controller, replace
+its body, or enroll the source provider. The installed body/controller must
+already implement the gate and process-bound idle acknowledgment above.
+Use the same fixed owner helper files, protocol-1 prepare/verify/restore commands,
+and state checks. Add these fields to its owner configuration:
+
+```json
+{
+  "home": "/opt/example/minecraft",
+  "state": "/opt/example/minecraft-update-state",
+  "units": {
+    "body": "example-minecraft-body.service",
+    "controller": "example-minecraft-controller.service"
+  },
+  "system_manager": {
+    "version": 1, "uid": 999, "gid": 990, "actions": "sudo"
+  },
+  "session_python": "/opt/example/minecraft/package/python/bin/python3",
+  "session_client": {
+    "directory": "/opt/example/minecraft/qualified-controller",
+    "sha256": {
+      "acp_client.py": "<actual qualified file SHA256>",
+      "prompt_lifecycle.py": "<actual qualified file SHA256>"
+    }
+  }
+}
+```
+
+Paths, service names, numeric identity and digests are explicit enrollment
+values, not defaults or agent inputs. Launch each participant command as that
+service UID **and** primary GID. A different identity, including root, is refused
+before creating state, locks or gates. The helper code and configuration stay
+owner-controlled; its state directory and game gate must be writable by the
+service user. The participant never changes ownership or grants OS privileges.
+
+Read-only service observation uses `/bin/systemctl --system --no-ask-password`.
+`actions: "sudo"` adds only `/usr/bin/sudo -n` for exact start/stop operations on
+the two enrolled units. For example, the owner may install these narrow sudoers
+entries once, using the actual account and unit names:
+
+```sudoers
+example ALL=(root) NOPASSWD: /bin/systemctl --system --no-ask-password start --no-block example-minecraft-body.service
+example ALL=(root) NOPASSWD: /bin/systemctl --system --no-ask-password stop --no-block example-minecraft-body.service
+example ALL=(root) NOPASSWD: /bin/systemctl --system --no-ask-password start --no-block example-minecraft-controller.service
+example ALL=(root) NOPASSWD: /bin/systemctl --system --no-ask-password stop --no-block example-minecraft-controller.service
+```
+
+`actions: "direct"` is available when the owner has already granted the same
+system-service control through OS policy. Neither option accepts a shell or an
+arbitrary command prefix, restarts units, or changes enabled/masked state.
+This authorization is installation setup, not an approval on every update.
+
+The probe runs in `session_python`, so it uses the packaged official SDK. It
+verifies both enrolled client-file digests before loading those exact bytes
+through the existing client-factory seam, then initializes and loads the
+original saved session. No `home/app` or `home/venv` is required. If the qualified
+controller source changes, its new digests must be independently qualified and
+enrolled; the probe does not fall back to another client. The existing user
+systemd and native-platform paths retain their defaults. This participant-only
+enrollment does not make the source provider support arbitrary package layouts.
 
 ### Regenerable source artifacts
 
