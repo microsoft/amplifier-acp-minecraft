@@ -365,10 +365,15 @@ test('actual body accepts completion-bound work only after local helper discover
   fs.copyFileSync(process.execPath,command);const bootstrap=path.join(dir,'fixture.cjs');
   fs.writeFileSync(bootstrap,`if(process.argv.length!==2||require('node:path').basename(process.argv[1])!=='helper-capabilities')process.exit(1);process.stdout.write(${JSON.stringify(JSON.stringify(capabilities))});process.exit(0);`);
   process.env.NODE_OPTIONS='--require '+JSON.stringify(bootstrap);
- }else fs.writeFileSync(command,`#!/usr/bin/env node\nif(process.argv.slice(2).join(' ')!=='helper-capabilities')process.exit(1);process.stdout.write(${JSON.stringify(JSON.stringify(capabilities))});`,{mode:0o700});
+ }else {
+  // Static capability bytes need no nested Node runtime or PATH lookup under
+  // the production discovery deadline. Keep the exact argv contract.
+  fs.writeFileSync(command,`#!/bin/sh\n[ "$#" -eq 1 ] && [ "$1" = helper-capabilities ] || exit 1\nprintf '%s' '${JSON.stringify(capabilities)}'\n`,{mode:0o700});
+ }
  const f=fixture({incoming_chat_only:true,task_helpers:{command},human_engagement:{enabled:true},human_task_intake:{enabled:true,default_bound_mode:'completion_bound'}});
  try{
-  await realRequire('./helper-capabilities.cjs').discover(command);f.history.data.task.status='budget_exhausted';const old=structuredClone(f.history.data.task);
+  assert.deepEqual(await realRequire('./helper-capabilities.cjs').discover(command),capabilities,'local static helper discovery must finish before admission');
+  f.history.data.task.status='budget_exhausted';const old=structuredClone(f.history.data.task);
   function human(message){const e=f.history.record({kind:'chat',time:new Date().toISOString(),source:'human',username:'Visitor',message,accepted:true,provenance:'minecraft_public_chat',transport:{kind:'server_player_uuid',username:'Visitor',uuid:'human-uuid'}});f.history.data.inbox.push({id:e.id,source:'human',username:'Visitor',message});f.history.save();return e;}
   const e=human('Finish this commission.');await f.request('/turn',{conversation_only:true,message_ids:[e.id]});
   const accepted=await f.request('/action',{name:'task_accept',arguments:{request_id:e.id,goal:'Finish the whole commission'}});
