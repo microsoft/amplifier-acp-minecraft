@@ -12,7 +12,7 @@ function review(history,cfg,input,observation,{taskEffects=false}={}){
  if(!Number.isSafeInteger(input.generation)||!uuid(input.request_id)||!hash(input.expected_turn_sha256)||!hash(input.expected_inventory_sha256)||!hash(input.evidence_sha256)||!Object.values(input.expected_position).every(Number.isFinite)||!Array.isArray(input.reviews)||input.reviews.length<1||input.reviews.length>64)throw Error('Malformed activity review');
  for(const item of input.reviews){
   exact(item,['action_id','receipt_sha256','outcome','reason']);
-  if(typeof item.action_id!=='string'||!hash(item.receipt_sha256)||!['no_effect','settled_failed_movement','settled_failed_storage','settled_partial_gather','settled_partial_build','settled_failed_placement','settled_failed_crafting_preparation'].includes(item.outcome)||typeof item.reason!=='string'||!item.reason.trim()||item.reason.length>2000)throw Error('Each failed action needs concrete reviewed evidence');
+  if(typeof item.action_id!=='string'||!hash(item.receipt_sha256)||!['no_effect','settled_failed_movement','settled_failed_storage','settled_partial_gather','settled_partial_build','settled_failed_placement','settled_failed_crafting_preparation','settled_partial_speech'].includes(item.outcome)||typeof item.reason!=='string'||!item.reason.trim()||item.reason.length>2000)throw Error('Each failed action needs concrete reviewed evidence');
  }
  const policy=require('./activity-policy.cjs'),turn=history.data.last_turn;
  if(!policy.enabled(cfg)||history.data.turn||!turn||!Array.isArray(turn.actions))throw Error('Exact idle action history required');
@@ -33,7 +33,11 @@ function review(history,cfg,input,observation,{taskEffects=false}={}){
   const events=history.data.events.filter(e=>e.action_id===item.action_id);
   const starts=events.filter(e=>e.kind==='action_started'),ends=events.filter(e=>['action_result','action_failed'].includes(e.kind));
   const start=starts[0],end=ends[0];
-  if(starts.length!==1||ends.length!==1||start.action!==end.action||!['move','container','gather',...(taskEffects?['dig']:['build','place','craft'])].includes(start.action)||(start.action==='build'?end.kind!=='action_result':end.kind!=='action_failed')||end.timeout||end.operation_settled===false||!Number.isFinite(Date.parse(start.time))||!Number.isFinite(Date.parse(end.time))||!(Date.parse(start.time)>=Date.parse(turn.started_at))||Date.parse(end.time)<Date.parse(start.time)||digest(start.arguments)!==digest(end.arguments)||digest(end)!==item.receipt_sha256)throw Error('Exact retained terminal action receipt required');
+  if(starts.length!==1||ends.length!==1||start.action!==end.action||!['move','container','gather',...(taskEffects?['dig']:['build','place','craft','give','chat','tell'])].includes(start.action)||(start.action==='build'?end.kind!=='action_result':end.kind!=='action_failed')||end.timeout||end.operation_settled===false||!Number.isFinite(Date.parse(start.time))||!Number.isFinite(Date.parse(end.time))||!(Date.parse(start.time)>=Date.parse(turn.started_at))||Date.parse(end.time)<Date.parse(start.time)||digest(start.arguments)!==digest(end.arguments)||digest(end)!==item.receipt_sha256)throw Error('Exact retained terminal action receipt required');
+  if(['chat','tell'].includes(start.action)){
+   if(item.outcome!=='settled_partial_speech'||!require('./speech.cjs').settledPartial(turn,start.action,start.arguments,end))throw Error('Partial speech requires exact submitted prefix and cancelled suffix; unknown packets remain held');
+  }else if(item.outcome==='settled_partial_speech')throw Error('Partial speech review is only for speech');
+  if(start.action==='give'&&(item.outcome!=='no_effect'||end.error!=='Meet the recipient within 2.5 blocks first; give does not chase players'))throw Error('Handoff review requires exact initial range refusal');
   if(start.action==='craft'){
    // This exact legacy branch follows awaited preparation (each click has a
    // server snapshot and pong barrier), before movement or recipe execution.
