@@ -62,7 +62,10 @@ function review(history,cfg,input,observation,{taskEffects=false}={}){
    const prefix=Array.isArray(blocks)&&Array.isArray(r?.placed)&&r.placed.length<blocks.length&&r.placed.every((v,i)=>v.verified===true&&v.actual===itemName&&equal(v.position,blocks[i]));
    const refusal=prefix&&equal(p,blocks[r.placed.length])&&r.error===`Server refused to place ${itemName} at (${p.x}, ${p.y}, ${p.z}): the block is still air`;
    const later=history.data.events.some(e=>e.kind==='action_result'&&e.action==='place'&&Date.parse(e.time)>Date.parse(end.time)&&equal(e.arguments,p)&&e.arguments.item===itemName&&e.result?.verified===true&&e.result.actual===itemName&&equal(e.result.position,p));
-   if(item.outcome!=='settled_partial_build'||!refusal||!later||r.timeout||r.operation_settled===false)throw Error('Partial build requires verified prefix, exact server refusal and later confirmed final placement');
+   // The first target check precedes inventory sync, walking, equip and placement.
+   // Later/partial/preparation failures retain their effects and cannot use this case.
+   const initial=Array.isArray(blocks)&&blocks.length>0&&blocks.length<=24&&blocks.every(b=>['x','y','z'].every(k=>Number.isSafeInteger(b?.[k])))&&typeof itemName==='string'&&/^[a-z][a-z0-9_]*$/.test(itemName)&&Array.isArray(r?.placed)&&r.placed.length===0&&equal(p,blocks[0])&&r.error==='Target is not empty';
+   if(!(item.outcome==='no_effect'&&initial||item.outcome==='settled_partial_build'&&refusal&&later)||r.timeout||r.operation_settled===false)throw Error('Build review requires exact first-target refusal or verified partial placement evidence');
   }else if(item.outcome==='settled_partial_build')throw Error('Partial build review is only for a build');
   // Legacy preflight failures predate no-effect journaling. This is an explicit
   // owner review of exact historical receipts, never automatic error recovery.
