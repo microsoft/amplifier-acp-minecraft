@@ -82,7 +82,7 @@ class Reconnect(unittest.IsolatedAsyncioTestCase):
 
         async def sleep(delay):
             sleeps.append(delay)
-            if scenario in ('reload-fails', 'attention-reload-fails') and finishes:
+            if scenario in ('reload-fails', 'attention-reload-fails', 'resume-fails') and finishes:
                 raise asyncio.CancelledError()
             if social and finishes and not attention_posts and delay == 1:
                 # An attention transport failure must not silently strand the event.
@@ -129,6 +129,28 @@ class Reconnect(unittest.IsolatedAsyncioTestCase):
         self.assertEqual([v['method'] for v in result['frames']],
                          ['initialize', 'session/new', 'session/prompt', 'session/prompt'])
         self.assertTrue(all(not value['error'] for value in result['finishes']))
+
+    async def test_advertised_resume_reconnects_same_session_before_next_admission(self):
+        result = await self.exercise('resume-only')
+        methods = [v['method'] for v in result['frames']]
+        self.assertEqual(methods, ['initialize', 'session/new', 'session/prompt',
+                                  'initialize', 'session/resume', 'session/prompt'])
+        self.assertEqual(result['session']['session'], 'durable-session')
+        self.assertEqual(result['reserved'], 2)
+        self.assertEqual(result['task']['turns'], 14)
+        self.assertEqual(result['task']['deadline'], 9999999999999)
+        self.assertTrue(all(not value['error'] for value in result['finishes']))
+
+    async def test_failed_resume_keeps_pending_input_authority_and_budget(self):
+        result = await self.exercise('resume-fails')
+        self.assertEqual([v['method'] for v in result['frames']],
+                         ['initialize', 'session/new', 'session/prompt', 'initialize', 'session/resume'])
+        self.assertEqual(result['session']['session'], 'durable-session')
+        self.assertEqual(result['reserved'], 1)
+        self.assertEqual([m['id'] for m in result['messages']], ['2'])
+        self.assertEqual(result['task']['turns'], 13)
+        self.assertEqual(result['task']['max_turns'], 45)
+        self.assertEqual(result['task']['deadline'], 9999999999999)
 
     async def test_failed_reload_after_completed_turn_keeps_next_message_and_budget(self):
         result = await self.exercise('reload-fails')

@@ -6,6 +6,7 @@ Minecraft only restricts its use to paths within this fresh disposable root.
 """
 import json
 import hashlib
+import time
 from pathlib import Path
 
 
@@ -42,3 +43,17 @@ def fixture_application_identities(receipt, service):
     if value.get('schema')!=1 or value.get('service')!=service:
         raise ValueError('Unrecognized disposable application receipt')
     return [value[key] for key in ('supervisor','application')]
+
+
+def wait_fixture_exit(session, receipt, service, identities, *, timeout=25,
+                      clock=time.monotonic, sleep=time.sleep):
+    """Observe captured generations after fixture stop; never kill or redispatch."""
+    captured=list(identities)
+    until=clock()+timeout
+    while True:
+        for identity in fixture_application_identities(receipt,service):
+            if identity not in captured:captured.append(identity)
+        live=[identity for identity in captured if session.process_matches(identity)]
+        if not live:return {'recorded_generations':captured,'all_exited':True}
+        if clock()>=until:raise TimeoutError(f'Disposable generations remain live: {live}')
+        sleep(.1)

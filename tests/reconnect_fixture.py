@@ -21,6 +21,8 @@ for line in sys.stdin:
     if method == 'initialize':
         result = {'protocolVersion': 1,
                   'agentCapabilities': {'loadSession': True, 'mcpCapabilities': {'http': True}}}
+        if scenario.startswith('resume-'):
+            result['agentCapabilities'].update(loadSession=False, sessionCapabilities={'resume': {}})
         if scenario.startswith('attention-'):
             result['_meta'] = {'com.microsoft.amplifier.attention': {
                 'version': 1, 'enabled': True, 'method': '_amplifier/attention'}}
@@ -30,8 +32,8 @@ for line in sys.stdin:
         send({'id': value['id'], 'result': result})
     elif method == 'session/new':
         send({'id': value['id'], 'result': {'sessionId': 'durable-session'}})
-    elif method == 'session/load':
-        if scenario in ('reload-fails', 'attention-reload-fails'):
+    elif method in ('session/load', 'session/resume'):
+        if scenario in ('reload-fails', 'attention-reload-fails', 'resume-fails'):
             send({'id': value['id'], 'error': {'code': -32000, 'message': 'Fixture reload failure'}})
         else:
             send({'id': value['id'], 'result': {}})

@@ -22,6 +22,14 @@ high-level methods. Negotiated extensions use the SDK's `ext_method` API. Existi
 capability checks remain mandatory; a vanilla third-party ACP endpoint does not
 acquire Constellation semantics merely by connecting.
 
+Saved sessions use `session/load` when advertised. Otherwise, an advertised
+`sessionCapabilities.resume` object enables the SDK's `session/resume` operation.
+Both retain the exact saved session ID, working directory, Minecraft MCP servers
+and scoped session metadata. Resume uses the existing foreground exclusion,
+update drain and inactivity/overall replay deadlines. Refusal, timeout or lost
+response never falls back to creating a replacement session or replaying a prompt.
+An endpoint advertising neither operation cannot reconnect a saved session.
+
 The read-only public stream observer exposes the SDK-assigned prompt request ID
 for the existing negotiated active-input contract. It never assigns or rewrites
 IDs. Message metadata, source revision facts, maintenance proofs, optional message

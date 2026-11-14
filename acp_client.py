@@ -14,7 +14,7 @@ from acp import connect_to_agent
 from acp.connection import StreamDirection
 from acp.exceptions import RequestError
 from pydantic import ValidationError
-from acp.schema import (InitializeRequest, NewSessionRequest, LoadSessionRequest,
+from acp.schema import (InitializeRequest, NewSessionRequest, LoadSessionRequest, ResumeSessionRequest,
                         PromptRequest, SessionNotification, RequestPermissionResponse)
 from acp.utils import model_to_kwargs
 
@@ -124,20 +124,26 @@ class Client:
         params = {"cwd": self.endpoint["cwd"], "mcpServers": self.endpoint.get("mcp_servers", [])}
         if self.endpoint.get("session_meta"):
             params["_meta"] = self.endpoint["session_meta"]
-        if previous and not self.info.get("agentCapabilities", {}).get("loadSession"):
-            raise ProtocolError("Saved session cannot be loaded by this endpoint; refusing to replace it")
         if previous:
+            capabilities = self.info.get("agentCapabilities", {})
+            sessions = capabilities.get('sessionCapabilities')
+            if capabilities.get("loadSession") is True:
+                method = 'session/load'
+            elif isinstance(sessions, dict) and isinstance(sessions.get('resume'), dict):
+                method = 'session/resume'
+            else:
+                raise ProtocolError("Saved session cannot be loaded or resumed by this endpoint; refusing to replace it")
             self.available_commands.pop(previous, None)
             params["sessionId"] = previous
             self.session = previous
             self.replaying = True
             try:
-                await asyncio.wait_for(self.request("session/load", params, idle_timeout=self.idle_timeout), self.load_timeout)
+                await asyncio.wait_for(self.request(method, params, idle_timeout=self.idle_timeout), self.load_timeout)
             except asyncio.TimeoutError as e:
-                raise ProtocolError("ACP session/load exceeded its total replay deadline") from e
+                raise ProtocolError(f"ACP {method} exceeded its total replay deadline") from e
             finally:
                 self.replaying = False
-            self.observe("session_loaded", session_id=previous)
+            self.observe("session_loaded" if method == 'session/load' else "session_resumed", session_id=previous)
         else:
             result = await asyncio.wait_for(self.request("session/new", params), 30)
             self.session = result.get("sessionId")
@@ -287,6 +293,7 @@ class Client:
             'initialize': (InitializeRequest, self.connection.initialize),
             'session/new': (NewSessionRequest, self.connection.new_session),
             'session/load': (LoadSessionRequest, self.connection.load_session),
+            'session/resume': (ResumeSessionRequest, self.connection.resume_session),
             'session/prompt': (PromptRequest, self.connection.prompt),
         }
         if method in methods:
@@ -300,7 +307,7 @@ class Client:
     async def request(self, method, params, update=None, idle_timeout=None):
         if self.transport_closed():
             raise ProtocolError('ACP closed before request')
-        foreground = method in ('session/prompt', 'session/load')
+        foreground = method in ('session/prompt', 'session/load', 'session/resume')
         if foreground and self.foreground:
             raise ProtocolError('A prompt or replay is already active on this connection')
         if foreground:
