@@ -1,5 +1,5 @@
 import unittest
-from context_registration import registration
+from context_registration import registration, readback_matches
 
 
 class ContextRegistrationTests(unittest.TestCase):
@@ -47,6 +47,21 @@ class ContextRegistrationTests(unittest.TestCase):
             with self.assertRaises(ValueError):registration({**self.cfg(),**delta},[])
         with self.assertRaises(ValueError):
             registration(self.cfg(),[{'id':str(i),'url':'http://127.0.0.1:1','secret_ref':'s'+str(i)} for i in range(16)])
+
+    def test_readback_checks_what_was_written_and_ignores_host_reported_fields(self):
+        home=registration(self.cfg('minecraft:jarvis:home',45850),[])['provider']
+        written=registration(self.cfg(),[{**home,'enabled':False,'configured':True,'effective_enabled':False}])['providers']
+        self.assertEqual([p.get('enabled') for p in written],[False,None])
+        after=[{**p,'enabled':p.get('enabled',True),'configured':True,'effective_enabled':False} for p in written]
+        for same in (after,after[::-1],written):
+            self.assertTrue(readback_matches(written,same))
+        ours=after[1]
+        for different in (after[:1],after+[{**ours,'id':'unexpected'}],[ours,ours],
+                          [after[0],{**ours,'url':'http://127.0.0.1:1'}],[after[0],{**ours,'label':'other'}],
+                          [after[0],{**ours,'secret_ref':'other'}],[{**after[0],'enabled':True},ours],
+                          [{k:v for k,v in after[0].items() if k!='enabled'},ours],
+                          [after[0],{k:v for k,v in ours.items() if k!='id'}],[after[0],'not a provider'],None,{}):
+            self.assertFalse(readback_matches(written,different),different)
 
 class RegistrationCommandTests(unittest.TestCase):
     def test_no_start_staging_makes_no_instance_or_network_calls_and_keeps_secrets(self):
@@ -105,3 +120,42 @@ class RegistrationCommandTests(unittest.TestCase):
             self.assertFalse((h/'session.json').exists())
             receipt=json.loads((h/'context-registration-receipt.json').read_text())
             self.assertFalse(receipt['runtime_namespace_verified'])
+
+    def host(self,d,cfg,providers,stores=True):
+        """A host that keeps what is PUT and, like newer Instances, reports more than it was sent."""
+        import json,io
+        from pathlib import Path
+        from types import SimpleNamespace
+        from unittest.mock import patch
+        from ops.register_context import main
+        h=Path(d);(h/'config.json').write_text(json.dumps(cfg));registry=list(providers)
+        def api(command,**kwargs):
+            method,path=command[4:6]
+            if method=='PUT' and path=='context/providers' and stores:
+                registry[:]=[{'enabled':True,**p} for p in json.loads(Path(command[-1]).read_text())['providers']]
+            reported=[{**p,'configured':True,'effective_enabled':False} for p in registry]
+            return SimpleNamespace(returncode=0,stdout=json.dumps({'providers':reported} if method=='GET' else {}))
+        with patch('ops.register_context.subprocess.run',side_effect=api),patch('ops.register_context.urllib.request.urlopen',return_value=io.BytesIO(b'{"current":{"activity":{"connected":true}}}')):
+            main(['--home',d,'--agent-home',d+'/instance'])
+        return registry
+
+    def test_host_reported_fields_do_not_fail_a_correct_readback(self):
+        import tempfile
+        from pathlib import Path
+        other={**registration(ContextRegistrationTests().cfg('minecraft:jarvis:home',45850),[])['provider'],'enabled':False}
+        cfg=ContextRegistrationTests().cfg()
+        with tempfile.TemporaryDirectory() as d:
+            registry=self.host(d,cfg,[other])
+            self.assertEqual(registry,[other,{'enabled':True,**registration(cfg,[])['provider']}])
+            self.assertTrue((Path(d)/'context-registration-receipt.json').exists())
+            # Registering the same connection again finds its own entry and still reads back cleanly.
+            self.assertEqual(self.host(d,cfg,registry),registry)
+
+    def test_unstored_registration_still_fails_readback_without_a_receipt(self):
+        import tempfile
+        from pathlib import Path
+        other={**registration(ContextRegistrationTests().cfg('minecraft:jarvis:home',45850),[])['provider'],'enabled':True}
+        with tempfile.TemporaryDirectory() as d:
+            with self.assertRaisesRegex(RuntimeError,'readback differs'):
+                self.host(d,ContextRegistrationTests().cfg(),[other],stores=False)
+            self.assertFalse((Path(d)/'context-registration-receipt.json').exists())
