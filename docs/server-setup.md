@@ -224,6 +224,15 @@ installation's Python environment before enabling. Other operating systems need
 their own supervisor. Do not assume systemd or install its Linux lifecycle driver
 on a different OS.
 
+Both templates restart their program after a crash. `Restart=on-failure` alone
+counts `SIGTERM` as a clean exit, so the controller template adds
+`RestartForceExitStatus=SIGTERM`: a controller ended by that signal from outside
+the service manager, for example by a low-memory daemon, starts again. A stop
+through the service manager stays stopped. The body template does not have this
+line because it could not take effect: the body handles the signal, leaves the
+game and exits with status 0, the same status it uses when its saved connection
+is disconnected. A body ended that way stays down until it is started again.
+
 Validate independently:
 
 1. Body joins the intended world as the intended identity; authenticated read-only
