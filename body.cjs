@@ -408,6 +408,7 @@ async function operate(name,a={},sequenceId=null){
   if(name==='gather')gatherTargets(a);
   if(name==='dig'){const block=digTarget(coord(a),a.expected);spatial.digGuard(bot,block);spatial.harvestTool(bot,block);if(!bot.canDigBlock(block))throw Error('Target is out of reach; plan a safe standing position first');}
   if(name==='place'){const p=coord(a);placementTarget(p);spatial.placementSupport(bot,p,a.support_face,a.item);}
+  if(name==='build'){const positions=a.blocks.map(coord);if(positions.length)placementTarget(positions[0]);}
   if(name==='craft')crafting.preflight(bot,a.item);
   if(name==='give')handoff.preflight(bot,a);
   if(name==='container')containers.preflight(bot,coord(a),a);

@@ -24,3 +24,24 @@ for(const mode of ['confirmed','no_effect','wrong_item','wrong_coordinate','miss
   reload.data.activity_stop={at:Date.now()};assert.equal(policy.reason(reload,cfg),'explicit_stop');
  }else{assert.throws(()=>review(h,cfg,input,observation,{taskEffects:mode==='interrupted_task'}));assert.deepEqual(h.data,before);}
 });
+
+for(const mode of ['first_occupied','partial','wrong_target','changed_during_preparation','unknown','timeout','unsettled','no_terminal','invalid_blocks'])test('historical build first-target review '+mode,t=>{
+ const home=fs.mkdtempSync(path.join(os.tmpdir(),'build-review-'));t.after(()=>fs.rmSync(home,{recursive:true,force:true}));const h=new WorkshopState(path.join(home,'state.json'));
+ h.data.task={id:'original',status:'blocked',turns:23,progress:[]};
+ h.data.last_turn={activity:true,task_id:null,interrupted:false,started_at:'2026-11-14T18:00:00Z',actions:[{id:'refused',status:'uncertain'}]};
+ const args={item:'cobblestone',blocks:[{x:-411,y:62,z:-575},{x:-411,y:62,z:-574}]};
+ const end={id:'terminal',kind:'action_result',action:'build',action_id:'refused',time:'2026-11-14T18:01:22Z',arguments:args,result:{placed:[],failed_at:{...args.blocks[0]},error:'Target is not empty'}};
+ h.data.events=[{id:'start',kind:'action_started',action:'build',action_id:'refused',time:'2026-11-14T18:01:21Z',arguments:args},end];
+ if(mode==='partial')end.result.placed=[{position:args.blocks[0],actual:'cobblestone',verified:true}];
+ if(mode==='wrong_target')end.result.failed_at=args.blocks[1];
+ if(mode==='changed_during_preparation')end.result.error='Placement target changed during preparation; inspect before retrying';
+ if(mode==='unknown')end.result.error='Server did not answer the placement';
+ if(mode==='timeout')end.result.timeout=true;if(mode==='unsettled')end.result.operation_settled=false;
+ if(mode==='no_terminal')h.data.events.pop();if(mode==='invalid_blocks')args.blocks=[];
+ const observation={position:{x:-508,y:64,z:-540},inventory:{slots:[],cursor:null}};
+ const input={generation:2,request_id:crypto.randomUUID(),expected_turn_sha256:hash(h.data.last_turn),expected_position:observation.position,expected_inventory_sha256:hash(observation.inventory),evidence_sha256:'a'.repeat(64),reviews:[{action_id:'refused',receipt_sha256:hash(end),outcome:'no_effect',reason:'Exact initial occupied target before inventory, movement or placement; no historical replay.'}]};h.save();const before=structuredClone(h.data);
+ if(mode==='first_occupied'){
+  assert.equal(review(h,cfg,input,observation).activity_allowed,true);assert.deepEqual(h.data.task,before.task);assert.deepEqual(h.data.events,before.events);assert.equal(h.data.last_turn.actions[0].status,'uncertain');assert.equal(policy.canContinue(h,cfg),false);
+  const reload=new WorkshopState(h.file);assert.equal(review(reload,cfg,input,observation).duplicate,true);reload.data.activity_stop={at:Date.now()};assert.equal(policy.reason(reload,cfg),'explicit_stop');
+ }else{assert.throws(()=>review(h,cfg,input,observation));assert.deepEqual(h.data,before);}
+});

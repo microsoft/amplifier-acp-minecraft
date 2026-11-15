@@ -124,6 +124,18 @@ for(const failure of ['occupied','unsupported'])test('initial '+failure+' placem
   assert.equal(effects,0);assert.equal(JSON.stringify(f.history.data.turn.actions),before);assert.equal(f.history.data.events.at(-1).kind,'action_preflight_refused');
  }finally{f.close();}
 });
+for(const occupied of ['stone','water'])test('build first '+occupied+' target refuses without reserving an effect',async()=>{
+ const f=fixture({human_engagement:{enabled:true,task_optional:true}});try{
+  const {Vec3}=realRequire('vec3');f.bot.entity.position=new Vec3(.5,64,.5);let effects=0;
+  f.bot.blockAt=p=>({position:p,name:occupied,boundingBox:occupied==='stone'?'block':'empty',getProperties:()=>({})});
+  f.bot.supportFeature=()=>{effects++;throw Error('unexpected inventory refresh');};f.bot.equip=async()=>{effects++;};f.bot.pathfinder.goto=async()=>{effects++;};
+  await f.request('/turn',{activity:true,renewable_lease:true});const before=JSON.stringify(f.history.data.turn.actions);
+  await assert.rejects(f.operate('build',{item:'cobblestone',blocks:[{x:1,y:64,z:0},{x:2,y:64,z:0}]}),/Target is not empty/);
+  assert.equal(effects,0);assert.equal(JSON.stringify(f.history.data.turn.actions),before);
+  assert.equal(f.history.data.events.at(-1).kind,'action_preflight_refused');
+  await f.request('/finish',{});assert.equal((await f.request('/status')).task_capabilities.activity_allowed,true);
+ }finally{f.close();}
+});
 test('furnace argument/target preflight cannot create an uncertain action or block later work',async()=>{
  const f=fixture({human_engagement:{enabled:true,task_optional:true}});try{
   const {Vec3}=realRequire('vec3');f.bot.entity.position=new Vec3(.5,64,.5);
