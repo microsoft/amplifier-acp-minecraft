@@ -58,6 +58,16 @@ Linux user-service templates. Adjust their application and Node paths to the
 installation before enabling them, including the controller's virtual-environment
 Python path; `%h` refers to the service user's home.
 
+How the body ends tells its supervisor what happened. Status 0 is only for the
+body's own intended exits, such as a saved connection that is disconnected, and
+is not restarted. A lost game connection exits with status 1. After `SIGTERM` the
+body leaves the game, closes its control listener and then ends by that same
+signal rather than with an exit status. The body template therefore keeps
+`Restart=on-failure` and adds `RestartForceExitStatus=SIGTERM`: a body ended by
+that signal from outside the service manager, for example by a low-memory daemon,
+starts again, while a stop through the service manager stays stopped. Any other
+supervisor sees the same signal ending and applies its own policy.
+
 The body listens on loopback. Its MCP and control requests require a bearer token,
 and browser origins are rejected. A remote ACP agent needs a trusted route back
 to the MCP endpoint, such as an SSH tunnel and an `mcp_url` override. A loopback
