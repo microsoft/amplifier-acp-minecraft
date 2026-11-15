@@ -33,7 +33,7 @@ by the installed MCP endpoint; optional discovery follows the relevant reference
 
 | Boundary or outcome | Technical reference | Implementation entry point |
 | --- | --- | --- |
-| Server access, accounts, private routes and installation prerequisites | [Installation requirements](server-setup.md), [Xbox LAN compatibility](xbox-lan.md) | [Example configuration](../config.example.json), [context registration](../ops/register_context.py) |
+| Server access, accounts, private routes and installation prerequisites | [Installation requirements](server-setup.md), [Xbox LAN compatibility](xbox-lan.md) | [Example configuration](../config.example.json), [context registration](../ops/register_context.py), [offline-route UUID](../ops/offline_uuid.py) |
 | ACP client, saved-session replay, permissions and negotiated fallback | [Python SDK boundary](python-sdk.md), [adapter lifecycle](adapter-reference.md#healthy-work-action-leases-and-acp-lifecycle) | [Client](../acp_client.py), [controller](../adapter.py) |
 | Observation, world tools, action receipts and recovery | [Adapter reference](adapter-reference.md) | [Body and MCP schemas](../body.cjs) |
 | Human interaction, task-optional activity, Stop and concurrent planning | [Human-led play](human-led-play.md), [task intake](human-task-intake.md), [bounds](completion-bound-tasks.md) | [Task state](../workshop-state.cjs), [planner context](../planner_prompt.py) |

@@ -98,6 +98,45 @@ otherwise review/test that exact compatibility change and record its source and
 artifact hashes before installation. Check initialization errors and a real linked
 login. This is separate from the temporary Xbox LAN workaround.
 
+### Allowlist an offline-route agent by UUID
+
+The allowlist holds UUIDs; a name is only a label on each entry. An agent on the
+owner-controlled offline agent route joins with the UUID a server or proxy gives
+any unauthenticated login: the version-3 name UUID of `OfflinePlayer:<exact username>`.
+`whitelist add <name>` may store a different one. Where the server resolves
+names through the account service (observed on Paper with Microsoft-authenticated
+humans and a separate unauthenticated agent route), it stores the version-4 UUID
+of whichever licensed account owns that name. The agent is then refused as not
+allowlisted although its name is listed, and the stored entry admits that
+unrelated account on the human route.
+
+Do not use the name command for an offline-route agent. Write its own UUID:
+
+1. Print the entry for the exact, case-sensitive `username` in the player's
+   `config.json`. Another capitalisation is another UUID.
+
+   ```sh
+   python3 ops/offline_uuid.py --whitelist-entry YourAgent
+   ```
+
+   ```json
+   {"uuid": "b284e613-a9ae-36f1-b7b4-5dc72f238f35", "name": "YourAgent"}
+   ```
+
+   The [helper](../ops/offline_uuid.py) only computes: it needs no installed
+   dependencies and reads or changes no server file. Without `--whitelist-entry`
+   it prints the bare UUID.
+2. Add that object to the array in the server's `whitelist.json`, keeping every
+   other entry. If the name command already stored an entry for this name with
+   another UUID, remove it; it belongs to someone else's account.
+3. Run `whitelist reload` from the server console or RCON. No restart is needed.
+4. Start the body and compare the UUID the server logs for that login with the
+   helper's output. If they differ, the route is not presenting an offline
+   login; establish why before allowlisting anything else.
+
+An agent that signs in with its own licensed account has that account's UUID,
+and the ordinary name command is correct for it.
+
 ## 3. Stage one self-contained player
 
 Minecraft clients, servers, licensed accounts and game assets are obtained separately;
@@ -227,7 +266,9 @@ on a different OS.
 Validate independently:
 
 1. Body joins the intended world as the intended identity; authenticated read-only
-   state shows actual readiness, position/inventory and tool schema.
+   state shows actual readiness, position/inventory and tool schema. An offline-route
+   agent refused as not allowlisted although its name is listed has the wrong UUID
+   stored: see [allowlisting by UUID](#allowlist-an-offline-route-agent-by-uuid).
 2. MCP/context works from the actual engine namespace and provider metadata matches.
 3. ACP initializes through the installed official SDK. For an upgrade, load the
    **original** saved session and require its terminal success. Saved-session replay
