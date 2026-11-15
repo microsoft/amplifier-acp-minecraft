@@ -1,4 +1,5 @@
 // Local transcript evidence, never authority copied from a peer's payload.
+const {agentIdentity}=require('./agent-identity.cjs');
 const uuid=/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 function enabled(cfg){return cfg.human_task_intake?.enabled===true&&cfg.human_task_intake?.delegation?.enabled===true;}
 function publicSource(e,now,cutoff=0,maxAge=600000){
@@ -22,14 +23,14 @@ function humans(history,cfg,now,{existing=false}={}){
 }
 function peer(history,cfg,message,now){
  const e=history.data.events.find(e=>e.id===message.id);
- return enabled(cfg)&&message.source==='agent'&&e?.source==='agent'&&e.accepted===true&&e.intent==='request'&&publicSource(e,now,history.data.task_source_cutoff||0)&&(cfg.bot_names||[]).some(n=>n.toLowerCase()===e.username.toLowerCase())&&humans(history,cfg,now).length>0?e:null;
+ return enabled(cfg)&&message.source==='agent'&&e?.source==='agent'&&e.accepted===true&&e.intent==='request'&&publicSource(e,now,history.data.task_source_cutoff||0)&&agentIdentity(cfg).isAgent(e.username,e.transport.uuid)&&humans(history,cfg,now).length>0?e:null;
 }
 // Conversational delivery is not helper-task admission. A peer can report a
 // dependency after the original human request has aged out of intake evidence.
 function conversation(history,cfg,message,now){
  const e=history.data.events.find(e=>e.id===message.id);
  return cfg.human_engagement?.enabled===true&&cfg.agent_dialogue===true&&message.source==='agent'&&e?.source==='agent'&&e.accepted===true&&
-  publicSource(e,now,history.data.task_source_cutoff||0)&&(cfg.bot_names||[]).some(n=>n.toLowerCase()===e.username.toLowerCase())&&
+  publicSource(e,now,history.data.task_source_cutoff||0)&&agentIdentity(cfg).isAgent(e.username,e.transport.uuid)&&
   (message.attention_offer?.ticket||e.intent==='request')?e:null;
 }
 module.exports={enabled,publicSource,humans,peer,conversation};

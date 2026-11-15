@@ -28,7 +28,9 @@ it, configure the firewall, or make a console discover a world.
   VLAN boundaries and host/container networking. A routed VPN does not carry LAN
   discovery simply because unicast Java connections work.
 - Keep the agent-only offline/trusted proxy loopback/private. Never point a human
-  console at it or disable signed login to make a connection succeed.
+  console at it or disable signed login to make a connection succeed. With the
+  optional [server-attested policy](server-setup.md#agent-or-human), a player
+  arriving through it is classified as an agent, not a human.
 
 Example layout (choose unused ports appropriate for your installation):
 

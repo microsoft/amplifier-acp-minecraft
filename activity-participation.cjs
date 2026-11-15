@@ -1,12 +1,13 @@
 // Installation-scoped activity facts, separate from human speech and task grants.
 const crypto=require('node:crypto');
 const {ParticipationRejection}=require('./participation.cjs');
+const {agentIdentity}=require('./agent-identity.cjs');
 const TTL=120000,COALESCE=10000;
 class ActivityParticipation {
  constructor(history,cfg,{now=Date.now}={}){this.history=history;this.cfg=cfg;this.now=now;}
  enabled(){return this.cfg.human_engagement?.enabled===true&&this.cfg.human_engagement?.activity_scope==='conversation_only'&&this.history.data.task?.status!=='stopped';}
  observe({uuid,name,from,to,at,kind='movement'}){
-  if(!this.enabled()||typeof uuid!=='string'||!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(uuid)||!name||(this.cfg.bot_names||[]).concat(this.cfg.username).some(n=>n.toLowerCase()===name.toLowerCase()))return;
+  if(!this.enabled()||typeof uuid!=='string'||!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(uuid)||!name||agentIdentity(this.cfg).isAgent(name,uuid))return;
   if(!Number.isSafeInteger(at)||at<=0||at>this.now()+5000||this.now()-at>TTL)return;
   if(!['movement','interaction'].includes(kind))return;
   if(![from,to].every(p=>p&&[p.x,p.y,p.z].every(Number.isFinite)))return;

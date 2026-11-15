@@ -657,3 +657,71 @@ test('controller lease is not presented as a model deadline in MCP results',asyn
   assert.equal(renewed.lease_id,original.lease_id);assert.equal(renewed.renewable,true);
  }finally{await client.close();await server.close();f.close();}
 });
+// Fictional accounts for agent-or-human routing: the offline UUID a server derives
+// for an unauthenticated name, and a licensed (version 4) login.
+const {offlineUuid}=require('../agent-identity.cjs'),licensed='3f2b8c1e-9a4d-4e6f-8b7a-5c0d1e2f3a4b';
+function identityFixture(extra){
+ const f=fixture('BuilderOne',false,extra);
+ f.bot.pathfinder={setGoal(){}};f.bot.clearControlStates=()=>{};f.bot.stopDigging=()=>{};f.bot.chat=()=>{};
+ Object.assign(f.bot.players,{NewAgent:{username:'NewAgent',uuid:offlineUuid('NewAgent')},Player:{username:'Player',uuid:licensed},Lookalike:{username:'Lookalike',uuid:offlineUuid('NewAgent')}});
+ const last=()=>f.history.data.events.filter(e=>e.kind==='chat').at(-1);
+ // say: server-attributed chat as the real listeners receive it; claim: text with no attribution.
+ return {f,last,say(name,text){const raw={};f.bot.emit('message',raw,'chat',f.bot.players[name].uuid,false);f.bot.emit('chat',name,text,null,raw);return last();},
+  claim(name,text){f.bot.emit('chat',name,text);return last();},stopped:()=>f.history.data.events.some(e=>e.kind==='stopped_by_player')};
+}
+test('by default an unlisted player with an offline UUID is still routed as a human',()=>{
+ const {f,say,stopped}=identityFixture();try{
+  const e=say('NewAgent','BuilderOne, please build a tower.');
+  assert.equal(e.source,'human');assert.equal(e.transport.uuid,offlineUuid('NewAgent'));assert.equal(f.inbox.at(-1).source,'human');
+  say('NewAgent','BuilderOne, stop.');assert.equal(stopped(),true);
+ }finally{f.close();}
+});
+test('with the server-attested policy an unlisted offline-UUID speaker is an agent peer without human authority',()=>{
+ const {f,say,claim,stopped}=identityFixture({agent_identity:{offline_uuid:true}});try{
+  // No human routing and no Stop: outside the human-activity window a peer request stays context.
+  const first=say('NewAgent','BuilderOne, stop.');
+  assert.equal(first.source,'agent');assert.equal(first.accepted,false);assert.equal(f.inbox.length,0);assert.equal(stopped(),false);assert.deepEqual(f.history.task(),f.task);
+  // A licensed account is a human exactly as before, and opens the bounded peer window.
+  const human=say('Player','BuilderOne, hello.');
+  assert.equal(human.source,'human');assert.equal(human.transport.uuid,licensed);assert.deepEqual(f.inbox.map(m=>m.source),['human']);
+  const request=say('NewAgent','@BuilderOne please pass the planks.');
+  assert.equal(request.source,'agent');assert.equal(request.intent,'request');assert.equal(request.accepted,true);
+  assert.deepEqual({...f.inbox.at(-1)},{id:request.id,username:'NewAgent',message:request.message,source:'agent'});
+  // Unattributed text under that name: the server's player list still answers for it.
+  assert.equal(claim('NewAgent','BuilderOne, stop.').source,'agent');assert.equal(stopped(),false);
+  // The UUID the server attributed to the message decides, even if the player list changed before delivery.
+  const raw={};f.bot.emit('message',raw,'chat',offlineUuid('NewAgent'),false);delete f.bot.players.NewAgent;
+  f.bot.emit('chat','NewAgent','BuilderOne, stop.',null,raw);assert.equal(f.history.data.events.filter(e=>e.kind==='chat').at(-1).source,'agent');assert.equal(stopped(),false);
+  f.bot.players.NewAgent={username:'NewAgent',uuid:offlineUuid('NewAgent')};
+  // Never by guesswork: another name's offline UUID, a name the server does not list, a departed agent.
+  assert.equal(say('Lookalike','BuilderOne, hello.').source,'human');assert.equal(claim('Absent','BuilderOne, hello.').source,'human');
+  delete f.bot.players.NewAgent;assert.equal(claim('NewAgent','BuilderOne, hello.').source,'human');
+  // A human addressing the attested agent hands conversational focus to it, like a configured peer.
+  f.bot.players.NewAgent={username:'NewAgent',uuid:offlineUuid('NewAgent')};const before=f.inbox.length;
+  assert.equal(say('Player','NewAgent, can you carry these?').accepted,false);assert.equal(f.inbox.length,before);
+  // A real human's Stop keeps its authority.
+  say('Player','BuilderOne, stop.');assert.equal(stopped(),true);
+ }finally{f.close();}
+});
+test('a human_names entry keeps human authority even with an offline UUID and the policy on',()=>{
+ const {f,say,stopped}=identityFixture({agent_identity:{offline_uuid:true},human_names:['newagent']});try{
+  const e=say('NewAgent','BuilderOne, please build a tower.');
+  assert.equal(e.source,'human');assert.equal(f.inbox.at(-1).source,'human');
+  say('NewAgent','BuilderOne, stop.');assert.equal(stopped(),true);
+ }finally{f.close();}
+});
+test('state reports why each player was classified, and reviewers may be agents the server currently attests',async()=>{
+ const {f}=identityFixture({agent_identity:{offline_uuid:true},human_names:['Guest']});try{
+  const {Vec3}=realRequire('vec3');f.bot.entity={position:new Vec3(0,64,0)};f.bot.inventory={items:()=>[]};f.bot.findBlocks=()=>[];f.bot.blockAt=()=>null;f.bot.time={timeOfDay:0};f.readyFixture();
+  f.bot.players={BuilderOne:{username:'BuilderOne',uuid:offlineUuid('BuilderOne')},BuilderTwo:{username:'BuilderTwo',uuid:licensed},NewAgent:{username:'NewAgent',uuid:offlineUuid('NewAgent')},
+   Player:{username:'Player',uuid:licensed},Guest:{username:'Guest',uuid:offlineUuid('Guest')}};
+  const state=await f.request('/state');assert.deepEqual(state.agent_identity,{offline_uuid:true});
+  assert.deepEqual(state.players.map(p=>[p.name,p.kind,p.classified_by]),[['BuilderOne','agent','configured'],['BuilderTwo','agent','configured'],['NewAgent','agent','server_offline_uuid'],['Player','human','unknown'],['Guest','human','human_override']]);
+  assert.deepEqual((await f.request('/observation')).players,state.players);
+  for(const reviewers of [['Player'],['Guest'],['Absent'],['BuilderOne'],['newagent'],['buildertwo']])assert.match((await f.request('/task',{text:'Private brief',reviewers},400)).error,/known agent peers/);
+  const queued=await f.request('/task',{text:'Private brief',reviewers:['NewAgent','BuilderTwo']});
+  assert.deepEqual([...f.history.data.events.find(e=>e.id===queued.request_id).reviewers],['NewAgent','BuilderTwo']);
+  // An attested agent is known only while the server lists it.
+  delete f.bot.players.NewAgent;assert.match((await f.request('/task',{text:'Private brief',reviewers:['NewAgent']},400)).error,/known agent peers/);
+ }finally{f.close();}
+});

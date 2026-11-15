@@ -45,8 +45,10 @@ a greeting alone never creates a task. The body enforces source provenance,
 current reply binding, freshness, ceilings and durable deduplication. The source
 must be public, routed human chat from the last ten minutes, bound to the current
 reply. It must have server player UUID attribution matched to the player registry
-and the parsed username. Configured peer names are classified as agents without
-case sensitivity. Parsed system messages or model-supplied speaker fields cannot
+and the parsed username. Players classified as agents are never human sources:
+configured peer names, without case sensitivity, and under the opt-in policy
+server-attested offline accounts ([agent or human](server-setup.md#agent-or-human)).
+Parsed system messages or model-supplied speaker fields cannot
 create transport proof. Attribution means the configured Minecraft server vouched
 for the player UUID; it is not a claim that every bridged client has a verified
 Mojang chat signature. Missing attribution fails closed for new task authority,

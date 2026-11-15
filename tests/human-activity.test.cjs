@@ -43,3 +43,13 @@ test('update deferral uses actual activity and attributed pending messages, neve
  }
  h.data.events=[];assert.equal(updateEngagement(h,{...activity,players:[{active:true}]},now).active,true);
 });
+test('a server-attested agent is not human activity under the opt-in policy; the default is unchanged',()=>{
+ const {AgentIdentity,offlineUuid}=require('../agent-identity.cjs');
+ for(const [offline_uuid,expected] of [[true,['Player']],[false,['NewAgent','Player']]]){
+  const facts=[],tracker=new HumanActivity(new AgentIdentity({username:'Builder',agent_identity:{offline_uuid}}),{onMovement:f=>facts.push(f.name),onInteraction:f=>facts.push(f.name)});
+  const players={NewAgent:{username:'NewAgent',uuid:offlineUuid('NewAgent'),entity:{position:{x:0,y:64,z:0}}},Player:{username:'Player',uuid:'3f2b8c1e-9a4d-4e6f-8b7a-5c0d1e2f3a4b',entity:{position:{x:0,y:64,z:0}}}};
+  tracker.sample(players);for(const p of Object.values(players))p.entity.position.x=1;tracker.sample(players);
+  assert.deepEqual(tracker.snapshot().players.map(p=>p.name),expected);assert.deepEqual(facts,expected);
+  tracker.interaction(players.NewAgent.entity,players);assert.equal(facts.length,expected.length+(offline_uuid?0:1));
+ }
+});

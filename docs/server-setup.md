@@ -16,7 +16,7 @@ Before reusing an example, inventory:
 | --- | --- |
 | World | Host, owner, Java server distribution/version, world path, backups, player accounts and allowlist |
 | Human access | Java gateway, Bedrock gateway if any, LAN/VPN routes and intended exposure |
-| Agent access | Authenticated Java login or strictly isolated trusted proxy, configured peer names |
+| Agent access | Authenticated Java login or strictly isolated trusted proxy; how players tell agents from humans (server-attested account kind or configured peer names) |
 | Each player | Private home, identity, ACP engine/family, original session/binding, control port/token, current authority and unfinished effects |
 | Services | Actual body/controller/gateway/backend units or process commands and prior active/masked state |
 | Updates | Enrolled provider/participant, current transaction/gate, source/SDK/artifact provenance and schedule policy |
@@ -54,7 +54,8 @@ Keep human and trusted-agent access distinct:
 - Agent players can use individually licensed Microsoft-authenticated Minecraft
   accounts, or an owner-controlled offline agent proxy restricted to trusted local
   routes. An offline name does not authenticate a human and must not be exposed as
-  a public human endpoint.
+  a public human endpoint. The route also decides how other players can recognise
+  an agent: see [agent or human](#agent-or-human).
 - Keep backend forwarding secrets and proxy-to-server routes private. Do not make
   the backend broadly reachable just because the front gateway authenticates.
 - For remote agents, use a dedicated approved private route to their game endpoint;
@@ -129,15 +130,91 @@ home. Keep the directory 0700 and sensitive files 0600. Set:
 - The separately authenticated ACP command, working directory and installation-local
   Python interpreter; use the engine's normal credential flow, not someone else's
   copied session or tokens.
-- Current public **agent peer names**, including agents on other engines. Otherwise
-  peer speech can be mistaken for human authority. Preserve the server's actual
-  UUID/source attribution; never infer human identity from message text.
+- How this player tells **agents from humans**: see [agent or human](#agent-or-human).
+  A peer it does not recognise is treated as a human, so that peer's speech can be
+  mistaken for human authority. Preserve the server's actual UUID/source
+  attribution; never infer human identity from message text.
 - Explicit behavior policies appropriate to this request (next section).
 
 Each additional player has its own home, credentials, session and port. Reusing a
 name, token or directory is not a shortcut to a separate installation. Preserve
 existing portraits/skins during upgrades; use the [skin skill](../skills/minecraft-agent-skins/SKILL.md)
 for requested appearance work.
+
+### Agent or human
+
+Each installation needs one fact about every other player: agent or human. Human
+speech can route requests, accept tasks and Stop work; agent speech is peer
+conversation within its own bounds. The answer comes from these sources, in order:
+
+1. `human_names`: an operator override. A listed player is always a human.
+2. `bot_names` and the installation's own `username`: always agents, matched
+   without case sensitivity.
+3. `agent_identity.offline_uuid` (off by default): a player whose **server-reported**
+   UUID equals the offline-mode UUID of their exact username is an agent.
+
+A player no source identifies is treated as a human. Nothing is inferred from
+message text, name patterns or a player's own claim.
+
+**Server-attested agents.** A Java server or proxy gives an unauthenticated login
+the version-3 name UUID of `OfflinePlayer:<username>`. Microsoft-authenticated
+Java accounts have version-4 UUIDs. Floodgate Bedrock players have UUIDs with a
+zero high half, or their linked Java account's. None of these can match. Where
+agents join through the dedicated offline agent route and every human signs in,
+the UUID kind is therefore a fact the server attests. Set this once in each
+installation:
+
+```json
+"agent_identity": { "offline_uuid": true }
+```
+
+A new agent that joins through the agent route is then recognised by every peer,
+with no configuration change or restart in any other installation. The effect is
+the same as if every player the server currently lists with an offline UUID were
+in `bot_names`.
+
+> [!WARNING]
+> Enable this only where **no human can join with an offline UUID**. If human
+> logins are unauthenticated (`online-mode=false` without an authenticating
+> proxy, or a proxy that does not forward player UUIDs to the backend), humans
+> have offline UUIDs too. They would be classified as agents and lose their
+> authority, including Stop. Leave the policy off there and use `bot_names`.
+
+Before enabling, read a real human's `uuid` in a `player_joined` roster fact or
+the server's user cache. An offline UUID has `3` as the first digit of its third
+group (`xxxxxxxx-xxxx-3xxx-…`); no human may have one. After enabling, confirm in
+`/state` that each human shows `kind: "human"`, that every agent shows
+`kind: "agent"`, and that only agents show `classified_by: "server_offline_uuid"`.
+An agent that still shows `human` (a licensed account, or a route that assigns
+some other UUID) is not recognised this way and its speech is still treated as
+human: list it in `bot_names`. Keep the agent route private as described in
+section 2: whoever reaches it can join under any name.
+
+Change these settings at an idle boundary. They apply to messages received after
+the body starts with them; a message already recorded keeps the source it was
+given.
+
+`bot_names` remains available, and is still needed for:
+
+- worlds where the policy is not safe (see the warning);
+- agents on licensed Microsoft accounts, whose UUIDs are version 4;
+- an agent that must be known while it is not connected, for example a reviewer
+  nominated before that agent joins. A server-attested agent is known while the
+  server lists it, and on its own attributed messages already recorded.
+
+In those cases every installation lists the current public agent peer names,
+including agents on other engines, and all of them change when an agent is added.
+
+Use `human_names` for a person who must keep human authority despite an offline
+UUID or a `bot_names` entry. It matches by name only, so list a name there only
+when nothing untrusted can join under it. It cannot contain the installation's
+own username.
+
+`/state`, `/observation` and `observe` report each listed player's `kind` and
+`classified_by` (`configured`, `server_offline_uuid`, `human_override` or
+`unknown`) and the effective `agent_identity` policy. Roster join/leave facts
+carry `classified_by` too. `unknown` means no source identified the player, who
+is therefore treated as a human.
 
 ### Context/MCP routes and no-start staging
 

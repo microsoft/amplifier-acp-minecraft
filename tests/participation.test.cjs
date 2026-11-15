@@ -265,3 +265,31 @@ test('already frozen legacy proposal is returned unchanged without retroactive p
   assert.deepEqual(p.proposal([]),old);
  }finally{f.close();}
 });
+test('a server-attested speaker is an agent participant under the opt-in policy, also after it has left',()=>{
+ const {agentIdentity,offlineUuid}=require('../agent-identity.cjs');
+ const account='3f2b8c1e-9a4d-4e6f-8b7a-5c0d1e2f3a4b',homes=[];
+ const scenario=policy=>{
+  const home=fs.mkdtempSync(path.join(os.tmpdir(),'participation-'));homes.push(home);
+  const history=new WorkshopState(path.join(home,'state.json')),cfg={username:'Builder',bot_names:['Builder','Lead'],conversation_attention:{enabled:true},...policy};
+  const p=new Participation(history,cfg),players={NewAgent:{username:'NewAgent',uuid:offlineUuid('NewAgent')},Player:{username:'Player',uuid:account}};
+  agentIdentity(cfg,{players:()=>players});
+  const say=(username,uuid,source)=>p.queue(history.record({kind:'chat',source,accepted:false,message:'Hello from '+username,username,whisper:false,time:new Date().toISOString(),provenance:'minecraft_public_chat',transport:{kind:'server_player_uuid',username,uuid}}));
+  return {p,players,say,kind:(names=Object.keys(players))=>Object.fromEntries(p.proposal(names).context.participants.map(v=>[v.id,v.is_agent]))};
+ };
+ try{
+  const on=scenario({agent_identity:{offline_uuid:true}});on.say('Player',account,'human');
+  // Present without having spoken: the server's player list is enough.
+  assert.deepEqual(on.kind(),{Builder:true,Player:false,NewAgent:true});
+  // After leaving, the UUID the server attributed to its retained message still answers.
+  const left=scenario({agent_identity:{offline_uuid:true}});left.say('Player',account,'human');left.say('NewAgent',offlineUuid('NewAgent'),'agent');delete left.players.NewAgent;
+  assert.deepEqual(left.kind(),{Builder:true,Player:false,NewAgent:true});
+  // A message attributed to another account under the same display name proves nothing.
+  const other=scenario({agent_identity:{offline_uuid:true}});other.say('Player',account,'human');other.say('NewAgent',account,'agent');delete other.players.NewAgent;
+  assert.deepEqual(other.kind(),{Builder:true,Player:false,NewAgent:undefined});
+  // Default and operator override: never an agent by UUID.
+  for(const policy of [{},{agent_identity:{offline_uuid:true},human_names:['NewAgent']}]){
+   const off=scenario(policy);off.say('Player',account,'human');off.say('NewAgent',offlineUuid('NewAgent'),'human');
+   assert.deepEqual(off.kind(),{Builder:true,Player:false,NewAgent:false});
+  }
+ }finally{for(const home of homes)fs.rmSync(home,{recursive:true,force:true});}
+});

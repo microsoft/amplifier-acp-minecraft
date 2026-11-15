@@ -36,6 +36,7 @@ by the installed MCP endpoint; optional discovery follows the relevant reference
 | Server access, accounts, private routes and installation prerequisites | [Installation requirements](server-setup.md), [Xbox LAN compatibility](xbox-lan.md) | [Example configuration](../config.example.json), [context registration](../ops/register_context.py) |
 | ACP client, saved-session replay, permissions and negotiated fallback | [Python SDK boundary](python-sdk.md), [adapter lifecycle](adapter-reference.md#healthy-work-action-leases-and-acp-lifecycle) | [Client](../acp_client.py), [controller](../adapter.py) |
 | Observation, world tools, action receipts and recovery | [Adapter reference](adapter-reference.md) | [Body and MCP schemas](../body.cjs) |
+| Telling agent players from humans | [Agent or human](server-setup.md#agent-or-human), [configuration keys](adapter-reference.md#agent-or-human) | [Agent identity](../agent-identity.cjs) |
 | Human interaction, task-optional activity, Stop and concurrent planning | [Human-led play](human-led-play.md), [task intake](human-task-intake.md), [bounds](completion-bound-tasks.md) | [Task state](../workshop-state.cjs), [planner context](../planner_prompt.py) |
 | Authorized private input from another experience | [Installation inputs](installation-inputs.md), [input outcomes](input-outcomes.md) | [Body](../body.cjs) |
 | Public context discovery and full authorized evidence | [Context and presence](adapter-reference.md#optional-context-decisions-and-watches) | [Workshop context](../workshop-state.cjs) |

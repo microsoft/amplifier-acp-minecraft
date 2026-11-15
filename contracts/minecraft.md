@@ -19,7 +19,8 @@ inspect that result without turning private direction into public game chat.
    defined in the [adapter reference](../docs/adapter-reference.md).
 
 2. **Keep game sources recognizable.** Server-attributed chat, whispers, configured
-   agent peers, roster events and observed movement retain their distinct meanings.
+   or server-attested agent peers, roster events and observed movement retain their
+   distinct meanings.
    A roster entry or readiness callback is not a new human instruction or proof
    of respawn. Private installation input identifies its authenticated caller and
    caller-asserted actor; it never fabricates a Minecraft player or public message.

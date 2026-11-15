@@ -1,10 +1,12 @@
 // Observed game activity, not mere presence and never a construction grant.
+const {agentIdentity}=require('./agent-identity.cjs');
 class HumanActivity {
- constructor(agentNames,{now=Date.now,activeMs=120000,onMovement=()=>{},onInteraction=()=>{}}={}){this.onMovement=onMovement;this.onInteraction=onInteraction;this.agents=new Set(agentNames.map(x=>x.toLowerCase()));this.now=now;this.activeMs=activeMs;this.players=new Map();}
+ // agents: the installation's agent identity, or a bare list of configured names.
+ constructor(agents,{now=Date.now,activeMs=120000,onMovement=()=>{},onInteraction=()=>{}}={}){this.onMovement=onMovement;this.onInteraction=onInteraction;this.identity=agentIdentity(agents);this.now=now;this.activeMs=activeMs;this.players=new Map();}
  sample(players){
   const now=this.now(),seen=new Set();
   for(const p of Object.values(players).slice(0,64)){
-   if(!p?.username||this.agents.has(p.username.toLowerCase())||!p.uuid)continue;
+   if(!p?.username||!p.uuid||this.identity.isAgent(p.username,p.uuid))continue;
    const pos=p.entity?.position;if(!pos||![pos.x,pos.y,pos.z].every(Number.isFinite))continue;
    seen.add(p.uuid);const old=this.players.get(p.uuid),position={x:pos.x,y:pos.y,z:pos.z};
    const moved=old&&Math.hypot(position.x-old.position.x,position.y-old.position.y,position.z-old.position.z)>=0.25;
@@ -16,7 +18,7 @@ class HumanActivity {
  interaction(entity,players){
   // Server animation is an observed action, not inferred chat or task intent.
   // Match the current player entity by identity; mobs, stale entities and peers do not count.
-  const p=Object.values(players).find(p=>p?.entity===entity&&p.uuid&&p.username&&!this.agents.has(p.username.toLowerCase()));
+  const p=Object.values(players).find(p=>p?.entity===entity&&p.uuid&&p.username&&!this.identity.isAgent(p.username,p.uuid));
   const pos=entity?.position;
   if(!p||!pos||![pos.x,pos.y,pos.z].every(Number.isFinite))return;
   const now=this.now(),position={x:pos.x,y:pos.y,z:pos.z};

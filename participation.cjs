@@ -4,6 +4,7 @@ const crypto=require('node:crypto');
 const {isPublicChatEvent}=require('./public-chat.cjs');
 const {publicSource}=require('./source-revision.cjs');
 const {messageEnvelope}=require('./watch-bridge.cjs');
+const {agentIdentity}=require('./agent-identity.cjs');
 const REJECTIONS={
  source_changed:[409,'Conversation changed during participation assessment'],
  invalid_action:[400,'Invalid participation action'],
@@ -53,10 +54,12 @@ class Participation {
   // trigger_id identifies the evaluated source; list position does not.
   const chat=publicEvents.filter(e=>selected.has(e.id));
   const names=[...new Set([this.cfg.username,...chat.map(e=>e.username||this.cfg.username),...players])].slice(0,64);
-  const agents=new Set([this.cfg.username,...(this.cfg.bot_names||[])].map(name=>name.toLowerCase()));
+  const identity=agentIdentity(this.cfg);
   const participants=names.map(name=>{
-   if(agents.has(name.toLowerCase()))return {id:name,name,is_agent:true,role:''};
    const messages=chat.filter(e=>e.username===name);
+   // Configured or listed by the server now, or attested by the server on one
+   // of this name's retained messages (the speaker may since have left).
+   if(identity.isAgent(name)||messages.some(e=>e.transport?.kind==='server_player_uuid'&&e.transport.username===name&&identity.isAgent(name,e.transport.uuid)))return {id:name,name,is_agent:true,role:''};
    // Participant kind applies to every message under this actor ID. Never let
    // a verified message upgrade unattributed history from the same display name.
    const human=messages.length>0&&messages.every(e=>e.kind==='chat'&&e.source==='human'

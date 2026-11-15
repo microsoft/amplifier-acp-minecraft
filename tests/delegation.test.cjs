@@ -61,3 +61,23 @@ test('peer conversation still requires attributed current accepted evidence and 
   assert.equal(f.admit.eligible(f.message),false);assert.equal(f.h.task(),null);
  }
 });
+test('a server-attested peer can propose helper work only under the opt-in policy and its own attributed UUID',t=>{
+ const {offlineUuid}=require('../agent-identity.cjs');
+ const attempt=(policy,uuid=offlineUuid('NewLead'))=>{
+  const f=fixture(t);Object.assign(f.cfg,policy);f.message.username='NewLead';
+  Object.assign(f.peer,{username:'NewLead',transport:{kind:'server_player_uuid',username:'NewLead',uuid}});return f;
+ };
+ const on={agent_identity:{offline_uuid:true}},f=attempt(on);f.start();
+ const result=f.intake.acceptHelp(f.args);assert.equal(result.accepted,true);assert.equal(result.execution_started,false);
+ assert.equal(f.h.task().authority.delegation.peer.name,'NewLead');assert.equal(f.h.task().authority.source.id,f.root.id);
+ // Default policy, a licensed account, another name's offline UUID and the operator override all stay closed.
+ for(const closed of [attempt({}),attempt(on,'3f2b8c1e-9a4d-4e6f-8b7a-5c0d1e2f3a4b'),attempt(on,offlineUuid('Lead')),attempt({...on,human_names:['NewLead']})]){
+  assert.equal(closed.admit.eligible(closed.message),false);assert.throws(()=>closed.start(),/No fresh/);assert.equal(closed.h.task(),null);
+ }
+ // Effect-free peer conversation asks the same question.
+ const talk=policy=>{const f=attempt({...policy,agent_dialogue:true});f.cfg.human_task_intake.delegation.enabled=false;return f.admit.eligible(f.message);};
+ assert.equal(talk(on),true);assert.equal(talk({}),false);assert.equal(talk({...on,human_names:['NewLead']}),false);
+ // Acceptance rechecks the recorded attribution rather than trusting the admitted turn.
+ const changed=attempt(on);changed.start();changed.peer.transport.uuid='3f2b8c1e-9a4d-4e6f-8b7a-5c0d1e2f3a4b';
+ assert.throws(()=>changed.intake.acceptHelp(changed.args),/fresh authenticated peer request/);assert.equal(changed.h.task(),null);
+});
