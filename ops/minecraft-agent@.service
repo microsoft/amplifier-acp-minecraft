@@ -5,6 +5,7 @@ After=minecraft-workshop.service
 WorkingDirectory=%h/.local/share/minecraft-workshop/app
 ExecStart=%h/.local/share/minecraft-workshop/app/.venv/bin/python %h/.local/share/minecraft-workshop/app/adapter.py --home %h/.local/share/minecraft-workshop/%i
 Restart=on-failure
+RestartForceExitStatus=SIGTERM
 RestartSec=5
 KillMode=control-group
 TimeoutStopSec=15
