@@ -41,6 +41,27 @@ defines behavior an integration must preserve.
 
 See [support](SUPPORT.md), [security reporting](SECURITY.md), and the [MIT license](LICENSE).
 
+
+<!-- ecosystem-map:start -->
+## Where this fits
+
+Connects ACP agents to Minecraft participation and exposes scoped world tools.
+
+Roles: Connection, Tool. Supports: Conversation, Experience.
+
+![Ecosystem roles and component relationships](docs/ecosystem-map.svg)
+
+[Open the map](docs/ecosystem-map.svg) · [Product overview](https://microsoft.github.io/amplifier-constellation/projects/amplifier-acp-minecraft/) · [Map guide](https://github.com/microsoft/amplifier-constellation/blob/main/docs/ecosystem-maps.md)
+
+<details>
+<summary>The five shared building blocks</summary>
+
+[![Experience, Conversation, Agent Instance, Connection and Tool](https://raw.githubusercontent.com/microsoft/amplifier-constellation/main/site/assets/art/building-blocks.png)](https://microsoft.github.io/amplifier-constellation/)
+
+</details>
+
+<!-- ecosystem-map:end -->
+
 ## Contributing
 
 Most contributions require you to agree to a
