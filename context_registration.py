@@ -38,3 +38,20 @@ def registration(cfg, providers):
     clean = [{k:v for k,v in p.items() if k in ('id','label','url','secret_ref','enabled')}
              for p in providers if p.get('id') != identifier]
     return {'provider':provider, 'providers':clean+[provider], 'secret_ref':secret}
+
+
+def readback_matches(written, observed):
+    """Whether a host readback still holds exactly the providers this helper wrote.
+
+    A host may report facts that were never sent: credential presence, effective
+    state, or a defaulted `enabled`. Those are not differences. Every written
+    provider must be present once with each written field unchanged, and no
+    other provider may have appeared.
+    """
+    if not isinstance(observed, list) or len(observed) != len(written):
+        return False
+    by_id = {p['id']: p for p in observed if isinstance(p, dict) and isinstance(p.get('id'), str)}
+    return len(by_id) == len(written) and all(
+        p['id'] in by_id and all(key in by_id[p['id']] and by_id[p['id']][key] == value
+                                 for key, value in p.items())
+        for p in written)

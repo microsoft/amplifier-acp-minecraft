@@ -9,7 +9,7 @@ import tempfile
 import urllib.request
 from pathlib import Path
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
-from context_registration import registration
+from context_registration import registration, readback_matches
 from installation_guard import durable_write
 
 
@@ -56,9 +56,8 @@ def main(argv=None):
         raise RuntimeError('Providers changed concurrently; inspect before retrying')
     api('PUT','secrets/'+plan['secret_ref'],{'value':cfg['context_token']})
     api('PUT','context/providers',{'providers':plan['providers']})
-    after=api('GET','context/providers')['providers']
-    public=[{k:v for k,v in p.items() if k in ('id','label','url','secret_ref')} for p in after]
-    if sorted(public,key=lambda p:p['id']) != sorted(plan['providers'],key=lambda p:p['id']):
+    # Hosts report more than was written (credential presence, effective state).
+    if not readback_matches(plan['providers'],api('GET','context/providers')['providers']):
         raise RuntimeError('Registration readback differs; inspect instead of replaying')
     durable_write(home/'context-registration-receipt.json',{
         'provider':plan['provider'],'verified':'same-host authenticated context and registration readback',
