@@ -124,7 +124,14 @@ bot.on('spawn',()=>{ready=true;spatial.alignPlayerCollision(bot);const m=new spa
  const {x,y,z}=bot.entity.position;
  record('world_ready',{position:{x,y,z},source_event:'mineflayer_spawn',respawn:'not_established'});
 });
-bot.on('end',reason=>{ready=false;stop();record('disconnected',{reason});setTimeout(()=>process.exit(shuttingDown?0:1),1000);});
+// Status 0 is reserved for this body's own intended exits. After a requested
+// termination it cleans up and then ends by that same signal, default action
+// restored, so a supervisor can tell an outside SIGTERM from an intended stop.
+function endProcess(){
+ if(!shuttingDown)process.exit(1);
+ process.removeAllListeners('SIGTERM');process.kill(process.pid,'SIGTERM');
+}
+bot.on('end',reason=>{ready=false;stop();record('disconnected',{reason});setTimeout(endProcess,1000);});
 bot.on('error',e=>record('connection_error',{message:e.message}));
 bot.on('kicked',reason=>record('kicked',{reason}));
 bot.on('death',()=>{stop();record('death');});
@@ -792,4 +799,4 @@ const server=http.createServer(async(req,res)=>{
     res.end(JSON.stringify({error:e.message,...(e.details||{}),...(participationError?{code:e.code}:{})}));}
 });
 server.listen(cfg.control_port,'127.0.0.1',()=>record('control_ready',{port:cfg.control_port}));
-process.on('SIGTERM',()=>{shuttingDown=true;stop();bot.quit();server.close();setTimeout(()=>process.exit(),1000);});
+process.on('SIGTERM',()=>{shuttingDown=true;stop();bot.quit();server.close();setTimeout(endProcess,1000);});

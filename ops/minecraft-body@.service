@@ -5,6 +5,7 @@ After=minecraft-workshop.service
 WorkingDirectory=%h/.local/share/minecraft-workshop/app
 ExecStart=%h/.local/share/minecraft-workshop/runtime/node %h/.local/share/minecraft-workshop/app/body.cjs %h/.local/share/minecraft-workshop/%i/config.json
 Restart=on-failure
+RestartForceExitStatus=SIGTERM
 RestartSec=5
 KillMode=control-group
 TimeoutStopSec=15
