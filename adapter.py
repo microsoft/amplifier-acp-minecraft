@@ -198,7 +198,12 @@ async def run(home):
     last_continuation=None
     async def request(path,payload=None):
         return await asyncio.to_thread(control,cfg,path,payload)
-    watches=Watches(home,cfg['decision_attention'],request,observe) if cfg.get('agent_watches') and (not incoming_chat_only or intake_enabled) else None
+    # Authored watches are optional and live in the body's store. Only a semantic
+    # condition needs the decision helper; its absence must not stop the controller.
+    watch_decision=cfg.get('decision_attention') or {}
+    watches=Watches(home,watch_decision,request,observe) if cfg.get('agent_watches') and (not incoming_chat_only or intake_enabled) else None
+    if watches and not watch_decision.get('command'):
+        observe('watch_decision_unavailable',reason='decision_attention_command_not_configured')
     conversation_attention=ConversationAttention(observe) if (cfg.get('conversation_attention') or {}).get('enabled') else None
     async def connect():
         nonlocal client, connection_failures
