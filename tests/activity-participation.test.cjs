@@ -46,3 +46,12 @@ test('interaction facts stay observations, not invented messages or actions with
  assert.match(p.context.activities[0].summary,/target and result are unknown/);
  assert.equal(p.effect_scope,'conversation_only');assert.equal(f.history.data.task.turns,12);
 });
+test('movement by a server-attested agent is not an activity source under the opt-in policy',()=>{
+ const {offlineUuid}=require('../agent-identity.cjs');
+ for(const [policy,pending] of [[{offline_uuid:true},0],[undefined,1]]){
+  const f=fixture();f.cfg.agent_identity=policy;f.move({name:'NewAgent',uuid:offlineUuid('NewAgent')});
+  assert.equal((f.history.data.activity_pending||[]).length,pending);
+  // A human on a licensed account is still observed either way.
+  f.move();assert.equal(f.history.data.activity_pending.length,pending+1);
+ }
+});

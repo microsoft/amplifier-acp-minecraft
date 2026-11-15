@@ -10,6 +10,10 @@
     "YourAgent",
     "AnotherAgent"
   ],
+  "human_names": [],
+  "agent_identity": {
+    "offline_uuid": false
+  },
   "agent_dialogue": true,
   "task_max_turns": 12,
   "task_max_seconds": 2400,

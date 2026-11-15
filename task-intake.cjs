@@ -2,6 +2,7 @@
 const {createHash,randomUUID}=require('node:crypto');
 const {ConversationAdmission}=require('./conversation-admission.cjs');
 const delegation=require('./delegation.cjs');
+const {agentIdentity}=require('./agent-identity.cjs');
 const bounds=require('./task-bounds.cjs');
 const replyWork=require('./reply-work.cjs');
 const activity=require('./activity-policy.cjs');
@@ -114,7 +115,7 @@ class TaskIntake {
   const duplicate=operation==='accept_help'?this.receipt('accept_help',args):null;if(duplicate)return duplicate;
   const turn=this.history.data.turn,root=delegation.humans(this.history,this.cfg,this.now(),{existing:operation==='amend_help'}).find(e=>e.id===args.request_id);
   const peer=this.history.data.events.find(e=>e.id===args.peer_request_id);
-  if(!peer||peer.source!=='agent'||!peer.accepted||peer.intent!=='request'||!delegation.publicSource(peer,this.now(),this.history.data.task_source_cutoff||0)||!(this.cfg.bot_names||[]).some(n=>n.toLowerCase()===peer.username.toLowerCase()))throw Error('A fresh authenticated peer request is required');
+  if(!peer||peer.source!=='agent'||!peer.accepted||peer.intent!=='request'||!delegation.publicSource(peer,this.now(),this.history.data.task_source_cutoff||0)||!agentIdentity(this.cfg).isAgent(peer.username,peer.transport.uuid))throw Error('A fresh authenticated peer request is required');
   if(!turn?.conversation_only||turn.ambient_activity||!turn.request_ids.includes(args.peer_request_id)||!root||!peer)throw Error('Fresh original public human evidence and a bound authenticated peer request are required');
   if(Date.parse(peer.time)<Date.parse(root.time))throw Error('Peer proposal precedes its human authorization');
   if((this.history.data.accepted_delegation_sources||[]).includes(peer.id))throw Error('Peer proposal already consumed');

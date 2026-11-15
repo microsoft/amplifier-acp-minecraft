@@ -46,3 +46,12 @@ test('coordinate crop keys survive reordering and disappearance without substitu
  assert.equal(a.by_position['-2,63,1'].properties.age,0);assert.equal(b.by_position['-2,63,1'].properties.age,1);
  assert.equal(c.by_position['-2,63,1'],undefined);assert.equal(c.truncated,true);assert.equal(a.blocks.length,2);
 });
+test('first addressee resolves to an agent the server currently attests, not only to configured names',()=>{
+ const {agentIdentity,offlineUuid}=require('../agent-identity.cjs');
+ const cfg={username:'Bea',bot_names:['Lena'],agent_identity:{offline_uuid:true}},players={NewAgent:{username:'NewAgent',uuid:offlineUuid('NewAgent')}};
+ const recipients=message=>messageEnvelope(cfg,{username:'Lena',message}).recipients;
+ assert.deepEqual(recipients('@newagent Please bring wool.'),['newagent']);
+ agentIdentity(cfg,{players:()=>players});
+ assert.deepEqual(recipients('@newagent Please bring wool.'),['NewAgent']);assert.deepEqual(recipients('@BEA [ACK] Thanks.'),['Bea']);
+ delete players.NewAgent;assert.deepEqual(recipients('@newagent Please bring wool.'),['newagent']);
+});

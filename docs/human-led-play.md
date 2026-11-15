@@ -226,7 +226,8 @@ missing report, no action evidence, an uncertain effect or an error does not
 start an endless continuation loop. Stops and exhausted assignments stay closed.
 
 `human_activity` reports loaded server-attributed movement and human arm-swing
-animations, excluding configured agent names. An arm swing is only evidence of an
+animations, excluding players classified as agents
+([agent or human](server-setup.md#agent-or-human)). An arm swing is only evidence of an
 interaction attempt; its target and result are unknown. First observed presence
 and stationary/AFK presence are not activity. Activity expires after two minutes
 without another observed action. These are observed
@@ -251,7 +252,7 @@ activity opportunities. Without this installation setting, collection stays pass
 
 Activity is coalesced at ten-second intervals per observed human, expires after
 two minutes, and retains its original source ID/revision/time across delivery and
-restart. Stationary presence and configured agents do not produce opportunities.
+restart. Stationary presence and agents do not produce opportunities.
 The adapter requires the advertised Instance attention parent and `activity` v1
 subcapability before sending `context.activities`. Older/disabled hosts keep
 observations in ordinary tool context; activity is never turned into fabricated
@@ -315,6 +316,8 @@ original human authorization; conversation never grants or renews it. Legacy
 installations retain their configured peer limits.
 
 `observe` includes server roster join/leave facts and the current online roster.
+Each listed player carries `kind` and `classified_by`, so the reason a player is
+treated as an agent or a human is inspectable.
 The body's `world_ready` event records Mineflayer's readiness callback, which also
 fires on login/reconnection. Its `respawn: not_established` does not assert a new
 saved player, relocation or death/respawn. Historical `spawn` records keep their

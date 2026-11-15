@@ -124,7 +124,7 @@ follow-ups continue to the same player for ten minutes. Addressing a different
 player transfers conversational focus. Other chat remains observable context
 without automatically starting a model turn.
 
-Explicit requests from configured peers can start bounded turns. The defaults
+Explicit requests from agent peers can start bounded turns. The defaults
 allow four peer requests per hour within forty minutes of human activity.
 `tell(player, text, intent)` makes the recipient explicit. `intent=request` asks
 for action; `update` and `ack` add visible FYI/ACK markers and remain context
@@ -133,6 +133,39 @@ the host evaluates fresh public messages instead. This is a public chat conventi
 coordination channel or an ACP extension. Configure `aliases` consistently on
 all players when using shorter names. Private whispers are excluded from shared public
 context; replies retain the actual public/private audience of their admitted input.
+
+### Agent or human
+
+One module, [`agent-identity.cjs`](../agent-identity.cjs), decides whether another
+player is an agent or a human. Chat routing and human authority, attention
+participants, delegation and task intake, watches, human activity, the roster and
+reviewer validation all ask it. No other code reads `bot_names`.
+
+| Key | Meaning |
+| --- | --- |
+| `human_names` | Optional operator override. A listed player is always a human; it wins over every other source and cannot name the installation itself. |
+| `bot_names` | Agent player names, matched without case sensitivity. The installation's own `username` is always an agent. |
+| `agent_identity.offline_uuid` | Optional, default `false`. When exactly `true`, a player whose server-reported UUID equals the offline-mode UUID of their exact username is an agent. |
+
+The sources apply in that order, and a player none of them identifies is treated
+as a human. The offline-mode UUID is Java's `UUID.nameUUIDFromBytes` over the
+UTF-8 bytes of `OfflinePlayer:<username>`: an MD5 digest with the version set to
+3 and the RFC 4122 variant. The body compares it with the UUID the server
+attributed to the chat message, or otherwise with the server's player-list entry
+for that exact name. It never reads a UUID from message text, and an unknown
+UUID falls back to configuration. The controller reads none of these keys; it
+relies on the `source` the body records.
+
+The policy is off by default because it is safe only where no human can join
+with an offline UUID. Read [agent or human](server-setup.md#agent-or-human)
+before enabling it; `bot_names` remains available for worlds where it is not
+safe, for agents on licensed accounts, and for agents that are not connected.
+
+`/state`, `/observation` and `observe` list each player with `kind` (`agent` or
+`human`) and `classified_by` (`configured`, `server_offline_uuid`,
+`human_override` or `unknown`), and report the effective `agent_identity`
+policy. `player_joined` and `player_left` roster facts carry `classified_by`.
+The read-only presence status passes the same player entries through.
 
 The tools cover observation, terrain maps, route planning, movement, following,
 gathering, digging, tilling, crafting, inventory, containers, furnaces, placement, small
@@ -272,7 +305,9 @@ inspection. Clean model turn limits can continue only when tools have settled an
 the body is idle, within the existing task budget. `review` means the agent has
 reported completion; it is not independent verification of the world.
 
-An operator can nominate configured peers to review a particular task:
+An operator can nominate agent peers to review a particular task. A reviewer is
+a name in `bot_names`, or an agent the server currently lists and attests under
+`agent_identity.offline_uuid`:
 
 ```sh
 python3 cli.py --home /private/your-player --reviewer LeadOne task 'Help LeadOne finish the agreed inn.'

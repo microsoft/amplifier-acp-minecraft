@@ -30,6 +30,9 @@ routine reversible staging into another approval flow.
 - Xbox / Bedrock / LAN visibility or authentication:
   [Xbox LAN](../../docs/xbox-lan.md). Discovery, transport and real login are
   separate. Preserve the authenticated human route; never expose the agent route.
+- Adding an agent, or how players tell agents from humans:
+  [agent or human](../../docs/server-setup.md#agent-or-human). Check its
+  precondition before enabling the server-attested policy.
 - Natural human requests, limits, responsiveness or activity:
   [human-led play](../../docs/human-led-play.md),
   [task intake](../../docs/human-task-intake.md) and, if needed,

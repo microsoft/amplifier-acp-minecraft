@@ -36,6 +36,8 @@ const { StreamableHTTPServerTransport } = require('@modelcontextprotocol/sdk/ser
 const { z } = require('zod');
 const { addressed, conversationRouter, peerIntent } = require('./routing.cjs');
 const cfg = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
+// Agent-or-human is decided in one place, from configuration and the server's own player list.
+const identity=require('./agent-identity.cjs').agentIdentity(cfg,{players:()=>bot.players});
 const installationCallers=installationInputs.callers(cfg);
 const updateAdmission=require('./update-admission.cjs');
 const requireAdmission=()=>updateAdmission.requireOpen(path.dirname(process.argv[2]));
@@ -51,7 +53,7 @@ helperCapabilities.discover(taskHelperCommand);
 const {ActionSequence,SEQUENCE_TOOLS}=require('./action-sequence.cjs');
 const actionSequence=new ActionSequence(history);
 const activityParticipation=new (require('./activity-participation.cjs').ActivityParticipation)(history,cfg);
-const humanActivity=new (require('./human-activity.cjs').HumanActivity)([cfg.username,...(cfg.bot_names||[])],{onMovement:fact=>activityParticipation.observe(fact),onInteraction:fact=>activityParticipation.observe(fact)});
+const humanActivity=new (require('./human-activity.cjs').HumanActivity)(identity,{onMovement:fact=>activityParticipation.observe(fact),onInteraction:fact=>activityParticipation.observe(fact)});
 const activityPolicy=require('./activity-policy.cjs');
 const workAllowed=()=>taskIntake.capabilities().autonomous_work_allowed;
 const bot = mineflayer.createBot({host:cfg.host || '127.0.0.1',port:cfg.port || 25565,
@@ -117,7 +119,7 @@ function scheduleLease(){
  leaseTimer=setTimeout(()=>{if(lease.id===id&&Date.now()>=turnUntil){stop();record('action_lease_expired');}},Math.max(1,turnUntil-Date.now()));
  leaseTimer.unref?.();
 }
-new (require('./player-roster.cjs').PlayerRoster)(bot,[cfg.username,...(cfg.bot_names||[])],()=>ready,record);
+new (require('./player-roster.cjs').PlayerRoster)(bot,identity,()=>ready,record);
 bot.on('spawn',()=>{ready=true;spatial.alignPlayerCollision(bot);const m=new spatial.SpatialMovements(bot);m.canDig=false;m.allow1by1towers=false;m.allowParkour=false;m.allowFreeMotion=false;m.scafoldingBlocks=[];m.maxDropDown=2; /* upstream measures to landing FLOOR: 2 permits a one-block feet descent */m.liquidCost=20;bot.pathfinder.setMovements(m);
  // Mineflayer also emits this callback on initial login/reconnect. It does
  // not establish a new saved player, relocation or death/respawn.
@@ -134,8 +136,9 @@ function hear(username,message,whisper=false,transport=null){
     if(!whisper&&require('./speech.cjs').confirmEcho(history.data,message,transport,bot.username,new Date().toISOString()))history.save();
     return;
   }
-  const agent=(cfg.bot_names||[]).some(n=>n.toLowerCase()===username.toLowerCase());
-  const route=agent?null:routeHuman({username,message,whisper,participants:Object.keys(bot.players).concat(cfg.bot_names||[])});
+  // The sender's UUID comes from the server's chat attribution or player list, never from message text.
+  const agent=identity.isAgent(username,transport?.uuid);
+  const route=agent?null:routeHuman({username,message,whisper,participants:Object.keys(bot.players).concat(identity.agentNames())});
   if(agent){
     // Named requests can cross between independent agents through game chat.
     // Host attention owns public engage/hold. Legacy direct fallback keeps its
@@ -177,7 +180,7 @@ function snapshot(){
     inventory:bot.inventory.items().map(i=>({name:i.name,count:i.count})),
     movement_capabilities:spatial.movementCapabilities(bot),
     terrain:spatial.localMap(bot,3),
-    players:Object.values(bot.players).map(p=>({name:p.username,position:p.entity?.position})),
+    players:Object.values(bot.players).map(p=>({name:p.username,position:p.entity?.position,...identity.classify(p.username,p.uuid)})),agent_identity:identity.policy(),
     nearby_blocks:blocks.map(p=>({name:bot.blockAt(p)?.name,position:p})),
     conversation:conversation.snapshot(),...(huddle?{huddle:huddle.summary()}:{}),human_activity:humanActivity.snapshot(),action_sequence:actionSequence.status(),
     public_chat:history.data.events.filter(isPublicChatEvent).slice(-20),
@@ -782,7 +785,7 @@ const server=http.createServer(async(req,res)=>{
     }
     else if(req.method==='POST'&&req.url==='/task'){
       const a=await json(req);if(a.source!==undefined)throw Error('Structured source requires its dedicated installation caller credential');if(typeof a.text!=='string'||!a.text.trim()||a.text.length>12000||inbox.length>=8)throw Error('Task must contain 1–12000 characters and the queue must have space');
-      const reviewers=a.reviewers||[];if(!Array.isArray(reviewers)||reviewers.length>8||reviewers.some(n=>typeof n!=='string'||!(cfg.bot_names||[]).includes(n)||n===cfg.username))throw Error('Reviewers must be configured peers other than this player');
+      const reviewers=a.reviewers||[],peers=identity.agentNames();if(!Array.isArray(reviewers)||reviewers.length>8||reviewers.some(n=>typeof n!=='string'||!peers.includes(n)||n===cfg.username))throw Error('Reviewers must be known agent peers other than this player');
       lastHumanAt=Date.now();const e=record('chat',{username:'Operator',message:a.text,provenance:'operator_control',transport:{kind:'authenticated_operator_control'},source:'human',accepted:true,whisper:false,reviewers:[...new Set(reviewers)]});inbox.push({id:e.id,username:'Operator',message:a.text,source:'human'});history.save();result={queued:true,request_id:e.id};}
     else if(req.method==='POST'&&req.url==='/action'){const a=await json(req);if(!definitions[a.name])throw Error('Unknown action');const args=z.object(definitions[a.name][1]).strict().parse(a.arguments||{});result=await operate(a.name,args);}
     else {res.writeHead(404);return res.end();}

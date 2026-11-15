@@ -7,13 +7,14 @@ const exec=promisify(execFile);
 const bounds=require('./task-bounds.cjs');
 const helpers=require('./helper-capabilities.cjs');
 const {isPublicChatEvent}=require('./public-chat.cjs');
+const {agentIdentity}=require('./agent-identity.cjs');
 
 function bounded(value,limit=1400){const text=JSON.stringify(value);return text.length<=limit?value:{truncated:true,excerpt:text.slice(0,limit)};}
 function messageEnvelope(cfg,e){
  // tell's first @addressee and visible FYI/ACK marker are game transport facts.
  // A later mention, a quoted address, or a name embedded in prose is not a recipient.
  const first=(e.message||e.sent||'').match(/^@([A-Za-z0-9_]{1,16})\s+(?:\[(FYI|ACK)\]\s+)?/i);
- const canonical=name=>[cfg.username,...(cfg.bot_names||[])].find(n=>n.toLowerCase()===name.toLowerCase())||
+ const canonical=name=>agentIdentity(cfg).canonical(name)||
   Object.keys(cfg.aliases||{}).find(n=>(cfg.aliases[n]||[]).some(a=>a.toLowerCase()===name.toLowerCase()))||name;
  return {author:e.username||cfg.username,recipients:first?[canonical(first[1])]:[],
   intent:first?first[2]?.toUpperCase()==='FYI'?'update':first[2]?.toUpperCase()==='ACK'?'ack':'request':null};
