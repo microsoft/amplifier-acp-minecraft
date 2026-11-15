@@ -491,6 +491,11 @@ preserved, not silently converted or rearmed by the upgrade.
 See the runtime's [assessment](https://github.com/microsoft/amplifier-constellation-runtime/blob/main/docs/assessment.md)
 and [watch](https://github.com/microsoft/amplifier-constellation-runtime/blob/main/docs/watches.md)
 contracts. Disabling these optional helpers leaves ordinary ACP operation available.
+`agent_watches: true` without a `decision_attention` command does not stop the
+controller: it keeps polling the body's watch store with the defaults (`shadow`
+mode, five-second interval) and records `watch_decision_unavailable` once at
+startup. A semantic condition that then needs a decision is recorded as
+`watch_error` and released; no result is guessed.
 
 ### Public game presence in another experience
 

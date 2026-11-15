@@ -38,6 +38,16 @@ class WatchTransportTests(unittest.IsolatedAsyncioTestCase):
             await w.poll()
             self.assertEqual(req.call_args_list[1].args[1],{'operation':'abandon','token':'a'})
 
+    async def test_semantic_check_without_a_decision_command_is_reported_and_released(self):
+        with tempfile.TemporaryDirectory() as d:
+            req=AsyncMock(side_effect=[{'token':'a','request':{'state':{},'questions':[]}}, {'abandoned':True}])
+            events=[]
+            w=Watches(Path(d),{},req,lambda kind,**kw:events.append((kind,kw)))
+            await w.poll()
+            self.assertEqual(events,[('watch_error',{'error_type':'KeyError'})])
+            self.assertEqual(req.call_args_list[1].args[1],{'operation':'abandon','token':'a'})
+            self.assertEqual(list(Path(d).iterdir()),[])
+
     async def test_no_event_skips_provider_and_only_triggered_notifications_are_delivered(self):
         with tempfile.TemporaryDirectory() as d:
             req=AsyncMock(return_value={'skip':'no_new_selected_evidence'})
