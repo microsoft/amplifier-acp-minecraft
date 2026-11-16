@@ -4,6 +4,7 @@ The SDK owns protocol models, framing, request IDs, correlation and callbacks.
 This wrapper owns process lifetime, game permissions and bounded observations.
 """
 import asyncio
+import copy
 import hashlib
 import json
 import os
@@ -34,12 +35,15 @@ class _Callbacks:
         # callback. The raw observer may already have seen later wire frames;
         # those must not retroactively authorize an earlier permission request.
         item = wire(update)
-        if item.get('sessionUpdate') in ('tool_call', 'tool_call_update'):
+        if session_id == self.owner.session and item.get('sessionUpdate') in ('tool_call', 'tool_call_update'):
             tid = item['toolCallId']
+            self.owner._record_tool_call(item)
             self.owner.tool_calls[tid] = {**self.owner.tool_calls.get(tid, {}), **item}
 
     async def request_permission(self, session_id, tool_call, options, **kwargs):
         return self.owner._permission(session_id, wire(tool_call), [wire(o) for o in options])
+
+TOOL_IDENTITY = "com.microsoft.amplifier.tool"
 
 __version__ = "0.1.0"
 
@@ -74,6 +78,7 @@ class Client:
         self.info = None
         self.connection = None
         self.tool_calls = {}
+        self.tool_announcements = {}
         self.permission_active = lambda: False
         self.permission_tools = lambda: GAME_TOOLS
         self.load_timeout, self.idle_timeout = load_timeout, idle_timeout
@@ -220,17 +225,110 @@ class Client:
         # Do not retain arbitrary error data, messages or the offer's ticket.
         return {'version': 1, 'id': offer_id, 'sessionId': sid, 'outcome': 'not_forwarded'}
 
+    def _record_tool_call(self, item):
+        """Keep identity at announcement time, not a later mutable display update."""
+        tid = item['toolCallId']
+        record = self.tool_announcements.get(tid)
+        prior = record['call'] if record is not None else None
+        if item.get('sessionUpdate') == 'tool_call':
+            # Duplicate IDs cannot rebind an already announced operation.
+            self.tool_announcements[tid] = ({'session_id': self.session, 'call': copy.deepcopy(item)}
+                                            if tid not in self.tool_announcements else None)
+        elif prior is not None:
+            for field in ('title', 'kind', 'rawInput'):
+                if field in item and item[field] != prior.get(field):
+                    self.tool_announcements[tid] = None
+                    return
+            meta = item.get('_meta')
+            if isinstance(meta, dict) and TOOL_IDENTITY in meta:
+                old = prior.get('_meta')
+                if not isinstance(old, dict) or meta[TOOL_IDENTITY] != old.get(TOOL_IDENTITY):
+                    self.tool_announcements[tid] = None
+
+    def _permission_tool(self, request):
+        """Verify the selected ACP peer's call identity; model arguments grant nothing."""
+        tid = request.get('toolCallId')
+        if not isinstance(tid, str) or not tid:
+            return None
+        record = self.tool_announcements.get(tid)
+        if record is None or record['session_id'] != self.session:
+            return None
+        announced = record['call']
+        current = self.tool_calls.get(tid)
+        if not isinstance(announced, dict) or not isinstance(current, dict):
+            return None
+        if current.get('status') not in (None, 'pending', 'in_progress'):
+            return None
+        for field in ('title', 'rawInput'):
+            if field in request and request[field] != announced.get(field):
+                return None
+        info = self.info if isinstance(self.info, dict) else {}
+        caps = info.get('agentCapabilities')
+        caps = caps if isinstance(caps, dict) else {}
+        cap_meta = caps.get('_meta', {})
+        if not isinstance(cap_meta, dict):
+            return None
+        if TOOL_IDENTITY in cap_meta:
+            cap = cap_meta[TOOL_IDENTITY]
+            if not isinstance(cap, dict) or set(cap) != {'version'} or type(cap['version']) is not int or cap['version'] != 1:
+                return None
+            def identity(call):
+                meta = call.get('_meta')
+                value = meta.get(TOOL_IDENTITY) if isinstance(meta, dict) else None
+                if (not isinstance(value, dict) or set(value) != {'version', 'kind', 'name', 'server'}
+                        or type(value.get('version')) is not int or value['version'] != 1
+                        or value.get('kind') != 'mcp' or value.get('server') != 'minecraft'
+                        or not isinstance(value.get('name'), str)):
+                    return None
+                return value
+            known = identity(announced)
+            if known is None or known != identity(request):
+                return None
+            # The negotiated producer includes these exact original call fields.
+            if any(field not in request or request[field] != announced.get(field)
+                   for field in ('title', 'kind', 'rawInput')):
+                return None
+            raw = announced.get('rawInput')
+            if (not isinstance(raw, dict) or set(raw) != {'server', 'tool', 'arguments'}
+                    or raw['server'] != known['server'] or raw['tool'] != known['name']
+                    or not isinstance(raw['arguments'], dict)):
+                return None
+            return known['name']
+        # Narrow compatibility with the pre-identity native Runtime wire contract.
+        # An unknown peer or unadvertised identity never falls back to argument claims.
+        for call in (announced, request):
+            meta = call.get('_meta')
+            if isinstance(meta, dict) and TOOL_IDENTITY in meta:
+                return None
+        agent = info.get('agentInfo')
+        if isinstance(agent, dict) and agent.get('name') == 'agent-instance':
+            meta = info.get('_meta')
+            instance = meta.get('io.github.bkrabach.agent-instance') if isinstance(meta, dict) else None
+            agent = instance.get('backendAgentInfo') if isinstance(instance, dict) else None
+        if not isinstance(agent, dict) or agent.get('name') != 'agent-runtime':
+            return None
+        # Older Runtime permission requests use kind=other, regardless of the
+        # announcement's edit/read kind; neither is legacy authority.
+        if 'kind' in request and request['kind'] not in ('other', announced.get('kind')):
+            return None
+        raw = announced.get('rawInput')
+        if (not isinstance(raw, dict) or set(raw) != {'server', 'tool', 'arguments'}
+                or raw['server'] != 'minecraft' or not isinstance(raw['tool'], str)
+                or not isinstance(raw['arguments'], dict)
+                or announced.get('title') != 'minecraft / ' + raw['tool']):
+            return None
+        return raw['tool']
+
     def _permission(self, session_id, update_call, options):
-        call = {**self.tool_calls.get(update_call.get('toolCallId'), {}), **update_call}
-        raw = call.get('rawInput') or {}
-        valid = (session_id == self.session and isinstance(raw, dict)
-                 and raw.get('server') == 'minecraft' and raw.get('tool') in self.permission_tools()
+        tool = self._permission_tool(update_call)
+        valid = (session_id == self.session and tool is not None and tool in self.permission_tools()
                  and not self.replaying and not self.maintenance_active and self.failed is None
                  and self.permission_active())
         option = next((o for o in options if o.get('kind') == 'allow_once'), None)
         outcome = {'outcome': 'selected', 'optionId': option['optionId']} if valid and option else {'outcome': 'cancelled'}
         self.observe('game_permission_allowed' if valid and option else 'permission_cancelled',
-                     tool=raw.get('tool') if isinstance(raw, dict) else None)
+                     tool=tool, reason=('verified_game_tool' if valid and option else
+                                        'unverified_tool_identity' if tool is None else 'permission_scope_denied'))
         return RequestPermissionResponse.model_validate({'outcome': outcome})
 
     def _fail(self, error):
@@ -404,6 +502,7 @@ class Client:
         messages = {}
         after_tool = False
         self.tool_calls = {}
+        self.tool_announcements = {}
         permissions = self.permission_context()
         self.observe('permission_context_supplied', **permissions)
         permission_text = (
