@@ -25,10 +25,15 @@ renewal belongs, rather than appearing as a model reasoning deadline.
 A verified result may be reported as verified; `review` is a continuation state,
 not a prohibition on describing completion.
 
-`work_report(running)` continues useful work. `waiting`, `blocked` and `review`
-end that continuation. Finishing one substep is not inherently a reason to wait
-for another human instruction. The model chooses its approach and report; this
-change does not synthesize tasks, ignore authored waits or replay unknown work.
+`work_report(running)` continues useful ordinary work. A settled `waiting` or
+`blocked` report, or a normal finish without a report, permits fresh planning
+after the existing five-minute reconsideration interval. A missing material or
+stalled method is not a requirement to wait for a human or supplier. The model
+can reconsider methods and other permitted work. This does not claim a dependency
+resolved, change a formal task or its bounds, or replay an earlier input/action.
+An explicit `review`, Stop, interrupted/unknown effects and current installation
+or provider limits still prevent continuation. Reports remain truthful records;
+the controller does not invent a report, completion, or new task.
 
 ## Placement across components
 

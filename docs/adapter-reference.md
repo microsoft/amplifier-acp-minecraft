@@ -1123,13 +1123,16 @@ oak-slab fuel, server-produced stone and collection in a disposable world.
 
 ### Reconsidering a wait
 
-A settled ordinary activity that reports `waiting` may reconsider its plan after
+A settled ordinary activity that reports `waiting` or `blocked`, or finishes
+normally without a report, may reconsider its plan after
 five minutes, even when no new chat or world event arrives. The existing
 controller admits that turn; no new input, task, authority, or dependency outcome
 is manufactured. New reports retain their report time so a long-running turn
 cannot immediately repeat the wait. Existing historical reports use the saved
 turn start. Stop, unsettled effects, review holds, and installation policy still
-apply. Explicit `blocked` and `review` reports are not resumed this way.
+apply. Explicit `review` reports are not resumed this way. An obstacle or missing report
+does not permanently disable future ordinary planning; neither proves work done
+or changes formal task authority, stored limits or original receipts.
 
 Waiting task assessments likewise may revisit unchanged observations after five
 minutes, within the existing assessment allowance. The current working summary
