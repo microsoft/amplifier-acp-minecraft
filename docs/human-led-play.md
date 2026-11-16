@@ -418,8 +418,10 @@ response. Reload checks the review against the exact retained original turn.
 A model request/token limit after settled calls is a checkpoint, not a completed
 activity. The terminal turn retains `budget_limited`; absent an explicit activity
 report, the next turn can reassess unfinished work from current observations.
-An explicit waiting, blocked or review report still stops continuation. Stop,
-uncertain effects, current permissions and provider limits remain enforced. No
+For ordinary activity, waiting or blocked reports and normal finishes without a
+report permit reconsideration after the existing five-minute interval. Explicit
+review still stops continuation. Formal-task recovery and limits are unchanged.
+Stop, uncertain effects, current permissions and provider limits remain enforced. No
 task is created or renewed, and no completed action or original input is replayed.
 
 ### Settled placement refusal and partial builds

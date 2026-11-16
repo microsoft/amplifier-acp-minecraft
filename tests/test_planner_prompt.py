@@ -61,7 +61,7 @@ class TaskOptionalPrompt(unittest.TestCase):
                                                     'activity_blocked_reason':'explicit_stop'}})
         self.assertIn('when activity_allowed is true',text)
         self.assertIn('routine choices and peer coordination do not require renewed human permission',text)
-        self.assertIn('waiting pauses for later reconsideration',text)
+        self.assertIn('waiting or blocked pauses for later reconsideration',text)
         self.assertIn('Unknown effects need reconciliation',text)
         for obsolete in ['Use short back-to-back plans','map/inspect the actual site',
                          'Use only the offered minecraft MCP tools','Keep a safe return route',

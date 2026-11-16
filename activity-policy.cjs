@@ -15,10 +15,11 @@ function canContinue(history,cfg){
  const turn=history.data.last_turn;
  // A provider turn limit is not a completed responsibility. Retain its terminal
  // evidence without inventing a model report. A wait allows later planning
- // reconsideration, not a claim that its dependency resolved. Block/review stay held.
+ // reconsideration, not a claim that its dependency resolved. A blocked plan or
+ // missing report is not a Stop. Explicit review and effect holds stay held.
  return allowed(history,cfg)&&!turn?.effect_review?.future_work_only&&turn?.activity===true&&
   (turn.activity_report?.status==='running'||(!turn.activity_report&&turn.budget_limited===true)||
-   (turn.activity_report?.status==='waiting'&&Number.isFinite(Date.parse(turn.activity_report.reported_at??turn.started_at))&&Date.now()-Date.parse(turn.activity_report.reported_at??turn.started_at)>=300000));
+   ((!turn.activity_report||['waiting','blocked'].includes(turn.activity_report.status))&&Number.isFinite(Date.parse(turn.activity_report?.reported_at??turn.started_at))&&Date.now()-Date.parse(turn.activity_report?.reported_at??turn.started_at)>=300000));
 }
 function promote(history,cfg){
  if(!allowed(history,cfg)||!history.data.turn?.conversation_only)throw Error('Ordinary activity is stopped or has unresolved effects');

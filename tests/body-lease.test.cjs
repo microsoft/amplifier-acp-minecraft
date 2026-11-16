@@ -885,3 +885,29 @@ for(const mode of ['known-clear','missing-cursor','undefined-cursor','false-curs
   }
  }finally{f.close();}
 });
+for(const report of ['blocked',null])test(`ordinary ${report??'missing'} report can reconsider through actual body admission without replay`,async()=>{
+ const moves=[];const f=fixture(optionalConfig,{move:async(bot,p)=>{moves.push(p.x);bot.entity.position=p;return {reached:true};}});try{
+  const {Vec3}=realRequire('vec3');f.bot.entity.position=new Vec3(0,64,0);
+  f.history.data.task.status='budget_exhausted';f.history.data.task.max_turns=f.history.data.task.turns;
+  const task=JSON.stringify(f.history.task());
+  await f.request('/turn',{activity:true,renewable_lease:true});await f.operate('move',{x:1,y:64,z:0,mode:'walk_only'});
+  if(report)await f.operate('work_report',{status:report,summary:'The current design needs missing supplies.'});
+  await f.request('/finish',{});
+  assert.equal((await f.request('/status')).task_capabilities.activity_continuation,false);
+  const prior=f.history.data.last_turn;prior.started_at=new Date(Date.now()-300001).toISOString();
+  if(prior.activity_report)prior.activity_report.reported_at=prior.started_at;f.history.save();
+  const retained=JSON.stringify(prior),restored=new (realRequire('./workshop-state.cjs').WorkshopState)(path.join(f.home,'workshop.json'));
+  assert.equal(realRequire('./activity-policy.cjs').canContinue(restored,optionalConfig),true);
+  const generation=(await f.request('/conversation')).generation;
+  assert.equal((await f.request('/continuation',{generation})).activity,true);
+  await f.request('/turn',{activity:true,continuation:true,expected_generation:99,renewable_lease:true},400);
+  await f.request('/turn',{activity:true,continuation:true,expected_generation:generation,renewable_lease:true},401,'wrong-token');
+  assert.equal(JSON.stringify(f.history.data.last_turn),retained);assert.deepEqual(moves,[1]);
+  const gate=path.join(f.home,'installation-updates','gate.json');fs.mkdirSync(path.dirname(gate),{recursive:true});fs.writeFileSync(gate,JSON.stringify({version:1,transaction_id:'owner-update',closed:true}));
+  await f.request('/turn',{activity:true,continuation:true,expected_generation:generation,renewable_lease:true},400);fs.unlinkSync(gate);
+  await f.request('/turn',{activity:true,continuation:true,expected_generation:generation,renewable_lease:true});
+  assert.equal(f.history.data.turn.task_id,null);assert.equal(JSON.stringify(f.history.data.turn.request_ids),'[]');assert.equal(JSON.stringify(f.history.data.last_turn),retained);
+  await f.operate('move',{x:2,y:64,z:0,mode:'walk_only'});await f.operate('work_report',{status:'review',summary:'Different useful work finished.'});await f.request('/finish',{});
+  assert.deepEqual(moves,[1,2]);assert.equal(JSON.stringify(f.history.task()),task);
+ }finally{f.close();}
+});
