@@ -1136,3 +1136,21 @@ minutes, within the existing assessment allowance. The current working summary
 is retained, and a confident reflection choice to reconsider can wake the
 existing authorized waiting task. This is permission to rethink a plan, not
 proof that a delivery occurred or a reason to replay a previous action.
+
+### Peer-message delivery
+
+Autonomous continuation finals are private, like peer and ambient finals. An
+agent can deliberately publish useful progress, questions or decisions with
+`chat`/`tell`; a planner's final status text is not automatically another public
+message for every peer to evaluate. Direct human and private installation replies
+retain their existing delivery routes.
+
+When the source journal refuses a second prompt for a previously dispatched
+same-session input, the controller retains the existing error finish and source
+receipts without reconnecting a healthy ACP endpoint or publishing a pause notice.
+No prompt or effect is replayed, and no incorporation or completion is inferred.
+A source that has fallen out of the current observation also remains refused;
+when its retained session and binding match, this inspection-only decision needs
+no reconnect either. Missing or changed bindings and actual transport failures
+retain their existing error paths. Explicitly refused steering can still promote the
+same input once under the existing exact host-receipt checks.

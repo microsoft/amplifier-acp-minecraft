@@ -12,6 +12,16 @@ from pathlib import Path
 from harness_capabilities import source_delivery, ordinary_sources, work_references, sources, SOURCE_META, SOURCE_METHOD
 
 
+class SourceReplayRefused(RuntimeError):
+    """A retained same-session delivery prevents another prompt, not a reconnect.
+
+    This does not assert incorporation, completion, or settled world effects.
+    """
+    def __init__(self, message, *, reason):
+        super().__init__(message)
+        self.reason = reason
+
+
 class Awareness:
     def __init__(self, home, client, initial, observe, *, limit=16, audience="public", binding=None):
         if audience not in ("public", "operator"):
@@ -84,6 +94,9 @@ class Awareness:
                         and any(identity in r.get('source_ids', []) for identity in ids if identity)]
             if previous:
                 await self.source_receipts(previous)
+                if all(r.get('binding') == self.binding for r in previous):
+                    raise SourceReplayRefused('Dispatched source lacks current revision evidence; inspect, do not replay',
+                                              reason='current_revision_unavailable')
                 raise RuntimeError('Dispatched source lacks current revision evidence; inspect, do not replay')
             return None
         facts.sort(key=lambda fact: fact['id'])
@@ -114,7 +127,8 @@ class Awareness:
                            or e.get('state') not in ('notAccepted', 'promptRequired')
                            or e.get('incorporated') is not False for e in evidence)
                     or not ordinary_sources(getattr(self.client, 'info', None))):
-                raise RuntimeError('Source input already dispatched; inspect its receipts, do not replay')
+                raise SourceReplayRefused('Source input already dispatched; inspect its receipts, do not replay',
+                                          reason='already_dispatched')
             key, facts = old['input_id'], sources(old['sources'])
         elif not ordinary_sources(getattr(self.client, 'info', None)):
             return None
