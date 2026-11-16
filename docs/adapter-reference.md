@@ -1120,3 +1120,19 @@ be inspected; it is never automatically reloaded.
 
 The optional loopback-only `tests/facing_live.py --furnace-only` fixture verifies
 oak-slab fuel, server-produced stone and collection in a disposable world.
+
+### Reconsidering a wait
+
+A settled ordinary activity that reports `waiting` may reconsider its plan after
+five minutes, even when no new chat or world event arrives. The existing
+controller admits that turn; no new input, task, authority, or dependency outcome
+is manufactured. New reports retain their report time so a long-running turn
+cannot immediately repeat the wait. Existing historical reports use the saved
+turn start. Stop, unsettled effects, review holds, and installation policy still
+apply. Explicit `blocked` and `review` reports are not resumed this way.
+
+Waiting task assessments likewise may revisit unchanged observations after five
+minutes, within the existing assessment allowance. The current working summary
+is retained, and a confident reflection choice to reconsider can wake the
+existing authorized waiting task. This is permission to rethink a plan, not
+proof that a delivery occurred or a reason to replay a previous action.

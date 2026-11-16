@@ -35,7 +35,7 @@ def context(state):
         observations.append({'id':e.get('id') or f'action-{i}', 'source':'tool execution receipt', 'content':bounded(e)})
     return {'task_id':task.get('id'), 'phase':'waiting' if waiting else 'running',
             'goal':(task.get('goal') or '')[:1500],
-            'working_summary':'' if waiting else ((task.get('progress') or [{}])[-1].get('summary') or '')[:3000],
+            'working_summary':((task.get('progress') or [{}])[-1].get('summary') or '')[:3000],
             'wait_for':task.get('wait_for') if waiting else None, 'observations':observations}
 
 
@@ -43,10 +43,17 @@ def signature(state):
     return hashlib.sha256(json.dumps(context(state), sort_keys=True).encode()).hexdigest()
 
 
+def reconsider(result):
+    answers = [a for a in result.get('answers', []) if a.get('name') == 'reflection']
+    return (len(answers) == 1 and answers[0].get('choice') == 'reconsider'
+            and answers[0].get('probabilities', {}).get('reconsider', 0) >= .6)
+
+
 class Assessment(Attention):
     def __init__(self, home, config, log):
         super().__init__(home, config, log)
         self.last_assessment = None
+        self.last_evaluation = 0
 
     async def assess(self, state, phase):
         task = state.get('task') or {}
@@ -59,12 +66,13 @@ class Assessment(Attention):
             return None
         self.last_poll = now
         sig = signature(state)
-        if sig == self.seen:
+        if sig == self.seen and (phase != 'waiting' or now-self.last_evaluation < 300):
             return None
         self.calls = [t for t in self.calls if t > now-3600]
         if len(self.calls) >= self.config.get('max_calls_per_hour',120):
             return None
         self.seen = sig
+        self.last_evaluation = now
         self.calls.append(now)
         self.ledger.write_text(json.dumps(self.calls)); self.ledger.chmod(0o600)
         request = context(state)
@@ -89,7 +97,7 @@ class Assessment(Attention):
 
     async def consider(self, state):
         record = await self.assess(state, 'waiting')
-        return bool(record and self.config.get('mode','shadow') == 'advisory' and ready(record['result']))
+        return bool(record and self.config.get('mode','shadow') == 'advisory' and (ready(record['result']) or reconsider(record['result'])))
 
     async def before_turn(self, state):
         record = await self.assess(state, 'running')

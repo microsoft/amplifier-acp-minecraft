@@ -115,7 +115,7 @@ class WorkshopState {
  report({status,summary,wait_for}){
   if(this.data.turn?.activity){
    if(status==='waiting'&&(!wait_for||!wait_for.trim()))throw Error('Waiting requires a concrete observable wait_for condition');
-   this.data.turn.activity_report={status,summary,...(status==='waiting'?{wait_for}:{})};this.save();
+   this.data.turn.activity_report={status,summary,reported_at:new Date().toISOString(),...(status==='waiting'?{wait_for}:{})};this.save();
    return {id:null,status,progress:[{summary}],activity:true};
   }
   const task=this.task();if(!task||task.status!=='running')throw Error('No running task');
