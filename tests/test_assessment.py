@@ -4,7 +4,7 @@ from pathlib import Path
 import tempfile
 import time
 import unittest
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, patch
 from assessment import Assessment, POLICY, context, signature
 
 
@@ -51,9 +51,9 @@ class AssessmentTests(unittest.IsolatedAsyncioTestCase):
         s['public_chat']=[{'kind':'chat','message':'Old','time':'2026-11-02T14:59:00Z'},
                           {'kind':'chat','message':'New result','time':'2026-11-02T15:01:00Z'},
                           {'kind':'chat','message':'PRIVATE','whisper':True,'time':'2026-11-02T15:02:00Z'}]
-        c=context(s);self.assertEqual(c['working_summary'],'')
+        c=context(s);self.assertEqual(c['working_summary'],'Old long construction report')
         self.assertIn('New result',json.dumps(c));self.assertNotIn('old error',json.dumps(c))
-        self.assertNotIn('PRIVATE',json.dumps(c));self.assertNotIn('Old',json.dumps(c))
+        self.assertNotIn('PRIVATE',json.dumps(c));self.assertNotIn('\"message\": \"Old\"',json.dumps(c))
 
     async def test_authority_states_dedup_budget_and_errors(self):
         with tempfile.TemporaryDirectory() as d:
@@ -73,3 +73,16 @@ class AssessmentTests(unittest.IsolatedAsyncioTestCase):
             a=Assessment(Path(d),{'mode':'advisory'},lambda *a,**k:None)
             a.evaluate=AsyncMock(side_effect=RuntimeError('service unavailable'))
             self.assertFalse(await a.consider(state('waiting')))
+
+    async def test_unchanged_wait_can_reconsider_without_new_evidence(self):
+        with tempfile.TemporaryDirectory() as d:
+            a=Assessment(Path(d),{'mode':'advisory','interval_seconds':0,'max_calls_per_hour':2},lambda *a,**k:None)
+            response={'answers':[{'name':'attention','choice':'wait','probabilities':{'wait':.9}},
+                                 {'name':'reflection','choice':'reconsider','probabilities':{'reconsider':.8}}]}
+            a.evaluate=AsyncMock(return_value=(response,1))
+            s=state('waiting')
+            with patch('assessment.time.time',return_value=1000):self.assertTrue(await a.consider(s))
+            with patch('assessment.time.time',return_value=1299):self.assertFalse(await a.consider(s))
+            with patch('assessment.time.time',return_value=1300):self.assertTrue(await a.consider(s))
+            with patch('assessment.time.time',return_value=1600):self.assertFalse(await a.consider(s))
+            self.assertEqual(a.evaluate.call_count,2)
