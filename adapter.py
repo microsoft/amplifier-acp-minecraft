@@ -10,7 +10,7 @@ import re
 from pathlib import Path
 import time
 import urllib.request
-from conversation_awareness import Awareness, SourceAlreadyDispatched
+from conversation_awareness import Awareness, SourceReplayRefused
 from planner_prompt import planner_prompt
 from context_snapshot import retained_request
 from prompt_lifecycle import await_terminal
@@ -415,13 +415,13 @@ async def run(home):
                 observe('operator_awareness_unavailable',category=type(error).__name__,fallback='queued_input')
             try:
                 source_metadata=await awareness.ordinary_prompt(messages)
-            except SourceAlreadyDispatched:
+            except SourceReplayRefused as refusal:
                 # No prompt was dispatched in this reservation. Retain the same
                 # error finish and original delivery evidence as before; this
                 # expected no-replay decision is not a transport failure.
                 # connect() still detects an actually closed transport normally.
                 await request('/finish',{'error':True})
-                observe('source_prompt_suppressed',reason='already_dispatched',
+                observe('source_prompt_suppressed',reason=refusal.reason,
                         source_count=len(messages),new_prompt_sent=False,completion='not_established')
                 continue
             pending=asyncio.create_task(client.prompt(prompt,attention_offer=attention_offer,source_metadata=source_metadata,

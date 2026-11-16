@@ -16,9 +16,11 @@ from acp_client import Client
 
 class PeerSourceReconciliation(unittest.IsolatedAsyncioTestCase):
     async def test_retained_delivery_refuses_prompt_without_reconnect_or_public_notice(self):
-        for kind,state,incorporated in [('steering','unknown',False),('steering','submitted',False),
-                                         ('steering','incorporated',True),('ordinary','notAccepted',False)]:
-            with self.subTest(kind=kind,state=state), tempfile.TemporaryDirectory() as tmp:
+        for kind,state,incorporated,missing_revision,binding_state in [('steering','unknown',False,False,'same'),('steering','submitted',False,False,'same'),
+                                         ('steering','incorporated',True,False,'same'),('ordinary','notAccepted',False,False,'same'),
+                                         ('steering','unknown',False,True,'same'),
+                                         ('steering','unknown',False,True,'changed'),('steering','unknown',False,True,'missing')]:
+            with self.subTest(kind=kind,state=state,missing_revision=missing_revision,binding_state=binding_state), tempfile.TemporaryDirectory() as tmp:
                 home=Path(tmp)
                 source={'id':'original-peer','revision':'exact-revision','occurredAt':1794808300000}
                 key='original-input'
@@ -35,10 +37,12 @@ class PeerSourceReconciliation(unittest.IsolatedAsyncioTestCase):
                 receipt={'input_id':key,'session_id':'original-session','binding':binding,
                          'sources':[source],'source_ids':[source['id']],'state':'unknown'}
                 if kind=='ordinary':receipt['kind']='ordinary'
+                if binding_state=='changed':receipt['binding']='different-connection'
+                if binding_state=='missing':receipt.pop('binding')
                 for name,value in [('config',cfg),('endpoint',endpoint),('session',session),('awareness-receipts',[receipt])]:
                     (home/(name+'.json')).write_text(json.dumps(value))
                 message={'id':source['id'],'source':'agent','message':'Original peer report'}
-                conversation={'revision':source['id'],'messages':[{'id':source['id'],'source_fact':source}]}
+                conversation={'revision':source['id'],'messages':[] if missing_revision else [{'id':source['id'],'source_fact':source}]}
                 task={'id':'retained-task','status':'blocked','turns':23}
                 original_task=json.dumps(task,sort_keys=True)
                 world={'ready':True,'busy':False,'generation':1,'task':task,'conversation_only':True,
@@ -73,23 +77,28 @@ class PeerSourceReconciliation(unittest.IsolatedAsyncioTestCase):
                         await asyncio.wait_for(adapter.run(home),10)
                 rows=json.loads(host.read_text())
                 self.assertEqual(rows['prompts'],[])
-                self.assertEqual(len(rows['queries']),1)
+                # Legacy missing binding can be inspected, but cannot authorize promotion
+                # or bypass the unchanged connection-error handling below.
+                self.assertEqual(len(rows['queries']),0 if binding_state=='changed' else 1)
                 self.assertEqual(rows['rows'][key],host_row)
-                self.assertEqual(starts,[True]);self.assertEqual(closes,[True]) # Test cancellation only.
-                self.assertEqual(closes_before_next_state,[], 'A no-replay decision must not tear down a healthy connection')
+                self.assertEqual(starts,[True]);self.assertEqual(closes,[True]) # Test cancellation or the unchanged binding-error path.
+                self.assertEqual(closes_before_next_state,[] if binding_state=='same' else [True],
+                                 'Only a retained matching connection avoids the existing error path')
                 self.assertEqual([v for k,v in paths if k=='/finish'],[{'error':True}])
                 self.assertFalse(any(k in ('/reply','/notice','/wake','/action','/turn/renew') for k,v in paths))
                 self.assertEqual(json.loads((home/'session.json').read_text()),session)
                 self.assertEqual(json.dumps(task,sort_keys=True),original_task)
                 retained=json.loads((home/'awareness-receipts.json').read_text())[0]
                 for field in ('input_id','session_id','binding','sources','source_ids','state'):
-                    self.assertEqual(retained[field],receipt[field])
-                self.assertEqual(retained['source_delivery'][0]['completion'],'not_established')
+                    self.assertEqual(retained.get(field),receipt.get(field))
+                if binding_state=='same':self.assertEqual(retained['source_delivery'][0]['completion'],'not_established')
                 events=[json.loads(line) for line in output.getvalue().splitlines()]
-                self.assertFalse(any(e['kind']=='adapter_error' for e in events))
+                self.assertEqual(any(e['kind']=='adapter_error' for e in events),binding_state!='same')
                 suppressed=[e for e in events if e['kind']=='source_prompt_suppressed']
-                self.assertEqual(len(suppressed),1)
-                self.assertFalse(suppressed[0]['new_prompt_sent'])
+                self.assertEqual(len(suppressed),int(binding_state=='same'))
+                if suppressed:
+                    self.assertFalse(suppressed[0]['new_prompt_sent'])
+                    self.assertEqual(suppressed[0]['reason'],'current_revision_unavailable' if missing_revision else 'already_dispatched')
 
 
 if __name__=='__main__':unittest.main()

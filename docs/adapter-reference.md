@@ -1149,6 +1149,8 @@ When the source journal refuses a second prompt for a previously dispatched
 same-session input, the controller retains the existing error finish and source
 receipts without reconnecting a healthy ACP endpoint or publishing a pause notice.
 No prompt or effect is replayed, and no incorporation or completion is inferred.
-Changed bindings, missing revision evidence and actual transport failures retain
-their existing error paths. Explicitly refused steering can still promote the
+A source that has fallen out of the current observation also remains refused;
+when its retained session and binding match, this inspection-only decision needs
+no reconnect either. Missing or changed bindings and actual transport failures
+retain their existing error paths. Explicitly refused steering can still promote the
 same input once under the existing exact host-receipt checks.
