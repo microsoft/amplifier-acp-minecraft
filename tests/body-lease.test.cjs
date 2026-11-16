@@ -78,7 +78,7 @@ test('restart before successful terminal preserves the pending input and confirm
   assert.ok(!(restored.data.input_outcomes||[]).some(r=>r.request_id===e.id));
  }finally{f.close();}
 });
-function fixture(configOverride={},walkingOverride=null,bridgeOverride=null){
+function fixture(configOverride={},walkingOverride=null,bridgeOverride=null,helperOverride=null){
  const home=fs.mkdtempSync(path.join(os.tmpdir(),'body-lease-')),config=path.join(home,'config.json');
  fs.writeFileSync(config,JSON.stringify({username:'Builder',token:'fixture',...configOverride}));
  const now=Date.now(),task={id:'accepted',status:'running',deadline:now+3600000,turns:120,max_turns:135,progress:[]};
@@ -86,7 +86,7 @@ function fixture(configOverride={},walkingOverride=null,bridgeOverride=null){
  const bot=new EventEmitter();Object.assign(bot,{username:'Builder',players:{},loadPlugin(){},blockAt:()=>null,pathfinder:{setGoal(){}},clearControlStates(){},stopDigging(){},entity:{position:{clone:()=>({x:0,y:64,z:0})}},health:20});
  let handle,current=now;const timers=new Set();
  class Clock extends Date{static now(){return current;}}
- const ctx=vm.createContext({require:n=>n==='./watch-bridge.cjs'&&bridgeOverride?bridgeOverride:n==='./walking.cjs'&&walkingOverride?{plan:()=>({reachable:true}),...walkingOverride}:n==='mineflayer'?{createBot:()=>bot}:n==='node:http'?{createServer:h=>{handle=h;return {listen(){},close(){}};}}:realRequire(n),
+ const ctx=vm.createContext({require:n=>n==='./helper-capabilities.cjs'&&helperOverride?helperOverride:n==='./watch-bridge.cjs'&&bridgeOverride?bridgeOverride:n==='./walking.cjs'&&walkingOverride?{plan:()=>({reachable:true}),...walkingOverride}:n==='mineflayer'?{createBot:()=>bot}:n==='node:http'?{createServer:h=>{handle=h;return {listen(){},close(){}};}}:realRequire(n),
  module:{exports:{}},console:{log(){}},Date:Clock,Buffer,process:{argv:['node','body.cjs',config],on(){},exit(){}},
  setTimeout:(fn,ms)=>{const t={fn,at:current+ms,unref(){}};timers.add(t);return t;},clearTimeout:t=>timers.delete(t)});
  vm.runInContext(fs.readFileSync(path.join(root,'body.cjs'),'utf8')+'\nready=true;module.exports={history,operate,actionsRemaining};',ctx);
@@ -382,9 +382,19 @@ test('actual body accepts completion-bound work only after local helper discover
   // the production discovery deadline. Keep the exact argv contract.
   fs.writeFileSync(command,`#!/bin/sh\n[ "$#" -eq 1 ] && [ "$1" = helper-capabilities ] || exit 1\nprintf '%s' '${JSON.stringify(capabilities)}'\n`,{mode:0o700});
  }
- const f=fixture({incoming_chat_only:true,task_helpers:{command},human_engagement:{enabled:true},human_task_intake:{enabled:true,default_bound_mode:'completion_bound'}});
+ const helpers=realRequire('./helper-capabilities.cjs');let helperDiscovery;
+ const trackedHelpers={...helpers,
+  discover(command){return helperDiscovery=helpers.discover(command);},
+  ready(command){
+   const supported=helpers.ready(command);
+   // ready already starts discovery when closed; retain its coalesced promise.
+   if(!supported)trackedHelpers.discover(command);
+   return supported;
+  }
+ };
+ const f=fixture({incoming_chat_only:true,task_helpers:{command},human_engagement:{enabled:true},human_task_intake:{enabled:true,default_bound_mode:'completion_bound'}},null,null,trackedHelpers);
  try{
-  assert.deepEqual(await realRequire('./helper-capabilities.cjs').discover(command),capabilities,'local static helper discovery must finish before admission');
+  assert.deepEqual(await trackedHelpers.discover(command),capabilities,'local static helper discovery must finish before admission');
   f.history.data.task.status='budget_exhausted';const old=structuredClone(f.history.data.task);
   function human(message){const e=f.history.record({kind:'chat',time:new Date().toISOString(),source:'human',username:'Visitor',message,accepted:true,provenance:'minecraft_public_chat',transport:{kind:'server_player_uuid',username:'Visitor',uuid:'human-uuid'}});f.history.data.inbox.push({id:e.id,source:'human',username:'Visitor',message});f.history.save();return e;}
   const e=human('Finish this commission.');await f.request('/turn',{conversation_only:true,message_ids:[e.id]});
@@ -409,7 +419,12 @@ test('actual body accepts completion-bound work only after local helper discover
   assert.equal(f.history.task().turns,1);assert.equal(f.history.task().status,'budget_exhausted');await f.request('/finish',{});
   await f.request('/turn',{continuation:true,renewable_lease:true},400);
   assert.equal((await f.request('/status')).action_lease.lease_id,null);
- }finally{f.close();if(originalNodeOptions===undefined)delete process.env.NODE_OPTIONS;else process.env.NODE_OPTIONS=originalNodeOptions;fs.rmSync(dir,{recursive:true,force:true});}
+ }finally{
+  // A failed assertion can leave discovery started by a status read in flight.
+  // Join only recorded discovery; cleanup must not start another helper.
+  await helperDiscovery;
+  f.close();if(originalNodeOptions===undefined)delete process.env.NODE_OPTIONS;else process.env.NODE_OPTIONS=originalNodeOptions;fs.rmSync(dir,{recursive:true,force:true});
+ }
 });
 
 test('installation gate rejects fresh turns atomically without consuming inputs or renewing authority',async()=>{
