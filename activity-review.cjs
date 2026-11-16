@@ -46,13 +46,14 @@ function review(history,cfg,input,observation,{taskEffects=false}={}){
    if(item.outcome!=='settled_failed_furnace_collection'||!a||Object.keys(a).sort().join()!=='operation,x,y,z'||a.operation!=='collect'||!['x','y','z'].every(k=>Number.isSafeInteger(a[k]))||end.error!=='Output pickup not confirmed; inspect inventory before retrying'||observation.inventory?.cursor!==null)throw Error('Furnace review requires exact terminal collection mismatch and a currently clear cursor');
   }else if(item.outcome==='settled_failed_furnace_collection')throw Error('Furnace collection review is only for a furnace action');
   if(start.action==='craft'){
-   // This exact legacy branch follows awaited preparation (each click has a
-   // server snapshot and pong barrier), before movement or recipe execution.
-   // Earlier cursor/grid/window effects remain historical; never infer a delta.
+   // These exact terminals follow awaited inventory synchronization, before
+   // recipe execution. A foreign-window refusal may follow earlier preparation
+   // or movement; those effects remain historical, never no-effect or a delta.
    const a=start.arguments,inventory=observation.inventory;
    const valid=a&&Object.keys(a).sort().join()===['count','item'].join()&&typeof a.item==='string'&&/^[a-z][a-z0-9_]*$/.test(a.item)&&Number.isSafeInteger(a.count)&&a.count>=1&&a.count<=8;
    const clear=inventory?.cursor===null&&Array.isArray(inventory.slots)&&inventory.slots.length>=5&&[0,1,2,3,4].every(i=>inventory.slots[i]===null);
-   if(!valid||!clear||item.outcome!=='settled_failed_crafting_preparation'||end.error!=='No recipe possible with current inventory and nearby crafting table; no movement performed')throw Error('Craft review requires exact legacy post-preparation refusal and a currently clear cursor/grid');
+   const terminal=['No recipe possible with current inventory and nearby crafting table; no movement performed','Close the other container before crafting'].includes(end.error);
+   if(!valid||!clear||item.outcome!=='settled_failed_crafting_preparation'||!terminal)throw Error('Craft review requires exact settled preparation refusal and a currently clear cursor/grid');
   }else if(item.outcome==='settled_failed_crafting_preparation')throw Error('Crafting preparation review is only for a craft action');
   if(start.action==='place'){
    // Explicit owner review only. Initial occupied-target refusal predates

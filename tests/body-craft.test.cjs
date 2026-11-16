@@ -45,17 +45,41 @@ test('clean initial no-recipe refusal has no effect admission or preparation and
   assert.equal(JSON.stringify(f.history.task()),before);
  }finally{f.close();}
 });
-for(const dirty of ['cursor','grid','output','open_table','open_container','missing_slots','missing_cursor'])test(`${dirty} cannot establish an initial no-recipe refusal`,async()=>{
+for(const dirty of ['cursor','grid','output','open_table','unknown_window','missing_slots','missing_cursor'])test(`${dirty} cannot establish an initial no-recipe refusal`,async()=>{
  const f=fixture();try{
   if(dirty==='cursor')f.bot.inventory.selectedItem={type:2,count:1};
   if(dirty==='grid')f.bot.inventory.slots[1]={type:2,count:1};
   if(dirty==='output')f.bot.inventory.slots[0]={type:2,count:1};
   if(dirty.startsWith('open_'))f.bot.currentWindow={type:dirty==='open_table'?'minecraft:crafting':'minecraft:chest'};
+  if(dirty==='unknown_window')f.bot.currentWindow={};
   if(dirty==='missing_slots')f.bot.inventory.slots=Array(46);
   if(dirty==='missing_cursor')delete f.bot.inventory.selectedItem;
   await assert.rejects(f.run(),/after crafting preparation.*may have changed/);
   assert.equal(f.calls.prepare,1);assert.equal(f.calls.craft,0);assert.equal(f.calls.move,0);
   assert.equal(f.history.data.turn.actions.length,1);assert.equal(f.history.data.turn.actions[0].status,'uncertain');
+  assert.equal(f.history.data.events.at(-1).kind,'action_failed');
+  assert.equal(f.history.data.events.at(-1).settled_failure,undefined);
+ }finally{f.close();}
+});
+for(const type of ['minecraft:chest','minecraft:furnace'])for(const cursor of [null,{type:2,count:10},undefined])test(`${type} with ${cursor===null?'clear':cursor?'occupied':'unknown'} cursor refuses before any crafting preparation`,async()=>{
+ const f=fixture({recipe:()=>[{}]});try{
+  f.bot.currentWindow={type,selectedItem:cursor,slots:[{type:2,count:10}]};
+  const before=JSON.stringify({task:f.history.task(),window:f.bot.currentWindow,inventory:f.bot.inventory});
+  f.bot.recipesFor=()=>assert.fail('Foreign-window refusal must not query recipes');
+  await assert.rejects(f.run(),/Close the other container before crafting/);
+  assert.deepEqual(f.calls,{prepare:0,craft:0,close:0,refresh:0,move:0});
+  assert.equal(f.history.data.turn.actions.length,0);
+  assert.equal(f.history.data.events.at(-1).kind,'action_preflight_refused');
+  assert.equal(f.history.data.events.at(-1).effect_attempted,false);
+  assert.equal(JSON.stringify({task:f.history.task(),window:f.bot.currentWindow,inventory:f.bot.inventory}),before);
+ }finally{f.close();}
+});
+test('foreign window appearing after admission remains uncertain without automatic settlement or retry',async()=>{
+ const f=fixture({recipe:()=>[{}],prepare:bot=>{bot.currentWindow={type:'minecraft:furnace'};throw Error('Close the other container before crafting');}});try{
+  await assert.rejects(f.run(),/Close the other container/);
+  assert.equal(f.calls.prepare,1);assert.equal(f.calls.craft,0);
+  assert.equal(f.history.data.turn.actions.length,1);
+  assert.equal(f.history.data.turn.actions[0].status,'uncertain');
   assert.equal(f.history.data.events.at(-1).kind,'action_failed');
   assert.equal(f.history.data.events.at(-1).settled_failure,undefined);
  }finally{f.close();}
@@ -96,4 +120,23 @@ test('actual Mineflayer recipe lookup admits inventory/table recipes and observe
  inventory.updateSlot(11,new Item(registry.itemsByName.stick.id,2));
  assert.throws(()=>preflight(bot,'stone_pickaxe'),/observed inventory/);
  bot.findBlock=()=>({name:'crafting_table'});before=snapshot();preflight(bot,'stone_pickaxe');assert.equal(snapshot(),before);
+});
+test('actual foreign-window preparation terminal follows snapshot and pong, without cursor clicks or recipe execution',async()=>{
+ const registry=require('minecraft-data')('1.21.11'),Item=require('prismarine-item')(registry);
+ const windows=require('prismarine-windows')(registry),bot=new EventEmitter();
+ bot.registry=registry;bot.inventory=windows.createWindow(0,'minecraft:inventory');
+ bot.currentWindow=windows.createWindow(1,'minecraft:furnace');
+ bot.currentWindow.selectedItem=new Item(registry.itemsByName.oak_planks.id,10);
+ bot.supportFeature=()=>true;const packets=[];
+ bot._client=new EventEmitter();bot._client.write=(name,packet)=>{
+  packets.push({name,packet});
+  if(name==='window_click')queueMicrotask(()=>bot.emit('setWindowItems:1'));
+  else if(name==='ping_request')queueMicrotask(()=>bot._client.emit('ping_response',packet));
+  else assert.fail('Unexpected preparation packet');
+ };
+ const before=JSON.stringify({slots:bot.currentWindow.slots,cursor:bot.currentWindow.selectedItem});
+ await assert.rejects(require('../crafting.cjs').prepare(bot,()=>{}),{message:'Close the other container before crafting'});
+ assert.deepEqual(packets.map(p=>p.name),['window_click','ping_request']);
+ assert.equal(packets[0].packet.mode,5);assert.equal(packets[0].packet.slot,-999);
+ assert.equal(JSON.stringify({slots:bot.currentWindow.slots,cursor:bot.currentWindow.selectedItem}),before);
 });

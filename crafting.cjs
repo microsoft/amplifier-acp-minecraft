@@ -8,6 +8,10 @@ const counts=items=>{const n={};for(const i of items)n[i.name]=(n[i.name]||0)+i.
 // lookup is not yet a sound refusal, so leave preparation and its effects alone.
 function preflight(bot,itemName){
  const item=bot.registry.itemsByName[itemName];if(!item)throw Error('Unknown item');
+ // A known foreign window already makes prepare refuse. Observe that before
+ // admitting an effect; do not close it or touch its possibly occupied cursor.
+ const window=bot.currentWindow;
+ if(window&&window!==bot.inventory&&typeof window.type==='string'&&!window.type.startsWith('minecraft:crafting'))throw Error('Close the other container before crafting; no crafting preparation, window change or movement attempted.');
  const inventory=bot.inventory;
  if(bot.currentWindow!==null||inventory?.selectedItem!==null||!Array.isArray(inventory.slots)||inventory.slots.length<5)return;
  for(let slot=0;slot<=4;slot++)if(inventory.slots[slot]!==null)return;
