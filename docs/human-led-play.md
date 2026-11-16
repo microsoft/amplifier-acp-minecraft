@@ -85,13 +85,20 @@ New coordinate, gather-selection and container reach/argument checks run before
 effect admission and do not create an uncertain action. Later failures still
 retain uncertainty; this does not automatically classify errors or replay work.
 
+Known non-crafting windows now refuse crafting before action admission, without
+closing the window, moving its cursor or creating an uncertain action. A window
+change after admission still retains uncertainty; no error is automatically
+converted into settlement.
+
 For a legacy craft failure, `settled_failed_crafting_preparation` accepts only
 the exact retained terminal `No recipe possible with current inventory and
-nearby crafting table; no movement performed`, with matching item/count and
-start/failure receipts. In that implementation the terminal follows awaited
-crafting preparation and any window close/resynchronization, before movement or
-recipe execution. Preparation may have moved cursor/grid items or changed the
-window. This outcome is not `no_effect`, an inventory delta, or a successful
+nearby crafting table; no movement performed` or `Close the other container
+before crafting`, with matching item/count and start/failure receipts. These
+terminals follow awaited inventory synchronization, before recipe execution.
+Earlier preparation may have moved cursor/grid items, changed the window, or
+(before the inner preparation check) moved the player. A failure inside a recipe
+has an additional partial-work suffix and is not covered. This outcome is not
+`no_effect`, an inventory delta, or a successful
 craft. The owner must bind the retained implementation and settled tool evidence
 in its assessment, then supply fresh matching state: closed window, clear cursor
 and output/grid slots, idle body/lease/sequence, unchanged generation, position

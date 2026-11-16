@@ -5,21 +5,21 @@ const {review}=require('../activity-review.cjs'),policy=require('../activity-pol
 const digest=v=>crypto.createHash('sha256').update(JSON.stringify(v)).digest('hex');
 const cfg={human_engagement:{enabled:true,task_optional:true}};
 const terminal='No recipe possible with current inventory and nearby crafting table; no movement performed';
-function fixture(t){
+function fixture(t,error=terminal){
  const home=fs.mkdtempSync(path.join(os.tmpdir(),'craft-review-'));t.after(()=>fs.rmSync(home,{recursive:true,force:true}));
  const h=new WorkshopState(path.join(home,'workshop.json'));
  h.data.task={id:'unchanged',status:'blocked',turns:23,deadline:null,max_turns:null};
  h.data.input_outcomes=[{input_id:'old-input',state:'notAccepted'}];
  h.data.last_turn={activity:true,task_id:null,interrupted:false,budget_limited:true,started_at:'2026-11-12T20:04:40.276Z',actions:[{id:'first',status:'uncertain'},{id:'second',status:'uncertain'}]};
- for(const id of ['first','second'])for(const kind of ['action_started','action_failed'])h.data.events.push({id:crypto.randomUUID(),action_id:id,kind,action:'craft',arguments:{item:'stone_pickaxe',count:1},time:'2026-11-12T20:05:18.380Z',...(kind==='action_failed'?{error:terminal}:{})});
+ for(const id of ['first','second'])for(const kind of ['action_started','action_failed'])h.data.events.push({id:crypto.randomUUID(),action_id:id,kind,action:'craft',arguments:{item:'stone_pickaxe',count:1},time:'2026-11-12T20:05:18.380Z',...(kind==='action_failed'?{error}:{})});
  const observation={position:{x:1.5,y:63,z:1.5},inventory:{slots:Array(46).fill(null),cursor:null}};
  // A present item is a current fact, never proof of either historical craft.
  observation.inventory.slots[9]={name:'stone_pickaxe',count:1};
  const input={generation:7,request_id:crypto.randomUUID(),expected_turn_sha256:digest(h.data.last_turn),expected_position:structuredClone(observation.position),expected_inventory_sha256:digest(observation.inventory),evidence_sha256:'a'.repeat(64),reviews:['first','second'].map(id=>({action_id:id,receipt_sha256:digest(h.data.events.find(e=>e.action_id===id&&e.kind==='action_failed')),outcome:'settled_failed_crafting_preparation',reason:'Exact retained source and terminal reviewed; preparation completed, but historical inventory deltas remain unclaimed.'}))};
  h.save();return {h,input,observation};
 }
-test('review preserves both uncertain crafts, inputs and task; no old continuation, repeat or fabricated delta',t=>{
- const {h,input,observation}=fixture(t),before=structuredClone(h.data);
+for(const error of [terminal,'Close the other container before crafting'])test(`review preserves uncertain crafts and history for ${error}`,t=>{
+ const {h,input,observation}=fixture(t,error),before=structuredClone(h.data);
  assert.equal(policy.reason(h,cfg),'unresolved_activity_effects');
  const result=review(h,cfg,input,observation);
  assert.equal(result.activity_allowed,true);assert.equal(result.future_work_only,true);assert.equal(result.replayed,false);
@@ -32,6 +32,17 @@ test('review preserves both uncertain crafts, inputs and task; no old continuati
  assert.equal(review(reloaded,cfg,input,observation).duplicate,true);
  assert.equal(JSON.stringify(reloaded.data),saved);assert.equal(policy.canContinue(reloaded,cfg),false);
  assert.throws(()=>review(reloaded,cfg,{...input,request_id:crypto.randomUUID()},observation));
+});
+for(const mode of ['no_effect','timeout','partial_recipe','dirty_cursor','unknown_grid'])test('foreign-window review refuses '+mode,t=>{
+ const {h,input,observation}=fixture(t,'Close the other container before crafting');
+ const end=h.data.events.find(e=>e.action_id==='first'&&e.kind==='action_failed');
+ if(mode==='no_effect')input.reviews[0].outcome='no_effect';
+ if(mode==='timeout')end.timeout=true;
+ if(mode==='partial_recipe')end.error+='; 1 recipe executions completed. Inventory/crafting grid may contain partial work; inspect before retrying.';
+ if(mode==='dirty_cursor')observation.inventory.cursor={name:'oak_planks',count:10};
+ if(mode==='unknown_grid')delete observation.inventory.slots[2];
+ input.reviews[0].receipt_sha256=digest(end);input.expected_inventory_sha256=digest(observation.inventory);
+ const before=JSON.stringify(h.data);assert.throws(()=>review(h,cfg,input,observation));assert.equal(JSON.stringify(h.data),before);
 });
 for(const mode of ['no_effect','other_outcome','other_action','timeout','unsettled','partial_recipe','preparation_timeout','new_terminal','unknown_item','bad_count','extra_argument','cursor','output','grid','unknown_cursor','unknown_grid','missing_second','pending','interrupted','task_turn','active','missing_terminal','duplicate_terminal','stale_position','stale_inventory'])test('craft review refuses '+mode+' without mutation',t=>{
  const {h,input,observation}=fixture(t),first=h.data.events.find(e=>e.action_id==='first'&&e.kind==='action_failed');

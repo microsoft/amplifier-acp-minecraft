@@ -798,13 +798,13 @@ test('planner limit cannot override explicit activity wait, completion, blocker,
  }
 });
 
-for(const mode of ['known-clear','missing-cursor','undefined-cursor','false-cursor','undefined-output','undefined-grid','sparse-grid','short-grid','dirty-cursor','dirty-grid'])test('craft review raw inventory boundary: '+mode,async()=>{
+for(const terminal of ['No recipe possible with current inventory and nearby crafting table; no movement performed','Close the other container before crafting'])for(const mode of ['known-clear','missing-cursor','undefined-cursor','false-cursor','undefined-output','undefined-grid','sparse-grid','short-grid','dirty-cursor','dirty-grid'])test('craft review raw inventory boundary: '+terminal+' / '+mode,async()=>{
  const f=fixture({...optionalConfig,installation_callers:[{id:'voice',label:'Voice',token:'v'.repeat(40)}]});try{
   const crypto=realRequire('node:crypto'),digest=v=>crypto.createHash('sha256').update(JSON.stringify(v)).digest('hex');
   const {Vec3}=realRequire('vec3');f.bot.entity.position=new Vec3(0,64,0);
   f.bot.inventory={slots:Array(46).fill(null),selectedItem:null};f.bot.currentWindow=null;
   f.history.data.last_turn={activity:true,task_id:null,interrupted:false,budget_limited:true,started_at:'2026-11-12T20:04:40.276Z',actions:[{id:'legacy-craft',status:'uncertain'}]};
-  for(const kind of ['action_started','action_failed'])f.history.record({kind,action:'craft',action_id:'legacy-craft',time:'2026-11-12T20:05:18.380Z',arguments:{item:'stone_pickaxe',count:1},...(kind==='action_failed'?{error:'No recipe possible with current inventory and nearby crafting table; no movement performed'}:{})});
+  for(const kind of ['action_started','action_failed'])f.history.record({kind,action:'craft',action_id:'legacy-craft',time:'2026-11-12T20:05:18.380Z',arguments:{item:'stone_pickaxe',count:1},...(kind==='action_failed'?{error:terminal}:{})});
   if(mode==='missing-cursor')delete f.bot.inventory.selectedItem;
   if(mode==='undefined-cursor')f.bot.inventory.selectedItem=undefined;
   if(mode==='false-cursor')f.bot.inventory.selectedItem=false;
