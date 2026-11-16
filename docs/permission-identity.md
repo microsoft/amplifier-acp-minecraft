@@ -18,7 +18,9 @@ permission request's `toolCall` must contain:
 The engine derives this identity from its resolved tool registry. Builtins use
 `kind: "builtin"` with their own name and no server; they receive no automatic
 Minecraft permission. The permission request must retain the announcement's
-session/call IDs, identity, title, kind and raw input. The client retains the
+session/call IDs, identity, title and raw input. Its ACP `kind` is `other`, as the
+native engine has always sent, or the announced kind; neither is authority. The
+client retains the
 original announcement and refuses duplicate IDs, changed identities, terminal
 calls, and missing/conflicting metadata. An advertised but unsupported or
 malformed identity contract cannot fall back to legacy interpretation.

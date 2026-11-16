@@ -44,7 +44,7 @@ for line in sys.stdin:
                 '_meta': {'com.microsoft.amplifier.tool': {'version': 1, 'kind': 'mcp', 'server': 'minecraft', 'name': 'conversation'}}}
         update({'sessionUpdate': 'tool_call', 'status': 'pending', **call})
         send({'id': 'permission', 'method': 'session/request_permission', 'params': {
-            'sessionId': sid, 'toolCall': call,
+            'sessionId': sid, 'toolCall': {**call, 'kind': 'other'},  # as the native engine sends it
             'options': [{'name': 'Permission', 'kind': 'allow_once', 'optionId': 'once'}]}})
     elif message.get('id') == 'permission':
         assert message['result']['outcome'] == {'outcome': 'selected', 'optionId': 'once'}

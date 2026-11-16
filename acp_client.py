@@ -286,7 +286,11 @@ class Client:
                 return None
             # The negotiated producer includes these exact original call fields.
             if any(field not in request or request[field] != announced.get(field)
-                   for field in ('title', 'kind', 'rawInput')):
+                   for field in ('title', 'rawInput')):
+                return None
+            # The native engine's permission requests have always said kind=other,
+            # whatever the announcement's kind; neither is authority.
+            if request.get('kind') not in ('other', announced.get('kind')):
                 return None
             raw = announced.get('rawInput')
             if (not isinstance(raw, dict) or set(raw) != {'server', 'tool', 'arguments'}

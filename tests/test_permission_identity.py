@@ -66,6 +66,17 @@ class PermissionIdentity(unittest.IsolatedAsyncioTestCase):
         call['title']='workspace run'
         self.assertEqual(self.outcome(c,call),'cancelled')
 
+    def test_negotiated_request_kind_other_is_accepted_and_is_not_authority(self):
+        c=self.client(); call=self.call(); self.announce(c,call)
+        call['kind']='other'
+        self.assertEqual(self.outcome(c,call),'selected')
+        self.assertEqual(c.events[-1]['reason'],'verified_game_tool')
+        call['title']='workspace run'
+        self.assertEqual(self.outcome(c,call),'cancelled')
+        c=self.client(); call=self.call(); self.announce(c,call)
+        call['kind']='other'; call['_meta']={TOOL_IDENTITY:{'version':1,'kind':'builtin','name':'workspace_run'}}
+        self.assertEqual(self.outcome(c,call),'cancelled')
+
     def test_legacy_requires_exact_native_envelope_and_title(self):
         for mutate in (
             lambda x: x['rawInput'].update(path='marker'),
