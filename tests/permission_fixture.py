@@ -3,7 +3,7 @@ scenario=sys.argv[1]
 def send(v):print(json.dumps({'jsonrpc':'2.0',**v}),flush=True)
 for line in sys.stdin:
  v=json.loads(line);m=v.get('method')
- if m=='initialize':send({'id':v['id'],'result':{'protocolVersion':1,'agentCapabilities':{'mcpCapabilities':{'http':True}}}})
+ if m=='initialize':send({'id':v['id'],'result':{'protocolVersion':1,'agentInfo':{'name':'agent-runtime','version':'fixture'},'agentCapabilities':{'mcpCapabilities':{'http':True}}}})
  elif m=='session/new':send({'id':v['id'],'result':{'sessionId':'test-session'}})
  elif m=='session/prompt':
   supplied_prompt=v['params']['prompt']
@@ -11,7 +11,7 @@ for line in sys.stdin:
   raw={'server':'minecraft','tool':'observe','arguments':{}}
   if scenario.startswith('game:'):raw['tool']=scenario.split(':',1)[1]
   if scenario in ('external','future_tool'):raw={'server':'filesystem','tool':'delete','arguments':{}}
-  send({'method':'session/update','params':{'sessionId':'test-session','update':{'sessionUpdate':'tool_call','toolCallId':'t1','title':'mcp.minecraft.observe','rawInput':raw}}})
+  send({'method':'session/update','params':{'sessionId':'test-session','update':{'sessionUpdate':'tool_call','toolCallId':'t1','title':'minecraft / '+raw['tool'],'rawInput':raw}}})
   send({'id':90,'method':'session/request_permission','params':{'sessionId':'wrong' if scenario=='wrong_session' else 'test-session','toolCall':{'toolCallId':'t1'},'options':[{'name':'Permission','kind':'allow_always','optionId':'forever'},{'name':'Permission','kind':'allow_once','optionId':'once'}]}})
   if scenario=='future_tool':send({'method':'session/update','params':{'sessionId':'test-session','update':{'sessionUpdate':'tool_call_update','toolCallId':'t1','rawInput':{'server':'minecraft','tool':'observe'}}}})
   reply=json.loads(sys.stdin.readline())
