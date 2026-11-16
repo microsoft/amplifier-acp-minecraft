@@ -13,7 +13,7 @@ import adapter
 
 
 class SilentFinalTurn(unittest.IsolatedAsyncioTestCase):
-    async def exercise(self, *, human=False, changed=None, useful=False):
+    async def exercise(self, *, human=False, changed=None, useful=False, continuation=False):
         paths=[]
         active=False
         message={'id':'source', 'source':'human' if human else 'agent', 'message':'A fresh observation.'}
@@ -21,6 +21,9 @@ class SilentFinalTurn(unittest.IsolatedAsyncioTestCase):
         conversation={'revision':'original', 'messages':[]}
         world={'ready':True, 'busy':False, 'generation':1, 'task':None,
                'conversation_only':True, 'peer_proposal':not human, 'conversation':conversation}
+        if continuation:
+            world.update(conversation_only=False,peer_proposal=False,ordinary_activity=True,
+                         task_capabilities={'activity_continuation':True,'autonomous_work_allowed':True})
 
         def control(cfg,path,payload=None):
             nonlocal active
@@ -29,10 +32,12 @@ class SilentFinalTurn(unittest.IsolatedAsyncioTestCase):
                 return {**world,'turn_active':active,'pending_messages':1}
             if path=='/conversation/admission':
                 return {'version':1,'unmetered':True,'eligible_ids':['source']}
-            if path=='/inbox/peek':return [message]
+            if path=='/inbox/peek':return [] if continuation else [message]
+            if path=='/continuation':return {'action':'continue'}
             if path=='/turn':
-                self.assertTrue(payload['conversation_only'])
-                self.assertEqual(payload['peer_only'],not human)
+                self.assertEqual(payload['conversation_only'],not continuation)
+                self.assertEqual(payload['peer_only'],not human and not continuation)
+                self.assertEqual(payload['continuation'],continuation)
                 active=True
                 return {'active':True}
             if path=='/status':return {**world,'turn_active':active}
@@ -51,9 +56,9 @@ class SilentFinalTurn(unittest.IsolatedAsyncioTestCase):
             def transport_closed(self):return False
             async def close(self):pass
             async def prompt(self,*args,**kwargs):
-                if not human:
+                if not human and not continuation:
                     outer.assertIn('including replies to new human steering',args[0])
-                    if useful or changed:control({},'/action',{'name':'chat','arguments':{'text':'The barrel is ready.'}})
+                if not human and (useful or changed):control({},'/action',{'name':'chat','arguments':{'text':'The barrel is ready.'}})
                 return {'text':text,'final_text':text,'stop_reason':'end_turn','unsettled_tools':[]}
 
         class Awareness:
@@ -69,6 +74,7 @@ class SilentFinalTurn(unittest.IsolatedAsyncioTestCase):
             home=Path(tmp)
             cfg={'control_port':1,'token':'fixture','incoming_chat_only':True,
                  'human_task_intake':{'enabled':True,'delegation':{'enabled':True}}}
+            if continuation:cfg['human_engagement']={'enabled':True,'task_optional':True}
             endpoint={'command':['unused'],'cwd':tmp}
             bound={**endpoint,'mcp_servers':[{'type':'http','name':'minecraft','url':'http://127.0.0.1:1/mcp',
                    'headers':[{'name':'Authorization','value':'Bearer fixture'}]}]}
@@ -81,8 +87,8 @@ class SilentFinalTurn(unittest.IsolatedAsyncioTestCase):
                  patch.object(adapter,'Awareness',Awareness),contextlib.redirect_stdout(output):
                 with self.assertRaises(asyncio.CancelledError):
                     await asyncio.wait_for(adapter.run(home),2)
-            self.assertEqual(json.loads((home/'calls.json').read_text()),[])
-            self.assertEqual(len(json.loads((home/'reply-calls.json').read_text())),1)
+            self.assertEqual(len(json.loads((home/'calls.json').read_text())),int(continuation))
+            if not continuation:self.assertEqual(len(json.loads((home/'reply-calls.json').read_text())),1)
             self.assertEqual(json.loads((home/'session.json').read_text()),{'binding':binding,'session':'saved'})
         events=[json.loads(line) for line in output.getvalue().splitlines()]
         self.assertEqual(next(e for e in events if e['kind']=='turn_completed')['disposition'],'complete')
@@ -94,6 +100,13 @@ class SilentFinalTurn(unittest.IsolatedAsyncioTestCase):
         replies,events=await self.exercise()
         self.assertEqual(replies,[])
         self.assertTrue(any(e.get('reason')=='explicit_chat_delivery' for e in events))
+
+    async def test_autonomous_continuation_final_is_not_a_public_peer_trigger(self):
+        for useful in (False, True):
+            with self.subTest(explicit_chat=useful):
+                replies,events=await self.exercise(continuation=True,useful=useful)
+                self.assertEqual(replies,['The barrel is ready.'] if useful else [])
+                self.assertTrue(any(e.get('reason')=='explicit_chat_delivery' for e in events))
 
     async def test_direct_human_and_fresh_steering_answers_remain_deliverable(self):
         for kwargs in ({'human':True},{'changed':'public'},{'changed':'operator'},{'useful':True}):

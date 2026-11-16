@@ -10,7 +10,7 @@ import re
 from pathlib import Path
 import time
 import urllib.request
-from conversation_awareness import Awareness
+from conversation_awareness import Awareness, SourceAlreadyDispatched
 from planner_prompt import planner_prompt
 from context_snapshot import retained_request
 from prompt_lifecycle import await_terminal
@@ -413,7 +413,17 @@ async def run(home):
                 operator_awareness=Awareness(home,client,await request('/operator-inputs'),observe,audience='operator',binding=identity)
             except Exception as error:
                 observe('operator_awareness_unavailable',category=type(error).__name__,fallback='queued_input')
-            source_metadata=await awareness.ordinary_prompt(messages)
+            try:
+                source_metadata=await awareness.ordinary_prompt(messages)
+            except SourceAlreadyDispatched:
+                # No prompt was dispatched in this reservation. Retain the same
+                # error finish and original delivery evidence as before; this
+                # expected no-replay decision is not a transport failure.
+                # connect() still detects an actually closed transport normally.
+                await request('/finish',{'error':True})
+                observe('source_prompt_suppressed',reason='already_dispatched',
+                        source_count=len(messages),new_prompt_sent=False,completion='not_established')
+                continue
             pending=asyncio.create_task(client.prompt(prompt,attention_offer=attention_offer,source_metadata=source_metadata,
                 snapshot_retained=retained_request(messages,world),snapshot_key=identity))
             last_renewed=time.monotonic()
@@ -477,7 +487,8 @@ async def run(home):
                     observe('final_reply_withheld',reason='public_context_not_exposed_or_incorporated')
                 else:
                     await deliver_final_reply(text,revision,request,observe,
-                        explicit_speech=bool(final_status.get('explicit_speech') or world.get('peer_proposal') or world.get('ambient_activity')),private_reply=private_reply)
+                        explicit_speech=bool(final_status.get('explicit_speech') or world.get('peer_proposal') or world.get('ambient_activity')
+                                             or (messages and all(m.get('source')=='continuation' for m in messages))),private_reply=private_reply)
             observe('turn_completed',stop_reason=result['stop_reason'],disposition=disposition,
                     unsettled_tool_count=len(result.get('unsettled_tools',[])))
             if watches and not conversation_only and disposition=='complete':

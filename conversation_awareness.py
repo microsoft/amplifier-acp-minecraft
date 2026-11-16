@@ -12,6 +12,13 @@ from pathlib import Path
 from harness_capabilities import source_delivery, ordinary_sources, work_references, sources, SOURCE_META, SOURCE_METHOD
 
 
+class SourceAlreadyDispatched(RuntimeError):
+    """A retained same-session delivery prevents another prompt, not a reconnect.
+
+    This does not assert incorporation, completion, or settled world effects.
+    """
+
+
 class Awareness:
     def __init__(self, home, client, initial, observe, *, limit=16, audience="public", binding=None):
         if audience not in ("public", "operator"):
@@ -114,7 +121,7 @@ class Awareness:
                            or e.get('state') not in ('notAccepted', 'promptRequired')
                            or e.get('incorporated') is not False for e in evidence)
                     or not ordinary_sources(getattr(self.client, 'info', None))):
-                raise RuntimeError('Source input already dispatched; inspect its receipts, do not replay')
+                raise SourceAlreadyDispatched('Source input already dispatched; inspect its receipts, do not replay')
             key, facts = old['input_id'], sources(old['sources'])
         elif not ordinary_sources(getattr(self.client, 'info', None)):
             return None

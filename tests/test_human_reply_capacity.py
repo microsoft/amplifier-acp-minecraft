@@ -112,7 +112,9 @@ class HumanReplyCapacity(unittest.IsolatedAsyncioTestCase):
     self.assertEqual(len(json.loads((home/'reply-calls.json').read_text())),1)
   self.assertEqual(task,before);self.assertNotIn('/turn/renew',[p for p,_ in paths])
   if chat_only:self.assertNotIn('/continuation',[p for p,_ in paths])
-  self.assertEqual(any(p=='/reply' for p,_ in paths),not provider_failure)
+  # priority_work has an empty inbox and exercises autonomous continuation;
+  # its final is private, while an actual human-input answer stays public.
+  self.assertEqual(any(p=='/reply' for p,_ in paths),not provider_failure and not priority_work)
  async def test_human_reply_passes_exhausted_construction_gate_without_task_changes(self):
   for status in ('running','budget_exhausted','stopped'):
    with self.subTest(status=status):await self.exercise(status)
