@@ -911,3 +911,27 @@ for(const report of ['blocked',null])test(`ordinary ${report??'missing'} report 
   assert.deepEqual(moves,[1,2]);assert.equal(JSON.stringify(f.history.task()),task);
  }finally{f.close();}
 });
+
+test('denied-prompt owner review binds saved session, gate, raw cursor and control authority',async()=>{
+ let effects=0;const f=fixture({...optionalConfig,installation_callers:[{id:'voice',label:'Voice',token:'v'.repeat(40)}]},{move:async()=>{effects++;return {reached:true};}});try{
+  const crypto=realRequire('node:crypto'),digest=v=>crypto.createHash('sha256').update(JSON.stringify(v)).digest('hex');
+  f.bot.entity.position=new (realRequire('vec3').Vec3)(0,64,0);f.bot.inventory={slots:[null],selectedItem:null};
+  f.history.data.last_turn={activity:true,task_id:null,interrupted:true,started_at:'2026-11-17T19:21:02.056Z',actions:[],request_ids:[]};f.history.save();
+  const original=JSON.stringify(f.history.data),session={session:crypto.randomUUID(),binding:'b'.repeat(64)},file=path.join(f.home,'session.json');
+  fs.writeFileSync(file,JSON.stringify(session));
+  const observation=await f.request('/installation-state'),args={generation:(await f.request('/conversation')).generation,request_id:crypto.randomUUID(),expected_turn_sha256:digest(f.history.data.last_turn),expected_task_sha256:digest(f.history.data.task),expected_position:observation.position,expected_inventory_sha256:digest(observation.inventory),evidence_sha256:'a'.repeat(64),reason:'Exact owner-reviewed original producer and Instance ledger proves cancellation before every dispatch.',receipts:[],permission_denial:{version:1,session,turn_started_at:f.history.data.last_turn.started_at,prompt_id:'original-prompt',complete_tool_ledger:true,calls:[{id:'original-call',permission:'cancelled',reason:'unverified_tool_identity',status:'failed',dispatch:'not_dispatched'}],terminal:{stop_reason:'cancelled',unsettled_tool_count:0},sources:{client_sha256:'c'.repeat(64),instance_sha256:'d'.repeat(64),engine_sha256:'e'.repeat(64)}}};
+  await f.request('/activity/review-interrupted',args,401,'wrong');
+  await f.request('/activity/review-interrupted',args,403,'v'.repeat(40));
+  await f.request('/activity/review-interrupted',{...args,generation:args.generation+1},400);
+  f.bot.currentWindow={};await f.request('/activity/review-interrupted',args,400);f.bot.currentWindow=null;
+  f.bot.inventory.selectedItem=undefined;await f.request('/activity/review-interrupted',args,400);f.bot.inventory.selectedItem=null;
+  fs.writeFileSync(file,JSON.stringify({...session,session:crypto.randomUUID()}));await f.request('/activity/review-interrupted',args,400);fs.writeFileSync(file,JSON.stringify(session));
+  const dir=path.join(f.home,'installation-updates');fs.mkdirSync(dir);const gate=JSON.stringify({version:1,closed:true,transaction_id:crypto.randomUUID()});fs.writeFileSync(path.join(dir,'gate.json'),gate);
+  await f.request('/activity/review-interrupted',args,400);assert.equal(fs.readFileSync(path.join(dir,'gate.json'),'utf8'),gate);fs.unlinkSync(path.join(dir,'gate.json'));
+  assert.equal(JSON.stringify(f.history.data),original);
+  const result=await f.request('/activity/review-interrupted',args);assert.equal(result.activity_allowed,true);assert.equal(result.future_work_only,true);assert.equal(effects,0);
+  assert.equal((await f.request('/activity/review-interrupted',args)).duplicate,true);
+  await f.request('/turn',{activity:true,continuation:true},400);assert.equal(effects,0);
+  const retained=structuredClone(f.history.data);delete retained.last_turn.effect_review;assert.equal(JSON.stringify(retained),original);
+ }finally{f.close();}
+});

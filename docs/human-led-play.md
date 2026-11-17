@@ -464,3 +464,60 @@ the producing source and current state. It preserves prior movement/equip and
 the original uncertain receipt; it does not establish a historical inventory
 delta, replay placement or resume a task. Silence, timeout, unloaded targets,
 changed receipts and interrupted task turns remain ineligible.
+
+#### Owner review of an empty activity denied before tool dispatch
+
+An empty `actions` list, a failed tool status, `unsettled_tool_count: 0`, or a
+cancelled prompt does **not** by itself establish that no tool was dispatched.
+The same owner-only `/activity/review-interrupted` route supports a narrow
+`permission_denial` extension for an interrupted ordinary activity with no
+recorded actions, input request IDs, speech operations or activity report.
+Keep `receipts: []` and all other exact observation, task and evidence fields.
+This is not a model-facing tool or an automatic exception to interruption holds.
+
+The owner must retain and review the **complete original prompt ledger**, not
+just a single failed call. Supply this additional object:
+
+```json
+{
+  "version": 1,
+  "session": {"session": "original-session-id", "binding": "64-hex-binding"},
+  "turn_started_at": "exact saved turn timestamp",
+  "prompt_id": "original-prompt-id",
+  "complete_tool_ledger": true,
+  "calls": [{
+    "id": "original-call-id",
+    "permission": "cancelled",
+    "reason": "unverified_tool_identity",
+    "status": "failed",
+    "dispatch": "not_dispatched"
+  }],
+  "terminal": {"stop_reason": "cancelled", "unsettled_tool_count": 0},
+  "sources": {
+    "client_sha256": "64-hex-retained-evidence-hash",
+    "instance_sha256": "64-hex-retained-evidence-hash",
+    "engine_sha256": "64-hex-retained-evidence-hash"
+  }
+}
+```
+
+Every call in that original prompt must be accounted for, with unambiguous
+permission correlation and affirmative producer evidence that invocation did
+not occur. `calls` contains 1–64 distinct original call IDs, all denied before
+dispatch; an allowed, uncorrelated, unknown or unfinished call refuses this path.
+The dossier bound by `evidence_sha256` must include the original records, their
+source/version bindings, and the owner's correlation assessment. These hashes
+bind the owner's retained evidence; they are **not** proof automatically checked
+against an external engine or Instance. Do not fill in missing IDs or infer
+no dispatch from empty Minecraft receipts. If the original ledger is missing or
+ambiguous, retain the hold; later instrumentation cannot prove an older outcome.
+
+The body reads its current saved session and compares both session ID and binding.
+The existing generation, idle, position, inventory, task, turn, Stop and sequence
+guards still apply. This extension also refuses an installation admission gate,
+an unknown raw cursor, any domain action record at/after the interrupted turn,
+and malformed action timing. Owner review adds only `effect_review`, retaining
+its full `permission_denial` evidence; the original interruption, action and input
+records remain unchanged. It permits future independently admitted activity,
+never continuation or replay of that prompt or a task/budget reset. An uncertain
+review response must be reconciled from durable state before any further action.
