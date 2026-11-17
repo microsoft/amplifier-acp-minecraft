@@ -57,3 +57,10 @@ for(const mode of ['unconfirmed_equip','unconfirmed_consume','stop'])test('equip
  await assert.rejects(f.actions.consume(f.bot,{item:'bread'},()=>{if(mode==='stop'&&++checks===1)throw Error('Stopped');}));
  assert.equal(f.counts().consumes,mode==='unconfirmed_consume'?1:0);assert.ok(f.counts().equips<=1);
 });
+
+test('sword sweep cannot hit an unselected nearby player or animal',()=>{
+ const {bot,e}=fixture();bot.heldItem={name:'wooden_sword'};bot.entities[2]={id:2,name:'player',position:e.position.offset(.5,0,0)};
+ assert.throws(()=>attackTarget(bot,{id:1,uuid:'exact'}),/sweep/);
+ bot.entities[2].name='cow';assert.throws(()=>attackTarget(bot,{id:1,uuid:'exact'}),/sweep/);
+ bot.heldItem={name:'wooden_axe'};assert.equal(attackTarget(bot,{id:1,uuid:'exact'}),e);
+});

@@ -11,6 +11,8 @@ function attackTarget(bot,a){
  if(metadata(bot,e,'custom_name')||metadata(bot,e,'owneruuid')||metadata(bot,e,'owner_uuid')||((definition.metadataKeys.includes('owneruuid')||definition.metadataKeys.includes('owner_uuid'))&&(metadata(bot,e,'flags')&4)))throw Error('Do not attack named or owned animals');
  if(metadata(bot,e,'baby')===true)throw Error('Do not attack baby animals');
  if(e.position.distanceTo(bot.entity.position)>3)throw Error('Move within three blocks before attacking; attack never chases');
+ // A sword may sweep nearby entities, even though the packet names one target.
+ if(bot.heldItem?.name?.endsWith('_sword')&&Object.values(bot.entities).some(other=>other!==e&&other!==bot.entity&&other.position&&bot.registry.entitiesByName[other.name]?.metadataKeys?.includes('health')&&other.position.distanceTo(e.position)<3))throw Error('A sword sweep could hit another nearby entity; choose a non-sweeping tool or an isolated target');
  const eye=bot.entity.position.offset(0,1.62,0),aim=e.position.offset(0,Math.min(1,e.height||.5),0),delta=aim.minus(eye),distance=delta.norm();
  if(distance&&bot.world.raycast(eye,delta.scaled(1/distance),distance))throw Error('Target is behind a block');
  return e;
