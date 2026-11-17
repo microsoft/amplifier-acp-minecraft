@@ -20,6 +20,7 @@ class BundleTests(unittest.TestCase):
         self.root=Path(self.tmp.name);self.build=module('build_bundle');self.launch=module('launch')
 
     def manifest(self):
+        (self.root/'manifest.json').unlink(missing_ok=True)
         (self.root/'runtime').write_bytes(b'private executable')
         data={'schema':1,'commands':{'python':'runtime','node':'runtime','task_helper':'runtime'},'files':self.build.inventory(self.root)}
         (self.root/'manifest.json').write_text(json.dumps(data));return data
@@ -41,6 +42,52 @@ class BundleTests(unittest.TestCase):
         self.manifest();self.launch.validate(self.root)
         (self.root/'runtime').write_bytes(b'changed executable')
         with self.assertRaises(ValueError):self.launch.validate(self.root)
+
+    def test_every_validation_hashes_same_size_payload_again(self):
+        self.manifest();self.launch.validate(self.root)
+        path=self.root/'runtime';before=path.read_bytes();metadata=path.stat()
+        path.write_bytes(b'x'*len(before))
+        os.utime(path,ns=(metadata.st_atime_ns,metadata.st_mtime_ns))
+        with self.assertRaisesRegex(ValueError,'Package digest changed'):
+            self.launch.validate(self.root)
+
+    def test_missing_resized_or_directory_payload_refuses(self):
+        for replacement in ('missing','resized','directory'):
+            with self.subTest(replacement=replacement):
+                self.manifest();path=self.root/'runtime';path.unlink()
+                if replacement=='resized':path.write_bytes(b'x')
+                if replacement=='directory':path.mkdir()
+                with self.assertRaisesRegex(ValueError,'Package file changed'):
+                    self.launch.validate(self.root)
+                if path.is_dir():path.rmdir()
+
+    def symlink(self,path,target,**kwargs):
+        try:path.symlink_to(target,**kwargs)
+        except (OSError,NotImplementedError) as error:
+            self.skipTest('Host does not permit fixture symlinks: '+str(error))
+
+    def test_regular_payload_cannot_be_replaced_by_same_bytes_link(self):
+        self.manifest();path=self.root/'runtime';data=path.read_bytes()
+        (self.root/'other').write_bytes(data);path.unlink();self.symlink(path,'other')
+        with self.assertRaisesRegex(ValueError,'Package file changed'):
+            self.launch.validate(self.root)
+
+    def test_exact_internal_link_and_changed_link_are_distinct(self):
+        self.manifest();self.symlink(self.root/'alias','runtime')
+        self.manifest();self.launch.validate(self.root)
+        (self.root/'other').write_bytes((self.root/'runtime').read_bytes())
+        (self.root/'alias').unlink();self.symlink(self.root/'alias','other')
+        with self.assertRaisesRegex(ValueError,'Package link changed'):
+            self.launch.validate(self.root)
+
+    def test_parent_link_escape_refuses_even_with_identical_payload(self):
+        nested=self.root/'nested';nested.mkdir();(nested/'payload').write_bytes(b'exact')
+        self.manifest();(nested/'payload').unlink();nested.rmdir()
+        with tempfile.TemporaryDirectory() as directory:
+            outside=Path(directory);(outside/'payload').write_bytes(b'exact')
+            self.symlink(nested,outside,target_is_directory=True)
+            with self.assertRaisesRegex(ValueError,'Package path escapes'):
+                self.launch.validate(self.root)
 
     def test_manifest_cannot_redirect_command_outside_package(self):
         data=self.manifest();data['commands']['node']='../untrusted'
