@@ -45,10 +45,16 @@ function selectedItem(bot,a){
  if(!item)throw Error('Item is not in inventory');return item;
 }
 function equipmentPreflight(bot,a){selectedItem(bot,a);if(bot.currentWindow!==null||bot.inventory.selectedItem!==null)throw Error('Resolve the open window/cursor before equipment or eating');}
-async function equip(bot,a,check){
- equipmentPreflight(bot,a);await refreshInventory(bot);check();equipmentPreflight(bot,a);
+function prepared(bot,validate,settled,stage){
+ try{validate();}catch(error){
+  if(bot.currentWindow===null&&bot.inventory.selectedItem===null)settled(error,{kind:'settled_failed_preparation',stage});
+  throw error;
+ }
+}
+async function equip(bot,a,check,{settled=()=>{}}={}){
+ equipmentPreflight(bot,a);await refreshInventory(bot);check();prepared(bot,()=>equipmentPreflight(bot,a),settled,'before_equip');
  const item=selectedItem(bot,a);await bot.equip(item,'hand');await refreshInventory(bot);check();
- if(bot.heldItem?.name!==a.item)throw Error('Server did not confirm held item; inspect inventory');
+ if(bot.heldItem?.name!==a.item){const error=Error('Server did not confirm held item; inspect inventory');settled(error,{kind:'settled_failed_equipment',requested:a.item,observed:bot.heldItem?.name||null});throw error;}
  return {held_item:a.item,verified:true};
 }
 function consumePreflight(bot,a){
@@ -56,11 +62,11 @@ function consumePreflight(bot,a){
  if(!Object.hasOwn(bot.registry.foodsByName||{},a.item))throw Error('Select a registered food item; arbitrary item use is not eating');
  if(bot.food>=20)throw Error('Food is already full; no consumption needed');
 }
-async function consume(bot,a,check){
- consumePreflight(bot,a);await equip(bot,a,check);check();consumePreflight(bot,a);
+async function consume(bot,a,check,{settled=()=>{}}={}){
+ consumePreflight(bot,a);await equip(bot,a,check,{settled});check();prepared(bot,()=>consumePreflight(bot,a),settled,'before_consume');
  const count=()=>bot.inventory.items().filter(i=>i.name===a.item).reduce((n,i)=>n+i.count,0),before=count();
  await bot.consume();await refreshInventory(bot);check();const after=count();
- if(before-after!==1)throw Error('Consumption count unconfirmed; inspect inventory and food before continuing');
+ if(before-after!==1){const error=Error('Consumption count unconfirmed; inspect inventory and food before continuing');settled(error,{kind:'settled_failed_consumption',completion_observed:true,before,after,consumed_count:null});throw error;}
  return {item:a.item,consumed:1,before,after,food:bot.food,health:bot.health,verified:true};
 }
 module.exports={attackTarget,attack,equipmentPreflight,equip,consumePreflight,consume};

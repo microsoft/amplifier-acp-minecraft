@@ -64,3 +64,18 @@ test('sword sweep cannot hit an unselected nearby player or animal',()=>{
  bot.entities[2].name='cow';assert.throws(()=>attackTarget(bot,{id:1,uuid:'exact'}),/sweep/);
  bot.heldItem={name:'wooden_axe'};assert.equal(attackTarget(bot,{id:1,uuid:'exact'}),e);
 });
+
+test('completed equipment/consumption mismatches preserve observations, not fabricated deltas',async()=>{
+ for(const mode of ['equip','consume']){
+  const f=equipmentFixture({equipChanges:mode!=='equip',consumeChanges:mode!=='consume'}),outcomes=require('../effect-outcome.cjs').create();let error;
+  await assert.rejects(f.actions.consume(f.bot,{item:'bread'},()=>{},{settled:outcomes.settled}),e=>{error=e;return true;});
+  const result=outcomes.get(error);assert.equal(result.kind,mode==='equip'?'settled_failed_equipment':'settled_failed_consumption');
+  if(mode==='consume')assert.equal(result.consumed_count,null);
+  assert.ok(f.counts().equips<=1&&f.counts().consumes<=1);
+ }
+});
+test('food becoming full during confirmed equipment is a settled pre-consumption refusal',async()=>{
+ const f=equipmentFixture({onRefresh:(bot,n)=>{if(n===2)bot.food=20;}}),outcomes=require('../effect-outcome.cjs').create();let error;
+ await assert.rejects(f.actions.consume(f.bot,{item:'bread'},()=>{},{settled:outcomes.settled}),e=>{error=e;return true;});
+ assert.equal(outcomes.get(error).stage,'before_consume');assert.equal(f.counts().consumes,0);assert.equal(f.counts().equips,1);
+});

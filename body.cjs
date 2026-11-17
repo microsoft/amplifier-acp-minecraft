@@ -480,7 +480,7 @@ async function operate(name,a={},sequenceId=null){
   try {
     const result=await boundedAction(async()=>{
       if(name==='chat')return speech(name,a);
-      if(['attack','equip','consume'].includes(name))return entityActions[name](bot,a,check);
+      if(['attack','equip','consume'].includes(name))return entityActions[name](bot,a,check,{settled:outcomes.settled});
       if(name==='shear')return survival.shear(bot,a,check);
       if(name==='furnace')return survival.furnace(bot,coord(a),a,check);
       if(name==='container')return containers.container(bot,coord(a),a,check,{settled:outcomes.settled,beforeTransfer:()=>conversation.guard(a.conversation_revision)});
