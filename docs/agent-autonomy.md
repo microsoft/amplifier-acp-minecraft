@@ -79,6 +79,13 @@ unacknowledged clicks, transport loss and timeouts are never settlement proof.
 Existing owner reviews preserve original historical receipts and permit only
 fresh work, not continuation/replay of a reviewed action.
 
+A build is a sequence of placements, not an all-or-nothing transaction. If a
+later target is refused before its placement preparation starts, the verified
+prefix remains completed work and the suffix remains unattempted. The partial
+result permits a fresh plan without a global unresolved-effects hold. Unverified
+placements, lost acknowledgments and post-preparation races remain distinct;
+the connector does not clear obstacles or retry the batch automatically.
+
 Observations include the exact retained blocking receipts even when they have
 aged out of recent events. `available_tools` describes the installed primitives;
 `pathfinder_can_break_blocks` describes automatic pathfinding only. Separate

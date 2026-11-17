@@ -68,13 +68,17 @@ function review(history,cfg,input,observation,{taskEffects=false}={}){
   if(start.action==='build'){
    const r=end.result,blocks=start.arguments?.blocks,itemName=start.arguments?.item,p=r?.failed_at;
    const equal=(a,b)=>a&&b&&['x','y','z'].every(k=>Number.isInteger(a[k])&&a[k]===b[k]);
-   const prefix=Array.isArray(blocks)&&Array.isArray(r?.placed)&&r.placed.length<blocks.length&&r.placed.every((v,i)=>v.verified===true&&v.actual===itemName&&equal(v.position,blocks[i]));
+   const valid=Array.isArray(blocks)&&blocks.length>0&&blocks.length<=24&&blocks.every(b=>['x','y','z'].every(k=>Number.isSafeInteger(b?.[k])))&&typeof itemName==='string'&&/^[a-z][a-z0-9_]*$/.test(itemName);
+   const prefix=valid&&Array.isArray(r?.placed)&&r.placed.length<blocks.length&&r.placed.every((v,i)=>v?.verified===true&&v.actual===itemName&&equal(v.position,blocks[i]));
    const refusal=prefix&&equal(p,blocks[r.placed.length])&&r.error===`Server refused to place ${itemName} at (${p.x}, ${p.y}, ${p.z}): the block is still air`;
    const later=history.data.events.some(e=>e.kind==='action_result'&&e.action==='place'&&Date.parse(e.time)>Date.parse(end.time)&&equal(e.arguments,p)&&e.arguments.item===itemName&&e.result?.verified===true&&e.result.actual===itemName&&equal(e.result.position,p));
-   // The first target check precedes inventory sync, walking, equip and placement.
-   // Later/partial/preparation failures retain their effects and cannot use this case.
-   const initial=Array.isArray(blocks)&&blocks.length>0&&blocks.length<=24&&blocks.every(b=>['x','y','z'].every(k=>Number.isSafeInteger(b?.[k])))&&typeof itemName==='string'&&/^[a-z][a-z0-9_]*$/.test(itemName)&&Array.isArray(r?.placed)&&r.placed.length===0&&equal(p,blocks[0])&&r.error==='Target is not empty';
-   if(!(item.outcome==='no_effect'&&initial||item.outcome==='settled_partial_build'&&refusal&&later)||r.timeout||r.operation_settled===false)throw Error('Build review requires exact first-target refusal or verified partial placement evidence');
+   // Each initial target check precedes that placement's preparation. A
+   // verified prefix remains effects, never "no effect" for the whole build.
+   // Post-preparation races use a different terminal and remain unresolved.
+   const occupied=prefix&&equal(p,blocks[r.placed.length])&&r.error==='Target is not empty';
+   const initial=occupied&&r.placed.length===0;
+   const partialOccupied=occupied&&r.placed.length>0;
+   if(!(item.outcome==='no_effect'&&initial||item.outcome==='settled_partial_build'&&(partialOccupied||refusal&&later))||r.timeout||r.operation_settled===false)throw Error('Build review requires exact first-target refusal or verified partial placement evidence');
   }else if(item.outcome==='settled_partial_build')throw Error('Partial build review is only for a build');
   // Legacy preflight failures predate no-effect journaling. This is an explicit
   // owner review of exact historical receipts, never automatic error recovery.

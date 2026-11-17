@@ -214,13 +214,14 @@ function digTarget(p,expected){
  }
  return block;
 }
-function placementTarget(p,prepared=false){
+function placementTarget(p,prepared=false,onRefusal=null){
  const block=bot.blockAt(p);
  if(!block||!['air','cave_air','short_grass','tall_grass','snow'].includes(block.name)){
   // Keep the historical initial refusal distinct from a later preparation race:
   // movement/equip may already have happened in the latter case.
   const error=Error(prepared?'Placement target changed during preparation; inspect before retrying':'Target is not empty');
-  error.details={target:{position:p,observed:block?.name??null,loaded:!!block}};throw error;
+  error.details={target:{position:p,observed:block?.name??null,loaded:!!block}};
+  onRefusal?.(error);throw error;
  }
 }
 function actionsRemaining(){return cfg.human_engagement?.enabled===true?null:Math.max(0,24-actions);}
@@ -437,7 +438,12 @@ async function operate(name,a={},sequenceId=null){
   const movementFailure=(error,before,settled)=>{if(settled&&epoch===generation&&ready&&Date.now()<turnUntil&&!error.actionTimeout)outcomes.settled(error,{kind:'settled_failed_movement',before,position:{x:bot.entity.position.x,y:bot.entity.position.y,z:bot.entity.position.z},reached:false,replayed:false});return error;};
   const go=async(p,r=2,exactHeight=false)=>{check();const before={x:bot.entity.position.x,y:bot.entity.position.y,z:bot.entity.position.z};const goal=exactHeight?new spatial.FeetGoal(p.x,p.y,p.z,r):new goals.GoalNear(p.x,p.y,p.z,r);let settled=false;try{await spatial.gotoWithProgress(bot,goal);settled=true;await delay(250);check();if(!goal.isEnd(bot.entity.position.floored()))throw Error('Movement ended without reaching the requested destination; inspect current position');}catch(error){throw movementFailure(error,before,settled||error.movementOperationSettled===true);}};
   async function place(p,item,supportFace,facing){
-    check();placementTarget(p);
+    check();
+    placementTarget(p,false,error=>{
+      // This target check precedes this placement's inventory, movement and
+      // packet work. In a batch, earlier verified placements still count.
+      if(epoch===generation&&ready&&Date.now()<turnUntil&&!error.actionTimeout)outcomes.settled(error,{kind:'settled_failed_placement',phase:'target_preflight',target:error.details?.target,effect_attempted:false,replayed:false});
+    });
     const directions={north:[0,-1],south:[0,1],east:[1,0],west:[-1,0]};
     const {furnaceFacing,stairsFacing,pistonFacing}=validatePlacementFacing(item,facing);
     if(facing){
