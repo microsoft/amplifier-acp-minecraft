@@ -67,16 +67,18 @@ class PackageTests(unittest.TestCase):
         receipt=json.loads((self.stage/'package-receipt.json').read_text())
         self.assertEqual(receipt['package_source'],REV);self.assertEqual(receipt['revision'],REV)
         self.assertEqual((self.python.read_bytes(),self.node.read_bytes()),before)
-    def test_manifest_preflight_needs_only_one_archive_rewind(self):
+    def test_manifest_preflight_uses_at_most_two_archive_passes(self):
         # The manifest is late in existing archives. Read it during the complete
         # preflight scan, then rewind once for extraction, not once per lookup.
-        rewinds=[];seek=gzip.GzipFile.seek
+        rewinds=[];opens=[];seek=gzip.GzipFile.seek;open_tar=tarfile.open
+        def opened(*args,**kwargs):
+            opens.append((args,kwargs));return open_tar(*args,**kwargs)
         def observed(stream,offset,whence=0):
             before=seek(stream,0,1);result=seek(stream,offset,whence)
             if result<before:rewinds.append((before,result))
             return result
-        with patch.object(gzip.GzipFile,'seek',observed):self.run_stage()
-        self.assertEqual(len(rewinds),1,rewinds)
+        with patch.object(gzip.GzipFile,'seek',observed),patch.object(tarfile,'open',opened):self.run_stage()
+        self.assertLessEqual(len(opens)+len(rewinds),2,(opens,rewinds))
         self.assertEqual((self.stage/'app/requirements.txt').read_bytes(),self.files['app/requirements.txt'])
     def test_early_manifest_still_requires_complete_preflight(self):
         self.archive({'../escape':b'bad'},manifest_first=True)
@@ -86,6 +88,27 @@ class PackageTests(unittest.TestCase):
     def test_early_manifest_retains_exact_payload(self):
         self.archive(manifest_first=True);self.run_stage()
         self.assertEqual((self.stage/'app/requirements.txt').read_bytes(),self.files['app/requirements.txt'])
+    def test_archive_decompression_reads_remain_bounded(self):
+        sizes=[];read=gzip.GzipFile.read
+        def observed(stream,size=-1):
+            sizes.append(size);self.assertGreaterEqual(size,0);self.assertLessEqual(size,1024*1024)
+            return read(stream,size)
+        with patch.object(gzip.GzipFile,'read',observed):self.run_stage()
+        self.assertTrue(sizes)
+    def test_changed_member_between_stream_passes_refuses_before_write(self):
+        changed=self.root/'changed.tar.gz'
+        with tarfile.open(changed,'w:gz') as archive:
+            item=tarfile.TarInfo('../escape');item.size=3;archive.addfile(item,io.BytesIO(b'bad'))
+        open_tar=tarfile.open;calls=0
+        def opened(*args,**kwargs):
+            nonlocal calls
+            calls+=1
+            if calls==2:kwargs={**kwargs,'fileobj':replacement}
+            return open_tar(*args,**kwargs)
+        with gzip.open(changed,'rb') as replacement,patch.object(tarfile,'open',opened),self.assertRaisesRegex(ContinuityError,'changed'):
+            self.run_stage()
+        self.assertFalse((self.root/'escape').exists())
+        self.assertFalse((self.stage/'package/python/bin/python3').exists())
     def test_tree_equal_reviewed_head_is_allowed(self):
         self.manifest['source_commit']='d'*40;self.archive();self.run_stage()
         self.assertIn('git/commits/'+REV,self.calls)
