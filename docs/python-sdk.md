@@ -87,3 +87,21 @@ No tests need a production agent, provider key, game server, task renewal, or li
 world effects. Stage dependencies per installation and validate before a separately
 coordinated idle deployment. Preserve world, sessions, identities, task limits,
 consumed accounting and unknown receipts. Source migration never authorizes work.
+
+## Negotiated tool identity and argument shape
+
+The selected ACP peer may advertise `com.microsoft.amplifier.tool` in
+`agentCapabilities._meta`. The exact capability `{ "version": 1 }` retains the
+Runtime `rawInput` envelope `{server, tool, arguments}`. The explicit capability
+`{ "version": 1, "rawInputShape": "arguments" }` instead retains a producer's
+direct argument object, as used by Agent. This profile is opt-in; an engine name,
+flattened tool label, or reusable-approval key does not enable it.
+
+Both profiles require the same producer-authored identity on the initial tool
+announcement and permission request: `{version:1, kind:"mcp", server:"minecraft",
+name:<registered tool>}`. The request must repeat the announcement's exact title
+and `rawInput`, preserving nested JSON types, and match its active call ID and session. Direct argument keys are
+ordinary data, even if named `server`, `tool`, or `_meta`. Malformed capabilities,
+missing/mismatched identity, foreign servers, and unsupported tools refuse without
+falling back. Existing replay, maintenance, work-authority and budget checks remain;
+the connector selects only `allow_once`, never an Instance Always rule.
