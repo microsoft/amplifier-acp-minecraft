@@ -33,7 +33,15 @@ function review(history,cfg,input,observation,{taskEffects=false}={}){
   const events=history.data.events.filter(e=>e.action_id===item.action_id);
   const starts=events.filter(e=>e.kind==='action_started'),ends=events.filter(e=>['action_result','action_failed'].includes(e.kind));
   const start=starts[0],end=ends[0];
-  if(starts.length!==1||ends.length!==1||start.action!==end.action||!['move','container','gather',...(taskEffects?['dig']:['build','place','craft','furnace','give','chat','tell'])].includes(start.action)||(start.action==='build'?end.kind!=='action_result':end.kind!=='action_failed')||end.timeout||end.operation_settled===false||!Number.isFinite(Date.parse(start.time))||!Number.isFinite(Date.parse(end.time))||!(Date.parse(start.time)>=Date.parse(turn.started_at))||Date.parse(end.time)<Date.parse(start.time)||digest(start.arguments)!==digest(end.arguments)||digest(end)!==item.receipt_sha256)throw Error('Exact retained terminal action receipt required');
+  if(starts.length!==1||ends.length!==1||start.action!==end.action||!['move','container','gather',...(taskEffects?['dig']:['build','place','craft','furnace','give','chat','tell','follow'])].includes(start.action)||(start.action==='build'?end.kind!=='action_result':end.kind!=='action_failed')||end.timeout||end.operation_settled===false||!Number.isFinite(Date.parse(start.time))||!Number.isFinite(Date.parse(end.time))||!(Date.parse(start.time)>=Date.parse(turn.started_at))||Date.parse(end.time)<Date.parse(start.time)||digest(start.arguments)!==digest(end.arguments)||digest(end)!==item.receipt_sha256)throw Error('Exact retained terminal action receipt required');
+  if(start.action==='follow'){
+   // Exact legacy branch, before setGoal. A lost/replaced target after movement
+   // has a different terminal and is not historical no-effect evidence.
+   const a=start.arguments,keys=Object.keys(a||{}).sort().join();
+   const entity=keys==='entity_id,seconds,uuid'&&Number.isSafeInteger(a.entity_id)&&uuid(a.uuid);
+   const player=keys==='player,seconds'&&typeof a.player==='string'&&a.player.length>0;
+   if(item.outcome!=='no_effect'||!(entity||player)||!Number.isSafeInteger(a.seconds)||a.seconds<1||a.seconds>30||end.error!=='Target identity changed or is not visible; inspect entities again')throw Error('Follow review requires exact initial identity refusal before movement');
+  }
   if(['chat','tell'].includes(start.action)){
    if(item.outcome!=='settled_partial_speech'||!require('./speech.cjs').settledPartial(turn,start.action,start.arguments,end))throw Error('Partial speech requires exact submitted prefix and cancelled suffix; unknown packets remain held');
   }else if(item.outcome==='settled_partial_speech')throw Error('Partial speech review is only for speech');

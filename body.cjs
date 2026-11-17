@@ -224,6 +224,13 @@ function placementTarget(p,prepared=false,onRefusal=null){
   onRefusal?.(error);throw error;
  }
 }
+function followTarget(a,onRefusal=null){
+ const refuse=message=>{const error=Error(message);onRefusal?.(error);throw error;};
+ if(a.player&&a.entity_id!==undefined)refuse('Choose a player or an entity, not both');
+ const target=a.player?bot.players[a.player]?.entity:bot.entities[a.entity_id];
+ if(!target||(!a.player&&(!a.uuid||target.uuid!==a.uuid)))refuse('Target identity changed or is not visible; inspect entities again');
+ return target;
+}
 function actionsRemaining(){return cfg.human_engagement?.enabled===true?null:Math.max(0,24-actions);}
 let speechTurn=null, speechReceipts=new Map();
 function speechIdentity(text){
@@ -422,6 +429,7 @@ async function operate(name,a={},sequenceId=null){
   if(name==='dig'){const block=digTarget(coord(a),a.expected);spatial.digGuard(bot,block);spatial.harvestTool(bot,block);if(!bot.canDigBlock(block))throw Error('Target is out of reach; plan a safe standing position first');}
   if(name==='place'){const p=coord(a);placementTarget(p);spatial.placementSupport(bot,p,a.support_face,a.item);}
   if(name==='build'){const positions=a.blocks.map(coord);if(positions.length)placementTarget(positions[0]);}
+  if(name==='follow')followTarget(a);
   if(name==='attack')entityActions.attackTarget(bot,a);
   if(name==='equip')entityActions.equipmentPreflight(bot,a);
   if(name==='consume')entityActions.consumePreflight(bot,a);
@@ -498,9 +506,11 @@ async function operate(name,a={},sequenceId=null){
       if(name==='set_open'){const p=coord(a),block=bot.blockAt(p);if(!block||!/(?:_door|_trapdoor|_fence_gate)$/.test(block.name))throw Error('Only doors, trapdoors and fence gates can be opened here');if(p.distanceTo(bot.entity.position)>4)throw Error('Move within reach first');if(block.getProperties().open!==a.open){await bot.activateBlock(block);await delay(300);check();}const actual=bot.blockAt(p)?.getProperties().open;if(actual!==a.open)throw Error('Server did not confirm the requested open state');return {position:p,name:block.name,open:actual,verified:true};}
       if(name==='dig'){const block=digTarget(coord(a),a.expected);spatial.digGuard(bot,block);const tool=spatial.harvestTool(bot,block);if(tool)await bot.equip(tool,'hand');check();if(!bot.canDigBlock(block))throw Error('Target is out of reach; plan a safe standing position first');await bot.dig(block);check();await delay(200);const after=bot.blockAt(block.position)?.name;if(after===a.expected)throw Error('Server did not confirm removal');return {position:block.position,before:a.expected,after,tool:tool?.name||'hand',inventory:snapshot().inventory};}
       if(name==='follow'){
-        if(a.player&&a.entity_id!==undefined)throw Error('Choose a player or an entity, not both');
-        const target=a.player?bot.players[a.player]?.entity:bot.entities[a.entity_id];
-        if(!target||(!a.player&&(!a.uuid||target.uuid!==a.uuid)))throw Error('Target identity changed or is not visible; inspect entities again');
+        const target=followTarget(a,error=>{
+          // Only this known refusal before setGoal proves no follow began.
+          // Arbitrary read errors and failures after movement stay uncertain.
+          if(epoch===generation&&ready&&Date.now()<turnUntil&&!error.actionTimeout)outcomes.settled(error,{kind:'settled_follow_preflight',effect_attempted:false,replayed:false});
+        });
         bot.pathfinder.setGoal(new goals.GoalFollow(target,2),true);
         try{for(let n=0;n<a.seconds;n++){await delay(1000);check();if(bot.entities[target.id]!==target)throw Error('Target is no longer loaded');}}
         finally{bot.pathfinder.setGoal(null);bot.clearControlStates();}
