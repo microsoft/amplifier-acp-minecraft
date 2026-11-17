@@ -34,21 +34,22 @@ function terminal(turn,action,start,end){
 // This is authenticated owner review of retained external evidence, not a
 // classification inferred from an empty body action list or a tool label.
 function deniedPrompt(history,turn,denial,observation){
- exact(denial,['version','session','turn_started_at','prompt_id','complete_tool_ledger','calls','terminal','sources']);
+ exact(denial,['version','session','turn_started_at','producer_turn_id','instance_work_id','complete_tool_ledger','calls','terminal','sources']);
  exact(denial.session,['session','binding']);
  exact(denial.terminal,['stop_reason','unsettled_tool_count']);
  exact(denial.sources,['client_sha256','instance_sha256','engine_sha256']);
- const id=v=>typeof v==='string'&&v.length>0&&v.length<=256;
+ const id=v=>typeof v==='string'&&v.trim()===v&&v.length>0&&v.length<=256;
  if(denial.version!==1||!id(denial.session.session)||!hash(denial.session.binding)||
     denial.session.session!==observation.session?.session||denial.session.binding!==observation.session?.binding||
-    denial.turn_started_at!==turn.started_at||!id(denial.prompt_id)||denial.complete_tool_ledger!==true||
+    denial.turn_started_at!==turn.started_at||!id(denial.producer_turn_id)||!id(denial.instance_work_id)||denial.complete_tool_ledger!==true||
     denial.terminal.stop_reason!=='cancelled'||denial.terminal.unsettled_tool_count!==0||
     !Object.values(denial.sources).every(hash))throw Error('Exact complete original denied prompt evidence required');
  if(!Array.isArray(denial.calls)||!denial.calls.length||denial.calls.length>64||
-    new Set(denial.calls.map(c=>c?.id)).size!==denial.calls.length)throw Error('Every original call needs distinct pre-dispatch denial evidence');
+    new Set(denial.calls.map(c=>c?.id)).size!==denial.calls.length||
+    new Set(denial.calls.map(c=>c?.approval_request_id)).size!==denial.calls.length)throw Error('Every original call needs distinct pre-dispatch denial evidence');
  for(const call of denial.calls){
-  exact(call,['id','permission','reason','status','dispatch']);
-  if(!id(call.id)||call.permission!=='cancelled'||call.reason!=='unverified_tool_identity'||
+  exact(call,['id','approval_request_id','permission','reason','status','dispatch']);
+  if(!id(call.id)||!id(call.approval_request_id)||call.permission!=='cancelled'||call.reason!=='unverified_tool_identity'||
      call.status!=='failed'||call.dispatch!=='not_dispatched')throw Error('Missing or ambiguous dispatch remains held');
  }
  if(turn.actions.length!==0||!Array.isArray(turn.request_ids)||turn.request_ids.length||

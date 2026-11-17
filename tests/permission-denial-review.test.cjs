@@ -8,7 +8,7 @@ function fixture(t){
  h.data.last_turn={activity:true,started_at:'2026-11-17T19:21:02.056Z',task_id:null,progress_revision:0,actions:[],request_ids:[],may_mutate:true,interrupted:true};
  h.data.inbox=[{id:'retained-input'}];h.data.input_outcomes=[{id:'unknown-input',status:'unknown'}];
  const observation={position:{x:1,y:64,z:2},inventory:{slots:[],cursor:null},session:{session:crypto.randomUUID(),binding:'b'.repeat(64)}};
- const denial={version:1,session:{...observation.session},turn_started_at:h.data.last_turn.started_at,prompt_id:'prompt-original',complete_tool_ledger:true,calls:[{id:'call-original',permission:'cancelled',reason:'unverified_tool_identity',status:'failed',dispatch:'not_dispatched'}],terminal:{stop_reason:'cancelled',unsettled_tool_count:0},sources:{client_sha256:'c'.repeat(64),instance_sha256:'d'.repeat(64),engine_sha256:'e'.repeat(64)}};
+ const denial={version:1,session:{...observation.session},turn_started_at:h.data.last_turn.started_at,producer_turn_id:'engine-turn-original',instance_work_id:'instance-work-original',complete_tool_ledger:true,calls:[{id:'call-original',approval_request_id:'approval-original',permission:'cancelled',reason:'unverified_tool_identity',status:'failed',dispatch:'not_dispatched'}],terminal:{stop_reason:'cancelled',unsettled_tool_count:0},sources:{client_sha256:'c'.repeat(64),instance_sha256:'d'.repeat(64),engine_sha256:'e'.repeat(64)}};
  const input={generation:1,request_id:crypto.randomUUID(),expected_turn_sha256:digest(h.data.last_turn),expected_task_sha256:digest(h.data.task),expected_position:{...observation.position},expected_inventory_sha256:digest(observation.inventory),evidence_sha256:'a'.repeat(64),reason:'Owner reviewed the complete original prompt ledger and correlated every denied call with the producer pre-dispatch terminal. All external evidence is retained.',receipts:[],permission_denial:denial};
  h.save();return {h,cfg,input,observation};
 }
@@ -29,6 +29,8 @@ const mutations={
  incomplete_ledger:f=>f.input.permission_denial.complete_tool_ledger=false,
  missing_call:f=>f.input.permission_denial.calls=[],
  duplicate_call:f=>f.input.permission_denial.calls.push({...f.input.permission_denial.calls[0]}),
+ reused_approval:f=>f.input.permission_denial.calls.push({...f.input.permission_denial.calls[0],id:'other-call'}),
+ blank_identity:f=>f.input.permission_denial.calls[0].id=' ',
  no_call_identity:f=>delete f.input.permission_denial.calls[0].id,
  allowed_call:f=>f.input.permission_denial.calls[0].permission='allow_once',
  unknown_dispatch:f=>f.input.permission_denial.calls[0].dispatch='unknown',
@@ -41,7 +43,9 @@ const mutations={
  boolean_unsettled:f=>f.input.permission_denial.terminal.unsettled_tool_count=false,
  unsettled_tool:f=>f.input.permission_denial.terminal.unsettled_tool_count=1,
  ambiguous_terminal:f=>f.input.permission_denial.terminal.stop_reason='unknown',
- empty_prompt:f=>f.input.permission_denial.prompt_id='',
+ empty_producer_turn:f=>f.input.permission_denial.producer_turn_id='',
+ missing_instance_work:f=>delete f.input.permission_denial.instance_work_id,
+ missing_approval_request:f=>delete f.input.permission_denial.calls[0].approval_request_id,
  different_turn:f=>f.input.permission_denial.turn_started_at='2026-11-17T19:20:00Z',
  different_session:f=>f.observation.session.session=crypto.randomUUID(),
  different_binding:f=>f.observation.session.binding='f'.repeat(64),

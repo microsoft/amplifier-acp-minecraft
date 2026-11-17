@@ -483,10 +483,12 @@ just a single failed call. Supply this additional object:
   "version": 1,
   "session": {"session": "original-session-id", "binding": "64-hex-binding"},
   "turn_started_at": "exact saved turn timestamp",
-  "prompt_id": "original-prompt-id",
+  "producer_turn_id": "original-producer-turn-id",
+  "instance_work_id": "original-Instance-work-id",
   "complete_tool_ledger": true,
   "calls": [{
     "id": "original-call-id",
+    "approval_request_id": "original-producer-approval-request-id",
     "permission": "cancelled",
     "reason": "unverified_tool_identity",
     "status": "failed",
@@ -500,6 +502,12 @@ just a single failed call. Supply this additional object:
   }
 }
 ```
+
+Producer turn IDs, Instance work IDs, producer approval request IDs and client
+ACP wire request IDs are different namespaces. Preserve the actual correlation
+in the dossier; never substitute or guess one from another. A client wire ID
+need not be invented when complete producer/Instance evidence establishes the
+original prompt and every invocation unambiguously.
 
 Every call in that original prompt must be accounted for, with unambiguous
 permission correlation and affirmative producer evidence that invocation did
