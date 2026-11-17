@@ -16,6 +16,7 @@ import sys
 import tempfile
 import time
 from unittest.mock import patch
+from contextlib import ExitStack
 
 parser=argparse.ArgumentParser()
 for name in ('bundle','source','shared','archive','receipt'):parser.add_argument('--'+name,type=Path,required=True)
@@ -43,6 +44,10 @@ from installation_guard import installation_lock,service_stopped
 from installation_native_package import stage_package
 from installation_source_provider import Provider
 from test_service import NativeServiceApplicationTests
+sys.path.insert(0,str(Path(__file__).resolve().parent))
+from setup_observation import SetupObservation
+import installation_native_bootstrap as bootstrap_module
+import installation_native_package as package_module
 
 manifest=json.loads((bundle/'manifest.json').read_bytes())
 archive=args.archive.resolve();digest=hashlib.sha256(archive.read_bytes()).hexdigest()
@@ -54,6 +59,15 @@ class Cleanup(NativeServiceApplicationTests):
 
 base=args.child_root.resolve();root=base/'installation'
 cleanup_ok=False;registered={}
+observer=SetupObservation();observations=ExitStack()
+# Observe existing synchronous calls only. No extra filesystem/native calls,
+# altered arguments, deadlines, retry, cancellation or cleanup suppression.
+observations.enter_context(observer.native_calls(NativeSession))
+for module,name,label in ((bootstrap_module,'validate','validate_bundle'),
+                          (package_module,'validate','validate_extracted'),
+                          (package_module,'create_payload_file','create_payload'),
+                          (package_module,'private_directory','private_directory')):
+ observations.enter_context(observer.function(module,name,label))
 try:
  plan={'schema':1,'root':str(root),'game':{'control_port':1234,'token':'disposable-no-server','screenshots':{'enabled':True}},
        'endpoint':{'command':[sys.executable,'-I',str(source/'tests/session_probe_fixture.py')],'cwd':str(base)}}
@@ -80,6 +94,7 @@ try:
   assert route==url
   return archive.open('rb')
  stage=root/'state/stages/00000000-0000-4000-8000-000000000001'
+ observer.phase='stage'
  started=time.monotonic()
  with native_scope(cfg,cleanup_deadline=started+600),installation_lock(root/'state/installation.lock'),\
       patch.object(provider,'gh',side_effect=gh),patch('installation_native_package.urllib.request.urlopen',side_effect=download),\
@@ -94,6 +109,7 @@ try:
   for role in ('body','controller'):assert service_stopped(native.service_snapshot(role))
  report['no_start_and_home_continuity']=True;report['passed']=True
 finally:
+ observer.phase='cleanup'
  errors=[]
  # Only names returned by this unique fresh setup may be removed. Never clean
  # an unproved registration, unrelated task, or existing home on failure.
@@ -117,6 +133,9 @@ finally:
  if not errors:report['parent_cleanup_after_caller_exit']=True
  else:report['retained_disposable_root']=str(root)
  report['disposable_removed']=cleanup_ok
+ observations.close()
+ report['timing_observations']={'scope':'Synchronous existing calls; nested categories overlap and must not be added. No cause attribution or timing-limit changes.',
+                               'phases':observer.records}
  args.receipt.write_text(json.dumps(report,indent=2)+'\n')
  if errors:raise RuntimeError('Disposable cleanup incomplete; see receipt')
 print(json.dumps({'passed':report.get('passed',False),'setup_seconds':report.get('setup_seconds'),

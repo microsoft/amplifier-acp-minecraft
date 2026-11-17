@@ -135,6 +135,38 @@ for(const confirmed of [true,false])test('actual partial build '+(confirmed?'ret
  }finally{f.close();}
 });
 
+for(const obstacle of ['cornflower',null,Error('Target is not empty'),Error('Read failed')])test('partial build distinguishes target refusal from an unclassified read error: '+obstacle,async()=>{
+ const f=fixture('diorite',{});try{
+  const placed=new Set();let sends=0,equips=0;
+  f.bot.entity.position=new Vec3(2.5,64,.5);
+  const equip=f.bot.equip;f.bot.equip=async item=>{equips++;await equip(item);};
+  f.bot.blockAt=p=>{
+   if(p.y===64&&p.x===4&&p.z===0&&obstacle instanceof Error)throw obstacle;
+   if(p.y===64&&p.x===4&&p.z===0&&obstacle===null)return null;
+   const name=p.y===63?'stone':placed.has(p.toString())?'diorite':p.y===64&&p.x===4&&p.z===0?obstacle:'air';
+   return {position:p,name,boundingBox:name==='stone'||name==='diorite'?'block':'empty',getProperties:()=>({})};
+  };
+  f.bot.placeBlock=async(support,normal)=>{sends++;placed.add(support.position.plus(normal).toString());};
+  const before=JSON.stringify(f.history.task());
+  const result=await f.operate('build',{item:'diorite',support_face:'up',blocks:Array.from({length:6},(_,x)=>({x,y:64,z:0}))});
+  assert.equal(sends,4);assert.equal(equips,4,'no preparation or placement for the refused fifth target');
+  assert.equal(result.placed.length,4);assert.ok(result.placed.every(v=>v.verified&&v.actual==='diorite'));
+  assert.equal(result.failed_at.x,4);
+  if(obstacle instanceof Error){
+   assert.equal(result.error,obstacle.message);assert.equal(f.history.data.turn.actions[0].status,'uncertain');
+   assert.equal(result.settled_failure,undefined,'an error string is not internal refusal evidence');
+   assert.equal(JSON.stringify(f.history.task()),before);return;
+  }
+  assert.equal(result.error,'Target is not empty');
+  assert.equal(f.history.data.turn.actions[0].status,'failed_settled');
+  assert.equal(result.settled_failure.kind,'settled_partial_build');
+  assert.equal(result.settled_failure.placement.phase,'target_preflight');
+  assert.equal(result.settled_failure.placement.effect_attempted,false,'only the refused placement had no effect');
+  assert.equal(result.settled_failure.placed.length,4,'the aggregate retains every verified effect');
+  assert.equal(JSON.stringify(f.history.task()),before);
+ }finally{f.close();}
+});
+
 test('geometry clarity accompanies a verified production placement without another effect or authority change',async()=>{
  const f=fixture('cobblestone',{});try{
   const read=f.bot.blockAt;
