@@ -46,4 +46,14 @@ function reviewNoEffect(history,cfg,{expected_turn_sha256,action_id,reason:expla
  action.review={outcome:'no_effect',reason:explanation,reviewed_at:new Date().toISOString(),original_turn_sha256:expected_turn_sha256};history.save();
  return {action_id,review:action.review,task_changed:false,replayed:false,activity_allowed:allowed(history,cfg),blocked_reason:reason(history,cfg)};
 }
-module.exports={enabled,reason,allowed,canContinue,promote,resume,reviewNoEffect};
+function blockers(history){
+ const turn=history.data.last_turn;if(!turn)return [];
+ return (turn.actions||[]).filter(a=>['pending','uncertain'].includes(a.status)&&!a.review).map(a=>{
+  const events=history.data.events.filter(e=>e.action_id===a.id);
+  return {action_id:a.id,status:a.status,turn_started_at:turn.started_at,
+   start:events.find(e=>e.kind==='action_started')||null,
+   terminals:events.filter(e=>['action_result','action_failed'].includes(e.kind)),
+   meaning:'Inspect these exact retained receipts. Missing evidence is unknown; this observation never permits replay or clears the hold.'};
+ });
+}
+module.exports={blockers,enabled,reason,allowed,canContinue,promote,resume,reviewNoEffect};

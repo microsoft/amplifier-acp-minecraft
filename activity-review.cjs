@@ -62,7 +62,8 @@ function review(history,cfg,input,observation,{taskEffects=false}={}){
    const a=start.arguments,valid=['x','y','z'].every(k=>Number.isSafeInteger(a?.[k]))&&typeof a?.item==='string'&&/^[a-z][a-z0-9_]*$/.test(a.item);
    const occupied=valid&&item.outcome==='no_effect'&&end.error==='Target is not empty';
    const refused=valid&&item.outcome==='settled_failed_placement'&&end.error===`Server refused to place ${a.item} at (${a.x}, ${a.y}, ${a.z}): the block is still air`;
-   if(!occupied&&!refused)throw Error('Placement review requires exact initial occupied-target refusal or retained server refusal and original selected item/position');
+   const approach=valid&&item.outcome==='settled_failed_placement'&&end.error==='Movement ended without reaching the requested destination; inspect current position'&&end.repair?.code==='arrival_mismatch'&&observation.inventory?.cursor===null;
+   if(!occupied&&!refused&&!approach)throw Error('Placement review requires exact initial occupied-target refusal or retained server refusal and original selected item/position');
   }else if(item.outcome==='settled_failed_placement')throw Error('Placement review is only for a single place action');
   if(start.action==='build'){
    const r=end.result,blocks=start.arguments?.blocks,itemName=start.arguments?.item,p=r?.failed_at;
@@ -88,8 +89,9 @@ function review(history,cfg,input,observation,{taskEffects=false}={}){
    'Move within four blocks of the container first; no movement performed'
   ].includes(end.error);
   const storageArgumentRefusal=start.action==='container'&&['deposit','withdraw'].includes(start.arguments?.operation)&&end.error==='Transfer needs an exact item name and count from 1 to 64';
+  const changedStorage=start.action==='container'&&['deposit','withdraw'].includes(start.arguments?.operation)&&end.error==='Container contents changed since inspection; reconsider the handoff. No items transferred.'&&hash(start.arguments?.contents_revision)&&observation.inventory?.cursor===null;
   const selectionRefusal=start.action==='container'&&['deposit','withdraw'].includes(start.arguments?.operation)&&end.error==='Named, enchanted, or component-bearing items need explicit selection: inspect, then supply source_slot and source_item_revision';
-  if(start.action==='container'&&!((storageRefusal||storageArgumentRefusal)&&item.outcome==='no_effect'||selectionRefusal&&item.outcome==='settled_failed_storage'))throw Error('Only reviewed legacy storage preflight refusals are supported');
+  if(start.action==='container'&&!((storageRefusal||storageArgumentRefusal)&&item.outcome==='no_effect'||(selectionRefusal||changedStorage)&&item.outcome==='settled_failed_storage'))throw Error('Only reviewed legacy storage preflight refusals are supported');
   // This exact historical error occurs only after an awaited movement has
   // returned. Earlier harvest effects may exist: do not invent a zero/count.
   const partialGather=start.action==='gather'&&end.error==='Movement ended without reaching the requested destination; inspect current position'&&item.outcome==='settled_partial_gather';

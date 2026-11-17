@@ -68,7 +68,7 @@ function validate(a){
   throw Error('Transfer needs an exact item name and count from 1 to 64');
 }
 function preflight(bot,p,a){validate(a);target(bot,p,a.expected);}
-async function container(bot,p,a,check,{beforeTransfer=()=>{}}={}){
+async function container(bot,p,a,check,{beforeTransfer=()=>{},settled=()=>{}}={}){
  validate(a);let binding,before,confirmed=0,clicks=0,lastConfirmed,unacknowledged=false;
  const deadline=Date.now()+25000;
  const guard=()=>{check();if(Date.now()>deadline)throw Error('Container operation reached its time bound');
@@ -151,7 +151,16 @@ async function container(bot,p,a,check,{beforeTransfer=()=>{}}={}){
   return {position:p,operation:a.operation,item:a.item,requested_count:a.count,transferred:a.count,
    verified:true,before,after,clicks,...(selected?{selected_source:{slot:a.source_slot,item_revision:a.source_item_revision}}:{}),...describe(w),guidance:'Coordinate shared storage in game chat. This verifies this transfer, not exclusive ownership or future contents.'};
  }catch(e){
-  if(!clicks)throw e;
+  if(!clicks){
+   // Only the completed read/validation phase is eligible. Opening/closing a
+   // window is retained as preparation; this does not claim zero effects.
+   // Unknown opening/snapshot, occupied/unknown cursor and any click stay held.
+   if(binding&&lastConfirmed&&bot.currentWindow===binding.window&&binding.window.selectedItem===null&&
+      ['deposit','withdraw'].includes(a.operation)&&!unacknowledged){
+    settled(e,{kind:'settled_failed_storage',stage:'before_transfer',transfer_clicks:0,current:lastConfirmed});
+   }
+   throw e;
+  }
   return {position:p,operation:a.operation,item:a.item,requested_count:a.count,status:'unconfirmed',verified:false,
    error:e.message,completed_batches_count:confirmed,clicks,last_confirmed:lastConfirmed,
    guidance:'Partial changes may exist. Do not repeat the transfer blindly. Inspect this container and your inventory; recover any cursor to its original source before continuing.'};

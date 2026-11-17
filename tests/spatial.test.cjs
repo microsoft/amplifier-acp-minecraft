@@ -114,7 +114,7 @@ test('route reports its movement limits without rejecting a larger total descent
  const r=route(bot,new Vec3(3,61,0));
  assert.equal(r.reachable,true);assert.equal(searches,1);assert.equal(r.steps.length,3);
  assert.equal(r.movement_capabilities.normal.max_dry_full_block_feet_drop_per_edge,1);
- assert.equal(r.movement_capabilities.normal.can_dig,false);
+ assert.equal(r.movement_capabilities.normal.pathfinder_can_break_blocks,false);
 });
 
 // Reproduce the physical rule through the pinned upstream neighbor generator,

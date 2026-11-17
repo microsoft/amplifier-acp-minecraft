@@ -80,7 +80,7 @@ function movementCapabilities(bot){
  const m=bot.pathfinder?.movements,drop=m?.maxDropDown;
  return {normal:{max_dry_full_block_feet_rise_per_edge:m?1:null,max_dry_full_block_feet_drop_per_edge:Number.isFinite(drop)?Math.max(0,Math.floor(drop)-1):null,
   scope:'Per dry full-block walking/jump/drop edge, not total route elevation change. Head clearance and landing support still required; fluids, ladders and partial blocks have separate geometry.',
-  can_dig:m?.canDig??null,parkour:m?.allowParkour??null,towers:m?.allow1by1towers??null,scaffolding_configured:Array.isArray(m?.scafoldingBlocks)?m.scafoldingBlocks.length>0:null},walk_only:{level_only:true}};
+  pathfinder_can_break_blocks:m?.canDig??null,parkour:m?.allowParkour??null,towers:m?.allow1by1towers??null,scaffolding_configured:Array.isArray(m?.scafoldingBlocks)?m.scafoldingBlocks.length>0:null},walk_only:{level_only:true}};
 }
 function footing(p,positions){return positions.some(v=>p.x>=Math.floor(v.x-.299)&&p.x<=Math.floor(v.x+.299)&&p.z>=Math.floor(v.z-.299)&&p.z<=Math.floor(v.z+.299)&&Math.floor(v.y-.001)===p.y);}
 class FeetGoal extends goals.GoalNear {

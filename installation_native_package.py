@@ -5,6 +5,7 @@ Changing bundled base interpreters is a separate installation migration; this
 source/dependency provider never silently changes its executing helper runtime.
 """
 import hashlib
+import gzip
 import os
 from pathlib import Path
 import platform
@@ -83,9 +84,14 @@ def fill_created_payload_file(path,stream,mode):
 
 def extract_private_archive(archive,package):
     """Extract one exact inventoried archive into an empty protected directory."""
-    with tarfile.open(archive,'r:gz') as source:
-        members=source.getmembers();total=0;names=set();folded=set()
-        for item in members:
+    # Both passes are sequential. Gzip random-access seeks repeatedly discard
+    # decompressed bytes; bounded streaming buffers avoid that work.
+    # GzipFile.read bounds expanded bytes too, unlike a raw compressed tar
+    # stream buffer whose one compressed chunk may expand arbitrarily far.
+    with gzip.open(archive,'rb') as decoded, tarfile.open(fileobj=decoded,mode='r|',bufsize=1024*1024) as source:
+        members=[];manifest=None;total=0;names=set();folded=set()
+        for item in source:
+            members.append(item)
             path=Path(item.name);total+=item.size
             if (path.is_absolute() or path==Path('.') or path.as_posix()!=item.name
                     or '..' in path.parts or item.size<0
@@ -95,10 +101,15 @@ def extract_private_archive(archive,package):
                     or total>5*1024**3):
                 raise ContinuityError('Native archive contains an unsafe entry')
             names.add(item.name);folded.add(item.name.casefold())
-        index=source.getmember('manifest.json')
-        if not index.isfile() or index.size>32*1024**2:
+            # Existing archives put the manifest late in the compressed stream.
+            # Read it while scanning, without a second decompressing lookup.
+            # Every member is still validated before creating any payload.
+            if item.name=='manifest.json':
+                if not item.isfile() or item.size>32*1024**2:
+                    raise ContinuityError('Native archive manifest is invalid')
+                manifest=__import__('json').load(source.extractfile(item))
+        if not isinstance(manifest,dict):
             raise ContinuityError('Native archive manifest is invalid')
-        manifest=__import__('json').load(source.extractfile(index))
         payload={m.name for m in members if not m.isdir()}
         if payload!=set(manifest['files'])|{'manifest.json'}:
             raise ContinuityError('Native archive contains untracked payload')
@@ -112,16 +123,23 @@ def extract_private_archive(archive,package):
             raise ContinuityError('Native archive link cannot be a payload parent')
         for path in sorted(directories,key=lambda p:(len(p.parts),p.as_posix())):
             private_directory(package/path)
-        for item in members:
-            path=package/item.name
-            if item.isfile():
-                with source.extractfile(item) as stream:create_payload_file(path,stream,item.mode)
-            elif item.issym():
-                target=Path(item.linkname)
-                if (target.is_absolute() or '\\' in item.linkname or ':' in item.linkname
-                        or not (path.parent/target).resolve().is_relative_to(package.resolve())):
-                    raise ContinuityError('Native archive link escapes package')
-                os.symlink(item.linkname,path)
+        with gzip.open(archive,'rb') as decoded_payload, tarfile.open(fileobj=decoded_payload,mode='r|',bufsize=1024*1024) as payload:
+            for expected in members:
+                item=payload.next()
+                if item is None or any(getattr(item,k)!=getattr(expected,k)
+                        for k in ('name','type','size','linkname','mode')):
+                    raise ContinuityError('Native archive changed after preflight')
+                path=package/item.name
+                if item.isfile():
+                    with payload.extractfile(item) as stream:create_payload_file(path,stream,item.mode)
+                elif item.issym():
+                    target=Path(item.linkname)
+                    if (target.is_absolute() or '\\' in item.linkname or ':' in item.linkname
+                            or not (path.parent/target).resolve().is_relative_to(package.resolve())):
+                        raise ContinuityError('Native archive link escapes package')
+                    os.symlink(item.linkname,path)
+            if payload.next() is not None:
+                raise ContinuityError('Native archive changed after preflight')
     return validate(package)
 
 

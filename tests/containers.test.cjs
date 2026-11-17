@@ -209,3 +209,13 @@ test('obstruction failure returns exact current blocker geometry without opening
  });
  assert.equal(opens,0);assert.equal(f.writes,0);assert.deepEqual(f.bot.entity.position,new Vec3(0,0,0));
 });
+
+test('read-complete changed contents retains settled pre-transfer evidence with zero clicks',async()=>{
+ const f=fixture();try{
+  let failure;const outcomes=require('../effect-outcome.cjs').create();
+  await assert.rejects(container(f.bot,f.p,{expected:'chest',operation:'deposit',item:'stone',count:1,contents_revision:'0'.repeat(64)},()=>{},{settled:outcomes.settled}),e=>{failure=e;return /contents changed/.test(e.message);});
+  const evidence=outcomes.get(failure);
+  assert.equal(evidence.kind,'settled_failed_storage');assert.equal(evidence.transfer_clicks,0);
+  assert.equal(f.bot.currentWindow,null);
+ }finally{f.close?.();}
+});
