@@ -1,3 +1,5 @@
+const entityActions=require('./entity-actions.cjs');
+const effectOutcome=require('./effect-outcome.cjs');
 // One Minecraft player and scoped MCP tool server. No agent implementation here.
 const fs = require('node:fs');
 const http = require('node:http');
@@ -191,7 +193,7 @@ function snapshot(){
     nearby_blocks:blocks.map(p=>({name:bot.blockAt(p)?.name,position:p})),
     conversation:conversation.snapshot(),...(huddle?{huddle:huddle.summary()}:{}),human_activity:humanActivity.snapshot(),action_sequence:actionSequence.status(),
     public_chat:history.data.events.filter(isPublicChatEvent).slice(-20),
-    events:history.data.events.filter(e=>!e.whisper).slice(-35),task:history.task(),receipts:receipts.slice(-15),remaining_actions:actionsRemaining(),action_lease:lease.view(history.task())};
+    events:history.data.events.filter(e=>!e.whisper).slice(-35),task:history.task(),available_tools:Object.keys(definitions).filter(name=>cfg.agent_watches||!name.startsWith('attention_')),blocked_effects:activityPolicy.blockers(history),receipts:receipts.slice(-15),remaining_actions:actionsRemaining(),action_lease:lease.view(history.task())};
 }
 function watchContext(){
  return watchBridge.context(cfg,history,{ready,position:bot.entity?.position,health:bot.health,
@@ -419,6 +421,9 @@ async function operate(name,a={},sequenceId=null){
   if(name==='dig'){const block=digTarget(coord(a),a.expected);spatial.digGuard(bot,block);spatial.harvestTool(bot,block);if(!bot.canDigBlock(block))throw Error('Target is out of reach; plan a safe standing position first');}
   if(name==='place'){const p=coord(a);placementTarget(p);spatial.placementSupport(bot,p,a.support_face,a.item);}
   if(name==='build'){const positions=a.blocks.map(coord);if(positions.length)placementTarget(positions[0]);}
+  if(name==='attack')entityActions.attackTarget(bot,a);
+  if(name==='equip')entityActions.equipmentPreflight(bot,a);
+  if(name==='consume')entityActions.consumePreflight(bot,a);
   if(name==='craft')crafting.preflight(bot,a.item);
   if(name==='give')handoff.preflight(bot,a);
   if(name==='container')containers.preflight(bot,coord(a),a);
@@ -428,8 +433,8 @@ async function operate(name,a={},sequenceId=null){
   if(++actions>24&&cfg.human_engagement?.enabled!==true)throw Error('This turn reached its 24-action budget; save progress with work_report');
   busy=true;activeAction=name;const epoch=generation;const actionId=crypto.randomUUID();history.actionStarted(actionId);record('action_started',{action_id:actionId,action:name,arguments:a});let unfinished;
   const check=()=>{if(epoch!==generation||Date.now()>turnUntil)throw Error('Action cancelled');};
-  const movementFailures=new WeakMap(),placementFailures=new WeakMap(),settledBuilds=new WeakSet();
-  const movementFailure=(error,before,settled)=>{if(settled&&epoch===generation&&ready&&Date.now()<turnUntil&&!error.actionTimeout)movementFailures.set(error,{kind:'settled_failed_movement',before,position:{x:bot.entity.position.x,y:bot.entity.position.y,z:bot.entity.position.z},reached:false,replayed:false});return error;};
+  const settledBuilds=new WeakSet();
+  const movementFailure=(error,before,settled)=>{if(settled&&epoch===generation&&ready&&Date.now()<turnUntil&&!error.actionTimeout)effectOutcome.settled(error,{kind:'settled_failed_movement',before,position:{x:bot.entity.position.x,y:bot.entity.position.y,z:bot.entity.position.z},reached:false,replayed:false});return error;};
   const go=async(p,r=2,exactHeight=false)=>{check();const before={x:bot.entity.position.x,y:bot.entity.position.y,z:bot.entity.position.z};const goal=exactHeight?new spatial.FeetGoal(p.x,p.y,p.z,r):new goals.GoalNear(p.x,p.y,p.z,r);let settled=false;try{await spatial.gotoWithProgress(bot,goal);settled=true;await delay(250);check();if(!goal.isEnd(bot.entity.position.floored()))throw Error('Movement ended without reaching the requested destination; inspect current position');}catch(error){throw movementFailure(error,before,settled||error.movementOperationSettled===true);}};
   async function place(p,item,supportFace,facing){
     check();placementTarget(p);
@@ -449,7 +454,7 @@ async function operate(name,a={},sequenceId=null){
     placementTarget(p,true);const support=spatial.placementSupport(bot,p,supportFace,item);
     const placementAttempt=async send=>{try{return await require('./placement-receipt.cjs').attempt(bot,support.block,p,item,send);}catch(error){
       const receipt=require('./placement-receipt.cjs').refusal(error);
-      if(receipt&&epoch===generation&&ready&&Date.now()<turnUntil&&!error.actionTimeout)placementFailures.set(error,{kind:'settled_failed_placement',receipt,position:{x:bot.entity.position.x,y:bot.entity.position.y,z:bot.entity.position.z},replayed:false});
+      if(receipt&&epoch===generation&&ready&&Date.now()<turnUntil&&!error.actionTimeout)effectOutcome.settled(error,{kind:'settled_failed_placement',receipt,position:{x:bot.entity.position.x,y:bot.entity.position.y,z:bot.entity.position.z},replayed:false});
       throw error;
     }};
     check();bot.setControlState('sneak',true);
@@ -475,6 +480,7 @@ async function operate(name,a={},sequenceId=null){
   try {
     const result=await boundedAction(async()=>{
       if(name==='chat')return speech(name,a);
+      if(['attack','equip','consume'].includes(name))return entityActions[name](bot,a,check);
       if(name==='shear')return survival.shear(bot,a,check);
       if(name==='furnace')return survival.furnace(bot,coord(a),a,check);
       if(name==='container')return containers.container(bot,coord(a),a,check,{beforeTransfer:()=>conversation.guard(a.conversation_revision)});
@@ -499,7 +505,7 @@ async function operate(name,a={},sequenceId=null){
         // building block on behalf of the caller, or substitute a new target.
         const {count,targets}=gatherTargets(a);
         const before=snapshot().inventory,removed=[];let blocked=null,error=null,movement=null;
-        const gatherMove=async(p)=>{try{await go(p,0,true);return true;}catch(e){movement=movementFailures.get(e);if(!movement)throw e;blocked=e.message;return false;}};
+        const gatherMove=async(p)=>{try{await go(p,0,true);return true;}catch(e){movement=effectOutcome.get(e);if(!movement)throw e;blocked=e.message;return false;}};
         const target=p=>{const b=bot.blockAt(p);if(!b||b.name!==a.block)throw Error('Selected target changed or is unloaded; inspect it before choosing more resources');spatial.digGuard(bot,b);spatial.harvestTool(bot,b);return b;};
         for(const p of targets.slice(0,count)){
           check();let block;
@@ -541,7 +547,7 @@ async function operate(name,a={},sequenceId=null){
       if(name==='place')return await place(coord(a),a.item,a.support_face,a.facing);
       if(name==='build'){
         const positions=a.blocks.map(coord);const placed=[];
-        for(const p of positions){check();try{placed.push(await place(p,a.item,a.support_face));}catch(e){let repair;try{repair=repairs.explain(bot,'place',{...a,x:p.x,y:p.y,z:p.z},e);}catch{}const result={placed,failed_at:p,error:e.message,...(repair?{repair}:{})};const failure=placementFailures.get(e);if(failure){result.settled_failure={kind:'settled_partial_build',placed,failed_at:p,placement:failure,replayed:false};settledBuilds.add(result);}return result;}}
+        for(const p of positions){check();try{placed.push(await place(p,a.item,a.support_face));}catch(e){let repair;try{repair=repairs.explain(bot,'place',{...a,x:p.x,y:p.y,z:p.z},e);}catch{}const result={placed,failed_at:p,error:e.message,...(repair?{repair}:{})};const failure=effectOutcome.get(e);if(failure){result.settled_failure={kind:'settled_partial_build',placed,failed_at:p,placement:failure,replayed:false};settledBuilds.add(result);}return result;}}
         return {placed};
       }
       if(name==='give'){
@@ -552,7 +558,7 @@ async function operate(name,a={},sequenceId=null){
       onUnsettled:completion=>{unfinished=completion;stop();}});
     if(['move','follow'].includes(name))check();
     if(result?.settled_failure&&(!result?.error||settledBuilds.has(result)))history.actionFailedSettled(actionId,result.settled_failure);else history.actionSettled(actionId,!result?.error);const r=record('action_result',{action_id:actionId,action:name,arguments:a,result});receipts.push(r);if(receipts.length>100)receipts.shift();return result;
-  }catch(e){try{retryGuard.failed(bot,name,a,e);}catch{}let repair;try{repair=repairs.explain(bot,name,a,e);}catch{}if(repair)e.details={...(e.details||{}),repair};const settled=name==='move'?movementFailures.get(e):name==='place'?placementFailures.get(e):name==='activate_control'&&controlNoEffect(e)&&epoch===generation&&ready&&Date.now()<turnUntil&&!e.actionTimeout?{kind:'settled_control_preflight',effect_attempted:false,replayed:false}:null;if(settled){e.details={...(e.details||{}),settled_failure:settled};history.actionFailedSettled(actionId,settled);}else history.actionSettled(actionId,false);record('action_failed',{action_id:actionId,action:name,arguments:a,error:e.message,...(repair?{repair}:{}),...(settled?{settled_failure:settled}:{}),
+  }catch(e){try{retryGuard.failed(bot,name,a,e);}catch{}let repair;try{repair=repairs.explain(bot,name,a,e);}catch{}if(repair)e.details={...(e.details||{}),repair};const settled=epoch===generation&&ready&&Date.now()<turnUntil&&!e.actionTimeout?(effectOutcome.get(e)||(name==='activate_control'&&controlNoEffect(e)?{kind:'settled_control_preflight',effect_attempted:false,replayed:false}:null)):null;if(settled){e.details={...(e.details||{}),settled_failure:settled};history.actionFailedSettled(actionId,settled);}else history.actionSettled(actionId,false);record('action_failed',{action_id:actionId,action:name,arguments:a,error:e.message,...(repair?{repair}:{}),...(settled?{settled_failure:settled}:{}),
     ...(e.actionTimeout?{timeout:true,operation_settled:e.operationSettled,turn_preserved:Date.now()<turnUntil}: {})});throw e;}
   finally{const settled=()=>{busy=false;activeAction=null;};if(unfinished)unfinished.then(settled);else settled();}
 }
@@ -568,6 +574,9 @@ const watch_alternative=z.union([z.string().min(1).max(600),z.object({
 const revision=z.string().min(1).max(128).optional();
 const replySources=z.array(z.object({id:z.string().uuid(),revision:z.string().regex(/^[0-9a-f]{64}$/),occurredAt:z.number().int().positive()})).min(1).max(8).optional();
 const definitions={
+  attack:['Strike one exact visible living non-player mob within three blocks using the held item. Never chases or repeats. Preserve breeding stock and player animals; named/owned and baby animals are refused. Inspect entities and choose an authorized target. Returns server damage/death observations, not proof of collected food or exclusive kill credit. An unconfirmed result must not be replayed.',{id:z.number().int(),uuid:z.string().uuid()}],
+  equip:['Equip an inventory item in the main hand and verify it. Uses registered item names, not a weapon whitelist; choose tools or equipment appropriate to your plan.',{item:z.string().min(1).max(80)}],
+  consume:['Eat one registered food item from inventory and verify its count change. Does not gather, cook or retry; inspect the result and current food/health.',{item:z.string().min(1).max(80)}],
   conversation:['Read public game messages. Optional query searches retained public history; queries searches up to four independent requirements across separate messages, source optionally filters attributed humans or agents. Searches cover retained public history and accepted task instructions for earlier requirements; absent results do not prove a discussion never happened. Results retain dates/authors and do not authorize new work. Pass current revision as conversation_revision to give/container transfers.',{query:z.string().min(1).max(200).optional(),queries:z.array(z.string().min(1).max(200)).min(1).max(4).optional(),source:z.enum(['human','agent']).optional(),limit:z.number().int().min(1).max(40).default(20)}],
   till:['Use a held inventory hoe to till one nearby grass/dirt block, verifying farmland from a server block update. Never moves, digs or plants. Requires clear air above and a clear reachable top face. Coarse/rooted dirt need separate preparation and are refused. Inspect an unconfirmed result before retrying.',{...xyz,expected:z.enum(['grass_block','dirt'])}],
   attention_watch:['Watch evidence for your current responsibility. initial_check=current_state checks facts already present and then monitors changes; new_events ignores facts present at registration. Use a predicate for exact current facts (no model call): event_id=environment:self, path=/inventory_counts/oak_log, op=gte, value=20, kinds=[environment]. Use any_of for semantic peer reports, one alternative per entry. A string watches all selected evidence. An object {condition,message:{authors,recipients,intents}} filters exact message metadata first; each filter is an optional array, with at least one nonempty. Use your exact name in recipients and request intent for directed requests; allow update for completed results. Supply predicate OR any_of, not both. A one-shot notification requests inspection, never new authority. At most 3 watches, TTL 30–1800 seconds.',{label:z.string().min(1).max(120),initial_check:z.enum(['current_state','new_events']).default('current_state'),any_of:z.array(watch_alternative).min(1).max(4).optional(),predicate:z.object({event_id:z.string().min(1).max(160),path:z.string().min(1).max(256),op:z.enum(['eq','gte','lte']),value:z.union([z.number(),z.string().max(600),z.boolean()])}).optional(),kinds:z.array(z.enum(['message','tool','environment'])).min(1).max(3),ttl_seconds:z.number().int().min(30).max(1800)}],
@@ -775,7 +784,7 @@ const server=http.createServer(async(req,res)=>{
     else if(req.method==='POST'&&['/activity/review-settled-moves','/activity/review-settled-actions','/task/review-settled-actions'].includes(req.url)){
       const a=await json(req);
       if(!ready||busy||actionSequence.active||bot.currentWindow||Date.now()<turnUntil||a.generation!==generation)throw Error('Activity review superseded or player not idle');
-      if(Array.isArray(a.reviews)&&a.reviews.some(r=>r?.outcome==='settled_failed_furnace_collection')&&bot.inventory?.selectedItem!==null)throw Error('Furnace review requires a known empty raw cursor');
+      if(Array.isArray(a.reviews)&&a.reviews.some(r=>['settled_failed_furnace_collection','settled_failed_storage','settled_failed_placement'].includes(r?.outcome))&&bot.inventory?.selectedItem!==null)throw Error('Furnace review requires a known empty raw cursor');
       if(Array.isArray(a.reviews)&&a.reviews.some(r=>r?.outcome==='settled_failed_crafting_preparation')){
         // inventorySnapshot normalizes missing/falsy items to null. Require
         // known empty raw state before that projection for this review only.

@@ -4,7 +4,7 @@ const fs=require('node:fs'),os=require('node:os'),path=require('node:path'),vm=r
 const {EventEmitter}=require('node:events'),{createRequire}=require('node:module');
 const {Vec3}=require('vec3');
 const root=path.resolve(__dirname,'..'),realRequire=createRequire(path.join(root,'body.cjs'));
-function fixture(item,properties={facing:'south'},actual=item,refusal=null){
+function fixture(item,properties={facing:'south'},actual=item,refusal=null,onMove=null){
  const home=fs.mkdtempSync(path.join(os.tmpdir(),'body-facing-'));
  const config=path.join(home,'config.json');fs.writeFileSync(config,JSON.stringify({username:'Builder',token:'fixture'}));
  const target=new Vec3(0,64,0),bot=new EventEmitter();let placed='air',sends=0,options=null,look=null,ordinary=0;
@@ -20,7 +20,7 @@ function fixture(item,properties={facing:'south'},actual=item,refusal=null){
  const context=vm.createContext({require:name=>{
   if(name==='mineflayer')return {createBot:()=>bot};
   if(name==='node:http')return {createServer:()=>({listen(){},close(){}})};
-  if(name==='./spatial.cjs')return {...spatial,gotoWithProgress:async()=>{}};
+  if(name==='./spatial.cjs')return {...spatial,gotoWithProgress:async()=>{if(onMove)await onMove(bot);}};
   if(name==='./inventory.cjs')return {refreshInventory:async()=>{}};
   return realRequire(name);
  },module:{exports:{}},console:{log(){}},Buffer,
@@ -145,5 +145,17 @@ test('geometry clarity accompanies a verified production placement without anoth
   assert.equal(result.placement_geometry.stance_above_full_block.feet.position.y,65);
   assert.equal(result.placement_geometry.stance_above_full_block.exact_target_obstructed,true,'fixture overhead is stone, not a safe destination');
   assert.equal(f.observation().sends,1);assert.equal(JSON.stringify(f.history.task()),before);
+ }finally{f.close();}
+});
+
+for(const mode of ['settled','unknown','timeout'])test('place carries approach outcome without placing: '+mode,async()=>{
+ const f=fixture('cobblestone',{},'cobblestone',null,async bot=>{
+  bot.entity.position=new Vec3(12,64,12);
+  if(mode!=='settled'){const e=Error('unconfirmed movement');if(mode==='timeout')e.actionTimeout=true;throw e;}
+ });try{
+  await assert.rejects(f.run(),mode==='settled'?/Movement ended/:/unconfirmed/);
+  assert.equal(f.observation().sends,0);
+  assert.equal(f.history.data.turn.actions[0].status,mode==='settled'?'failed_settled':'uncertain');
+  if(mode==='settled')assert.equal(f.history.data.events.at(-1).settled_failure.kind,'settled_failed_movement');
  }finally{f.close();}
 });

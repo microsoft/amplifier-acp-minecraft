@@ -66,3 +66,33 @@ fully receipted submitted prefix and explicitly cancelled suffix. It preserves
 original statuses, packets, task/input accounting and Stop. It permits future
 independent work, never resends speech or resumes the old continuation. Any
 submitting/unknown packet, missing receipt or transport failure remains held.
+
+
+## Settled failures and usable capabilities
+
+A completed operation can fail its goal without leaving execution unknown.
+Internal settlement evidence follows the exact error through composed tools;
+for example, a settled approach failure is still settled when it occurred inside
+placement. Read-complete storage validation before any transfer click retains
+its window preparation but does not freeze all future work. Error text alone,
+unacknowledged clicks, transport loss and timeouts are never settlement proof.
+Existing owner reviews preserve original historical receipts and permit only
+fresh work, not continuation/replay of a reviewed action.
+
+Observations include the exact retained blocking receipts even when they have
+aged out of recent events. `available_tools` describes the installed primitives;
+`pathfinder_can_break_blocks` describes automatic pathfinding only. Separate
+`dig` and `gather` remain available under normal work authority. Choose methods
+from current tools and facts; a missing supply or failed method is not a reason
+to wait for the human when another permitted plan is useful.
+
+`equip` selects an inventory item, `consume` eats one registered food, and
+`attack` strikes one explicitly selected non-player mob without pursuit or
+repetition. Preserve breeding stock/player animals; named/owned and baby targets
+are refused. Server damage/death observation is not proof of collected food or
+exclusive kill credit. Inspect inventory and dropped items afterward. These
+primitives use the existing tool identity, permission, action lease and budget
+checks; they do not grant general commands or bypass Stop. Other absent
+capabilities should be reported precisely, not invented or worked around through
+unapproved tools. General initiative belongs in agent guidance; Minecraft
+geometry, tool outcomes and world protections remain in this connector.
