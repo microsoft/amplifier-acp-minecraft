@@ -79,6 +79,14 @@ unacknowledged clicks, transport loss and timeouts are never settlement proof.
 Existing owner reviews preserve original historical receipts and permit only
 fresh work, not continuation/replay of a reviewed action.
 
+A stale follow target is an observation to reconsider, not an uncertain movement.
+Initial identity checks happen before action admission and again before setting
+the movement goal. A known refusal at either point permits a fresh choice; no
+replacement target is selected automatically. Once movement starts, target loss,
+timeouts and unclassified failures still retain uncertainty. The authenticated
+owner review can recognize an exact older initial identity refusal, preserving
+its original receipt and permitting only fresh work rather than replay.
+
 A build is a sequence of placements, not an all-or-nothing transaction. If a
 later target is refused before its placement preparation starts, the verified
 prefix remains completed work and the suffix remains unattempted. The partial
