@@ -1,5 +1,6 @@
 """Published-package staging tests: no subprocess, model, or installed mutation."""
 import hashlib
+import gzip
 import io
 import json
 from pathlib import Path
@@ -44,11 +45,13 @@ class PackageTests(unittest.TestCase):
         if path.startswith('compare/'):return {'status':self.comparison}
         if path.startswith('git/commits/'):return {'tree':{'sha':self.tree}}
         raise AssertionError(path)
-    def archive(self,extra=None):
+    def archive(self,extra=None,*,manifest_first=False):
         self.manifest['files']={name:{'size':len(data),'sha256':hashlib.sha256(data).hexdigest()} for name,data in self.files.items()}
         out=io.BytesIO()
+        manifest={'manifest.json':json.dumps(self.manifest).encode()}
+        entries={**manifest,**self.files} if manifest_first else {**self.files,**manifest}
         with tarfile.open(fileobj=out,mode='w:gz') as tar:
-            for name,data in {**self.files,'manifest.json':json.dumps(self.manifest).encode(),**(extra or {})}.items():
+            for name,data in {**entries,**(extra or {})}.items():
                 item=tarfile.TarInfo(name);item.size=len(data);item.mode=0o600;tar.addfile(item,io.BytesIO(data))
         self.raw=out.getvalue()
         self.release['assets']=[{'name':'minecraft-linux-arm64.tar.gz','digest':'sha256:'+hashlib.sha256(self.raw).hexdigest(),
@@ -64,6 +67,25 @@ class PackageTests(unittest.TestCase):
         receipt=json.loads((self.stage/'package-receipt.json').read_text())
         self.assertEqual(receipt['package_source'],REV);self.assertEqual(receipt['revision'],REV)
         self.assertEqual((self.python.read_bytes(),self.node.read_bytes()),before)
+    def test_manifest_preflight_needs_only_one_archive_rewind(self):
+        # The manifest is late in existing archives. Read it during the complete
+        # preflight scan, then rewind once for extraction, not once per lookup.
+        rewinds=[];seek=gzip.GzipFile.seek
+        def observed(stream,offset,whence=0):
+            before=seek(stream,0,1);result=seek(stream,offset,whence)
+            if result<before:rewinds.append((before,result))
+            return result
+        with patch.object(gzip.GzipFile,'seek',observed):self.run_stage()
+        self.assertEqual(len(rewinds),1,rewinds)
+        self.assertEqual((self.stage/'app/requirements.txt').read_bytes(),self.files['app/requirements.txt'])
+    def test_early_manifest_still_requires_complete_preflight(self):
+        self.archive({'../escape':b'bad'},manifest_first=True)
+        with self.assertRaisesRegex(ContinuityError,'unsafe'):self.run_stage()
+        self.assertFalse((self.stage/'package/app').exists())
+        self.assertFalse((self.root/'escape').exists())
+    def test_early_manifest_retains_exact_payload(self):
+        self.archive(manifest_first=True);self.run_stage()
+        self.assertEqual((self.stage/'app/requirements.txt').read_bytes(),self.files['app/requirements.txt'])
     def test_tree_equal_reviewed_head_is_allowed(self):
         self.manifest['source_commit']='d'*40;self.archive();self.run_stage()
         self.assertIn('git/commits/'+REV,self.calls)

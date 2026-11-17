@@ -84,8 +84,9 @@ def fill_created_payload_file(path,stream,mode):
 def extract_private_archive(archive,package):
     """Extract one exact inventoried archive into an empty protected directory."""
     with tarfile.open(archive,'r:gz') as source:
-        members=source.getmembers();total=0;names=set();folded=set()
-        for item in members:
+        members=[];manifest=None;total=0;names=set();folded=set()
+        for item in source:
+            members.append(item)
             path=Path(item.name);total+=item.size
             if (path.is_absolute() or path==Path('.') or path.as_posix()!=item.name
                     or '..' in path.parts or item.size<0
@@ -95,10 +96,15 @@ def extract_private_archive(archive,package):
                     or total>5*1024**3):
                 raise ContinuityError('Native archive contains an unsafe entry')
             names.add(item.name);folded.add(item.name.casefold())
-        index=source.getmember('manifest.json')
-        if not index.isfile() or index.size>32*1024**2:
+            # Existing archives put the manifest late in the compressed stream.
+            # Read it while scanning, without a second decompressing lookup.
+            # Every member is still validated before creating any payload.
+            if item.name=='manifest.json':
+                if not item.isfile() or item.size>32*1024**2:
+                    raise ContinuityError('Native archive manifest is invalid')
+                manifest=__import__('json').load(source.extractfile(item))
+        if not isinstance(manifest,dict):
             raise ContinuityError('Native archive manifest is invalid')
-        manifest=__import__('json').load(source.extractfile(index))
         payload={m.name for m in members if not m.isdir()}
         if payload!=set(manifest['files'])|{'manifest.json'}:
             raise ContinuityError('Native archive contains untracked payload')
