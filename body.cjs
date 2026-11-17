@@ -193,7 +193,7 @@ function snapshot(){
     nearby_blocks:blocks.map(p=>({name:bot.blockAt(p)?.name,position:p})),
     conversation:conversation.snapshot(),...(huddle?{huddle:huddle.summary()}:{}),human_activity:humanActivity.snapshot(),action_sequence:actionSequence.status(),
     public_chat:history.data.events.filter(isPublicChatEvent).slice(-20),
-    events:history.data.events.filter(e=>!e.whisper).slice(-35),task:history.task(),available_tools:Object.keys(definitions).filter(name=>cfg.agent_watches||!name.startsWith('attention_')),blocked_effects:activityPolicy.blockers(history),receipts:receipts.slice(-15),remaining_actions:actionsRemaining(),action_lease:lease.view(history.task())};
+    events:history.data.events.filter(e=>!e.whisper).slice(-35),task:history.task(),available_tools:Object.keys(definitions).filter(name=>cfg.agent_watches||!name.startsWith('attention_')),receipts:receipts.slice(-15),remaining_actions:actionsRemaining(),action_lease:lease.view(history.task())};
 }
 function watchContext(){
  return watchBridge.context(cfg,history,{ready,position:bot.entity?.position,health:bot.health,
