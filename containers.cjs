@@ -68,7 +68,7 @@ function validate(a){
   throw Error('Transfer needs an exact item name and count from 1 to 64');
 }
 function preflight(bot,p,a){validate(a);target(bot,p,a.expected);}
-async function container(bot,p,a,check,{beforeTransfer=()=>{}}={}){
+async function container(bot,p,a,check,{beforeTransfer=()=>{},settled=()=>{}}={}){
  validate(a);let binding,before,confirmed=0,clicks=0,lastConfirmed,unacknowledged=false;
  const deadline=Date.now()+25000;
  const guard=()=>{check();if(Date.now()>deadline)throw Error('Container operation reached its time bound');
@@ -157,7 +157,7 @@ async function container(bot,p,a,check,{beforeTransfer=()=>{}}={}){
    // Unknown opening/snapshot, occupied/unknown cursor and any click stay held.
    if(binding&&lastConfirmed&&bot.currentWindow===binding.window&&binding.window.selectedItem===null&&
       ['deposit','withdraw'].includes(a.operation)&&!unacknowledged){
-    require('./effect-outcome.cjs').settled(e,{kind:'settled_failed_storage',stage:'before_transfer',transfer_clicks:0,current:lastConfirmed});
+    settled(e,{kind:'settled_failed_storage',stage:'before_transfer',transfer_clicks:0,current:lastConfirmed});
    }
    throw e;
   }
