@@ -24,6 +24,14 @@ def wire(model):
     return model.model_dump(mode='json', by_alias=True, exclude_none=True, exclude_unset=True)
 
 
+def same_wire_value(left, right):
+    """Compare parsed JSON exactly, without Python's bool/number coercion."""
+    try:
+        return json.dumps(left, sort_keys=True, allow_nan=False) == json.dumps(right, sort_keys=True, allow_nan=False)
+    except (TypeError, ValueError):
+        return False
+
+
 class _Callbacks:
     def __init__(self, owner):
         self.owner = owner
@@ -236,13 +244,13 @@ class Client:
                                             if tid not in self.tool_announcements else None)
         elif prior is not None:
             for field in ('title', 'kind', 'rawInput'):
-                if field in item and item[field] != prior.get(field):
+                if field in item and not same_wire_value(item[field], prior.get(field)):
                     self.tool_announcements[tid] = None
                     return
             meta = item.get('_meta')
             if isinstance(meta, dict) and TOOL_IDENTITY in meta:
                 old = prior.get('_meta')
-                if not isinstance(old, dict) or meta[TOOL_IDENTITY] != old.get(TOOL_IDENTITY):
+                if not isinstance(old, dict) or not same_wire_value(meta[TOOL_IDENTITY], old.get(TOOL_IDENTITY)):
                     self.tool_announcements[tid] = None
 
     def _permission_tool(self, request):
@@ -260,7 +268,7 @@ class Client:
         if current.get('status') not in (None, 'pending', 'in_progress'):
             return None
         for field in ('title', 'rawInput'):
-            if field in request and request[field] != announced.get(field):
+            if field in request and not same_wire_value(request[field], announced.get(field)):
                 return None
         info = self.info if isinstance(self.info, dict) else {}
         caps = info.get('agentCapabilities')
@@ -270,7 +278,14 @@ class Client:
             return None
         if TOOL_IDENTITY in cap_meta:
             cap = cap_meta[TOOL_IDENTITY]
-            if not isinstance(cap, dict) or set(cap) != {'version'} or type(cap['version']) is not int or cap['version'] != 1:
+            if (not isinstance(cap, dict) or type(cap.get('version')) is not int
+                    or cap['version'] != 1):
+                return None
+            if set(cap) == {'version'}:
+                direct_arguments = False
+            elif set(cap) == {'version', 'rawInputShape'} and cap['rawInputShape'] == 'arguments':
+                direct_arguments = True
+            else:
                 return None
             def identity(call):
                 meta = call.get('_meta')
@@ -285,7 +300,7 @@ class Client:
             if known is None or known != identity(request):
                 return None
             # The negotiated producer includes these exact original call fields.
-            if any(field not in request or request[field] != announced.get(field)
+            if any(field not in request or not same_wire_value(request[field], announced.get(field))
                    for field in ('title', 'rawInput')):
                 return None
             # The native engine's permission requests have always said kind=other,
@@ -293,7 +308,11 @@ class Client:
             if request.get('kind') not in ('other', announced.get('kind')):
                 return None
             raw = announced.get('rawInput')
-            if (not isinstance(raw, dict) or set(raw) != {'server', 'tool', 'arguments'}
+            if not isinstance(raw, dict):
+                return None
+            # The explicitly negotiated argument shape retains Agent's public
+            # payload. Its contents never supply or override tool identity.
+            if not direct_arguments and (set(raw) != {'server', 'tool', 'arguments'}
                     or raw['server'] != known['server'] or raw['tool'] != known['name']
                     or not isinstance(raw['arguments'], dict)):
                 return None

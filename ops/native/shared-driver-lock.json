@@ -1,5 +1,5 @@
 {
   "repository": "microsoft/amplifier-constellation",
-  "commit": "8062eda22ea4fe9c333798be8397ce7fa4f6f2ee",
-  "status": "accepted PR69 Windows detached-handle isolation; exact paired package and domain qualification required before migration"
+  "commit": "836738e04b436ddd4bc3751c49671440e10ed12a",
+  "status": "accepted PR88 Windows ARM64 full-byte driver digest; retains PR69 detached-handle isolation; exact paired package and domain qualification required before migration"
 }

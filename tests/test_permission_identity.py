@@ -165,5 +165,125 @@ class PermissionIdentity(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.outcome(c,call,options=[{'kind':'allow_always','optionId':'always'}]),'cancelled')
 
 
+    def argument_client(self):
+        c = self.client()
+        c.info['agentInfo'] = {'name': 'agent-instance'}
+        c.info['agentCapabilities']['_meta'][TOOL_IDENTITY] = {
+            'version': 1, 'rawInputShape': 'arguments'}
+        return c
+
+    def argument_call(self, tool='work_report', arguments=None):
+        call = self.call(tool)
+        call.update(title='mcp_minecraft_' + tool, name='mcp_minecraft_' + tool,
+                    kind='other', rawInput={} if arguments is None else arguments)
+        return call
+
+    def test_direct_arguments_require_explicit_negotiated_shape(self):
+        for tool in GAME_TOOLS:
+            c = self.argument_client(); call = self.argument_call(tool)
+            self.announce(c, call)
+            self.assertEqual(self.outcome(c, call), 'selected', tool)
+        c = self.client(); call = self.argument_call()
+        self.announce(c, call)
+        self.assertEqual(self.outcome(c, call), 'cancelled')
+
+    def test_direct_arguments_are_data_not_identity(self):
+        for arguments in ({}, {'server':'filesystem','tool':'execute','arguments':{}},
+                          {'_meta':{TOOL_IDENTITY:{'kind':'builtin'}},'name':'bash'}):
+            c = self.argument_client(); call = self.argument_call(arguments=arguments)
+            self.announce(c, call)
+            self.assertEqual(self.outcome(c, call), 'selected')
+        for value in (None, [], 'minecraft', 1):
+            c = self.argument_client(); call = self.argument_call(); call['rawInput'] = value
+            self.announce(c, call)
+            self.assertEqual(self.outcome(c, call), 'cancelled')
+
+    def test_direct_argument_names_and_titles_are_not_authority(self):
+        c = self.argument_client(); call = self.argument_call()
+        call.update(title='producer display label', name='informational only')
+        self.announce(c, call)
+        self.assertEqual(self.outcome(c, call), 'selected')
+        for identity in ({'version':1,'kind':'builtin','name':'bash'},
+                         {'version':1,'kind':'caller','name':'work_report','server':'minecraft'},
+                         {'version':1,'kind':'mcp','name':'work_report','server':'filesystem'},
+                         {'version':1,'kind':'mcp','name':'arbitrary_host_command','server':'minecraft'}):
+            c = self.argument_client(); call = self.argument_call()
+            call['_meta'][TOOL_IDENTITY] = identity
+            self.announce(c, call)
+            self.assertEqual(self.outcome(c, call), 'cancelled')
+
+    def test_direct_argument_shape_capability_never_downgrades(self):
+        for cap in ({'version':1,'rawInputShape':'unknown'},
+                    {'version':1,'rawInputShape':None}, {'version':1,'rawInputShape':True},
+                    {'version':True,'rawInputShape':'arguments'},
+                    {'version':2,'rawInputShape':'arguments'},
+                    {'version':1,'rawInputShape':'arguments','extra':True},
+                    {'rawInputShape':'arguments'}):
+            for direct in (False, True):
+                c = self.argument_client()
+                c.info['agentCapabilities']['_meta'][TOOL_IDENTITY] = cap
+                call = self.argument_call() if direct else self.call()
+                self.announce(c, call)
+                self.assertEqual(self.outcome(c, call), 'cancelled', cap)
+        c = self.argument_client(); del c.info['agentCapabilities']['_meta'][TOOL_IDENTITY]
+        call = self.argument_call(); self.announce(c, call)
+        self.assertEqual(self.outcome(c, call), 'cancelled')
+
+    def test_direct_argument_request_must_match_complete_announcement(self):
+        for field in ('title', 'rawInput', '_meta'):
+            c = self.argument_client(); call = self.argument_call(); self.announce(c, call)
+            call.pop(field)
+            self.assertEqual(self.outcome(c, call), 'cancelled', field)
+        for field, value in (('toolCallId','different'),('title','different'),
+                             ('rawInput',{'changed':True}),
+                             ('_meta',{TOOL_IDENTITY:{'version':1,'kind':'mcp','name':'observe','server':'minecraft'}})):
+            c = self.argument_client(); call = self.argument_call(); self.announce(c, call)
+            call[field] = value
+            self.assertEqual(self.outcome(c, call), 'cancelled', field)
+
+    def test_direct_argument_guards_remain_authoritative(self):
+        for modify in (lambda c:setattr(c,'replaying',True),
+                       lambda c:setattr(c,'maintenance_active',True),
+                       lambda c:setattr(c,'permission_active',lambda:False),
+                       lambda c:setattr(c,'permission_tools',lambda:frozenset()),
+                       lambda c:setattr(c,'failed',RuntimeError('closed')),
+                       lambda c:c.tool_calls['one'].update(status='completed')):
+            c = self.argument_client(); call = self.argument_call(); self.announce(c, call); modify(c)
+            self.assertEqual(self.outcome(c, call), 'cancelled')
+        c = self.argument_client(); call = self.argument_call(); self.announce(c, call)
+        self.assertEqual(self.outcome(c,call,session='other-session'),'cancelled')
+        self.assertEqual(self.outcome(c,call,options=[{'kind':'allow_always','optionId':'always'}]),'cancelled')
+
+    def test_permission_payload_comparison_preserves_nested_json_types(self):
+        for direct in (False, True):
+            for original, changed in ((True, 1), (False, 0), (1, True), (1, 1.0)):
+                c = self.argument_client() if direct else self.client()
+                arguments = {'nested': [{'value': original}]}
+                call = self.argument_call(arguments=arguments) if direct else self.call(arguments=arguments)
+                self.announce(c, call)
+                altered = copy.deepcopy(call)
+                raw = altered['rawInput'] if direct else altered['rawInput']['arguments']
+                raw['nested'][0]['value'] = changed
+                self.assertEqual(self.outcome(c, altered), 'cancelled', (direct, original, changed))
+        c = self.argument_client(); call = self.argument_call(arguments={'a':1,'b':{'x':True,'y':2}})
+        self.announce(c,call)
+        call['rawInput'] = {'b':{'y':2,'x':True},'a':1}
+        self.assertEqual(self.outcome(c,call),'selected')
+
+    def test_type_changing_progress_update_invalidates_identity(self):
+        c = self.argument_client(); call = self.argument_call(arguments={'values':[True]})
+        self.announce(c, call)
+        c._record_tool_call({'sessionUpdate':'tool_call_update','toolCallId':'one','rawInput':{'values':[1]}})
+        self.assertEqual(self.outcome(c, call), 'cancelled')
+
+    async def test_direct_argument_official_sdk_callback_preserves_identity(self):
+        from acp.schema import ToolCallStart, ToolCallUpdate, PermissionOption
+        c = self.argument_client(); call = self.argument_call(arguments={'summary':'fixture'})
+        await _Callbacks(c).session_update(c.session, ToolCallStart.model_validate(call))
+        request = {k:v for k,v in call.items() if k not in ('sessionUpdate','status','name')}
+        result = await _Callbacks(c).request_permission(c.session,ToolCallUpdate.model_validate(request),
+            [PermissionOption(kind='allow_once',optionId='once',name='Allow')])
+        self.assertEqual(wire(result)['outcome']['outcome'],'selected')
+
 if __name__ == '__main__':
     unittest.main()
