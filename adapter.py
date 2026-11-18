@@ -219,7 +219,7 @@ async def run(home):
         def permission_tools():
             status=control(cfg,'/status')
             if status.get('conversation_only'):
-                return (GAME_TOOLS if status.get('reply_work_allowed') else REPLY_TOOLS) | ({'task_accept','task_amend','task_accept_help','work_resume'} if status.get('task_intake_enabled') and not status.get('ambient_activity') else set())
+                return (GAME_TOOLS if status.get('reply_work_allowed') else REPLY_TOOLS) | ({'task_accept','task_amend','task_accept_help','work_resume'} if status.get('task_intake_enabled') and not status.get('ambient_activity') and not status.get('follow_up') else set())
             return GAME_TOOLS
         client.permission_tools=permission_tools
         if not client.info.get('agentCapabilities',{}).get('mcpCapabilities',{}).get('http'):
@@ -330,6 +330,12 @@ async def run(home):
                 eligible=set(admission.get('eligible_ids',[]))
                 messages=[m for m in await request('/inbox/peek') if m.get('source')=='agent' and m.get('id') in eligible][:1]
                 conversation_only=bool(messages)
+            if not messages and state.get('follow_up_pending'):
+                # A self-authored reminder is a separate conversation input, not
+                # human authority or a task continuation. The body reserves it.
+                from delivery_queue import due_follow_up
+                messages=await due_follow_up(request,state)
+                conversation_only=bool(messages)
             if not work_allowed and not conversation_only:
                 await asyncio.sleep(2);continue
             if not conversation_only:
@@ -353,7 +359,10 @@ async def run(home):
             from delivery_queue import select_turn_messages, attention_reply_messages, optional_reply
             messages=select_turn_messages(messages)
             admission=await request('/conversation/admission') if any(optional_reply(m) for m in messages) else {}
-            optional=attention_reply_messages(messages,admission.get('eligible_ids',[]))
+            eligible_ids=admission.get('eligible_ids',[])
+            if any(m.get('source')=='follow_up' for m in messages) and admission.get('remaining')==0:
+                eligible_ids=[]
+            optional=attention_reply_messages(messages,eligible_ids)
             if optional is not None:
                 if optional:
                     messages=optional;conversation_only=True
@@ -487,7 +496,7 @@ async def run(home):
                     observe('final_reply_withheld',reason='public_context_not_exposed_or_incorporated')
                 else:
                     await deliver_final_reply(text,revision,request,observe,
-                        explicit_speech=bool(final_status.get('explicit_speech') or world.get('peer_proposal') or world.get('ambient_activity')
+                        explicit_speech=bool(final_status.get('explicit_speech') or world.get('peer_proposal') or world.get('ambient_activity') or world.get('follow_up')
                                              or (messages and all(m.get('source')=='continuation' for m in messages))),private_reply=private_reply)
             observe('turn_completed',stop_reason=result['stop_reason'],disposition=disposition,
                     unsettled_tool_count=len(result.get('unsettled_tools',[])))

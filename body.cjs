@@ -69,8 +69,13 @@ let agentWakeTimes=[],lastNoticeAt=0;
 const {BlockControls,revision:blockRevision,noEffect:controlNoEffect}=require('./block-controls.cjs');
 const {ConversationAdmission,REPLY_TOOLS}=require('./conversation-admission.cjs');
 const replyWork=require('./reply-work.cjs');
-const replyWorkAllowed=()=>activityPolicy.allowed(history,cfg)||replyWork.available(history.data.turn,history.task(),workAllowed()&&!taskIntake.requiresReview(history.task()));
+const replyWorkAllowed=()=>!history.data.turn?.follow_up&&(activityPolicy.allowed(history,cfg)||replyWork.available(history.data.turn,history.task(),workAllowed()&&!taskIntake.requiresReview(history.task())));
 const replyAdmission=new ConversationAdmission(history,cfg);
+const followUp=new (require('./conversation-follow-up.cjs').ConversationFollowUp)(history,{
+ now:()=>Date.now(),conversationAllowed:()=>replyAdmission.limit()!==0,
+ blocked:()=>taskIntake.requiresReview(history.data.task)?'unresolved_interruption':activityPolicy.effectReason(history)
+});
+replyAdmission.followUpEligible=m=>followUp.eligible(m);
 const events=[], inbox=history.data.inbox||(history.data.inbox=[]), receipts=[];
 const routeHuman=conversationRouter(cfg.username,{aliases:cfg.aliases||{}});
 const participation=new Participation(history,cfg);
@@ -185,7 +190,7 @@ function snapshot(){
   const p=bot.entity.position;
   const capabilities=taskIntake.capabilities();
   const blocks=bot.findBlocks({matching:b=>b.name!=='air'&&b.name!=='water'&&b.name!=='grass_block'&&b.name!=='dirt'&&b.name!=='stone',maxDistance:16,count:50});
-  return {username:bot.username,ready,busy,generation,turn_active:Date.now()<turnUntil,pending_messages:inbox.length,incoming_chat_only:capabilities.configured_chat_only,conversation_only:capabilities.conversation_only,reply_work_allowed:replyWorkAllowed(),explicit_speech:history.data.turn?.explicit_speech===true,reply_route:history.data.turn?.reply_route||null,ordinary_activity:history.data.turn?.activity===true,ambient_activity:history.data.turn?.ambient_activity===true,peer_proposal:history.data.turn?.peer_proposal===true,task_capabilities:capabilities,position:p,feet_block:p.floored(),health:bot.health,food:bot.food,time:bot.time.timeOfDay,
+  return {username:bot.username,ready,busy,generation,turn_active:Date.now()<turnUntil,pending_messages:inbox.length,incoming_chat_only:capabilities.configured_chat_only,conversation_only:capabilities.conversation_only,reply_work_allowed:replyWorkAllowed(),explicit_speech:history.data.turn?.explicit_speech===true,reply_route:history.data.turn?.reply_route||null,ordinary_activity:history.data.turn?.activity===true,ambient_activity:history.data.turn?.ambient_activity===true,peer_proposal:history.data.turn?.peer_proposal===true,follow_up:history.data.turn?.follow_up===true,follow_up_pending:['scheduled','queued'].includes(history.data.conversation_follow_up?.status),task_capabilities:capabilities,position:p,feet_block:p.floored(),health:bot.health,food:bot.food,time:bot.time.timeOfDay,
     inventory:bot.inventory.items().map(i=>({name:i.name,count:i.count})),
     movement_capabilities:spatial.movementCapabilities(bot),
     terrain:spatial.localMap(bot,3),
@@ -308,6 +313,8 @@ function gatherTargets(a){
 
 async function operate(name,a={},sequenceId=null){
   if(!ready)throw Error('Player is not connected');
+  if(name==='follow_up'){requireAdmission();return followUp.set(a);}
+  if(history.data.turn?.follow_up&&(INTAKE_TOOLS.has(name)||!REPLY_TOOLS.has(name)&&name!=='stop'))throw Error('Follow-up is conversation-only and grants no task or world authority');
   if(name==='huddle'){
     if(!huddle)throw Error('No enrolled coordination room');
     if(cfg.huddles){
@@ -590,6 +597,7 @@ const watch_alternative=z.union([z.string().min(1).max(600),z.object({
 const revision=z.string().min(1).max(128).optional();
 const replySources=z.array(z.object({id:z.string().uuid(),revision:z.string().regex(/^[0-9a-f]{64}$/),occurredAt:z.number().int().positive()})).min(1).max(8).optional();
 const definitions={
+  follow_up:['Schedule one durable follow-up for THIS public game conversation, without a human message or task authority. after_seconds 1..3600 replaces the pending follow-up; 0 cancels it. goal is private planning context, not automatic public speech. The due turn is conversation-only and still subject to Stop, unresolved effects, installation pacing and provider limits. It never replays a consumed turn. May be called by the connected engine outside a turn.',{after_seconds:z.number().int().min(0).max(3600),goal:z.string().max(2000).optional()}],
   attack:['Strike one exact visible living non-player mob within three blocks using the held item. Never chases or repeats. Preserve breeding stock and player animals; named/owned and baby animals are refused. Inspect entities and choose an authorized target. Returns server damage/death observations, not proof of collected food or exclusive kill credit. An unconfirmed result must not be replayed.',{id:z.number().int(),uuid:z.string().uuid()}],
   equip:['Equip an inventory item in the main hand and verify it. Uses registered item names, not a weapon whitelist; choose tools or equipment appropriate to your plan.',{item:z.string().min(1).max(80)}],
   consume:['Eat one registered food item from inventory and verify its count change. Does not gather, cook or retry; inspect the result and current food/health.',{item:z.string().min(1).max(80)}],
@@ -718,13 +726,17 @@ const server=http.createServer(async(req,res)=>{
       else result={action:'hold'};
     }
     else if(req.method==='GET'&&(req.url==='/input-outcomes'||req.url.startsWith('/input-outcomes?')))result=inputOutcomes.query(history.data,inputOutcomes.requestIds(req.url));
-    else if(req.method==='GET'&&req.url==='/status')result={input_outcomes:inputOutcomes.CAPABILITY,installation_inputs:installationInputs.capability,ready,busy,turn_active:Date.now()<turnUntil,incoming_chat_only:cfg.incoming_chat_only===true,conversation_only:history.data.turn?.conversation_only===true,reply_work_allowed:replyWorkAllowed(),explicit_speech:history.data.turn?.explicit_speech===true,reply_route:history.data.turn?.reply_route||null,ordinary_activity:history.data.turn?.activity===true,ambient_activity:history.data.turn?.ambient_activity===true,peer_proposal:history.data.turn?.peer_proposal===true,task_intake_enabled:taskIntake.capabilities().task_intake_enabled,task_capabilities:taskIntake.capabilities(),task:history.task(),action_lease:lease.view(history.task()),action_sequence:actionSequence.status()};
+    else if(req.method==='GET'&&req.url==='/status')result={input_outcomes:inputOutcomes.CAPABILITY,installation_inputs:installationInputs.capability,ready,busy,turn_active:Date.now()<turnUntil,incoming_chat_only:cfg.incoming_chat_only===true,conversation_only:history.data.turn?.conversation_only===true,reply_work_allowed:replyWorkAllowed(),explicit_speech:history.data.turn?.explicit_speech===true,reply_route:history.data.turn?.reply_route||null,ordinary_activity:history.data.turn?.activity===true,ambient_activity:history.data.turn?.ambient_activity===true,peer_proposal:history.data.turn?.peer_proposal===true,follow_up:history.data.turn?.follow_up===true,follow_up_pending:['scheduled','queued'].includes(history.data.conversation_follow_up?.status),task_intake_enabled:taskIntake.capabilities().task_intake_enabled,task_capabilities:taskIntake.capabilities(),task:history.task(),action_lease:lease.view(history.task()),action_sequence:actionSequence.status()};
     else if(req.method==='GET'&&req.url==='/inbox/peek')result=(cfg.human_engagement?.enabled===true&&inbox.some(m=>m.source==='human'&&!m.attention_offer)?inbox.filter(m=>m.source==='human'&&!m.attention_offer):inbox).slice(0,8).map(m=>installationInputs.projectInput(history.data,m));
     else if(req.method==='POST'&&req.url==='/inbox/retire-expired'){
       if(busy||Date.now()<turnUntil||history.data.turn)result={retired:0,reason:'turn_active'};
       else result=require('./delivery-queue.cjs').retireExpired(history,inbox);
     }
     else if(req.method==='GET'&&req.url==='/conversation/admission')result=replyAdmission.status(inbox);
+    else if(req.method==='POST'&&req.url==='/conversation/follow-up/poll'){
+      requireAdmission();
+      result=ready&&!busy&&Date.now()>=turnUntil&&!history.data.turn&&inbox.length<8?followUp.poll():followUp.view();
+    }
     else if(req.method==='GET'&&['/participation','/participation?human_only=1'].includes(req.url))result=participation.enabled?participationProposal(req.url.endsWith('human_only=1')):null;
     else if(req.method==='POST'&&req.url==='/participation'){
       if(!participation.enabled)throw new ParticipationRejection('disabled');
@@ -751,7 +763,7 @@ const server=http.createServer(async(req,res)=>{
       if(!workAllowed()&&a.conversation_only!==true)throw Error('Current mode/task requires a bounded human reply; no autonomous authority');
       const ids=a.message_ids||[];
       if(!Array.isArray(ids)||ids.length>8||new Set(ids).size!==ids.length||ids.some(id=>!inbox.some(m=>m.id===id)))throw Error('Queued request changed before turn start');
-      if(a.conversation_only!==true&&ids.some(id=>{const m=inbox.find(m=>m.id===id);return m?.attention_offer||['agent','activity','huddle'].includes(m?.source);}))throw Error('Optional deliveries require a separate conversation turn');
+      if(a.conversation_only!==true&&ids.some(id=>{const m=inbox.find(m=>m.id===id);return m?.attention_offer||['agent','activity','huddle','follow_up'].includes(m?.source);}))throw Error('Optional deliveries require a separate conversation turn');
       if(a.conversation_only===true){
        replyAdmission.start(ids,inbox);replyWork.bind(history,cfg,workAllowed()&&!taskIntake.requiresReview(history.task()));inputOutcomes.blocked(history.data,replyWorkAllowed()?null:taskIntake.capabilities().work_blocked_reason);history.save();stop();turnUntil=Date.now()+240000;
        leaseTimer=setTimeout(()=>{stop();record('conversation_window_expired');},240000);leaseTimer.unref?.();

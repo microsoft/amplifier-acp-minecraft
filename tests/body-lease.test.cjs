@@ -2,6 +2,54 @@ const test=require('node:test'),assert=require('node:assert/strict');
 const fs=require('node:fs'),os=require('node:os'),path=require('node:path'),vm=require('node:vm');
 const {EventEmitter}=require('node:events'),{createRequire}=require('node:module'),{Readable}=require('node:stream');
 const root=path.resolve(__dirname,'..'),realRequire=createRequire(path.join(root,'body.cjs'));
+test('follow-up returns once to conversation without taking task authority or replaying after restart',async()=>{
+ const f=fixture({incoming_chat_only:true,human_engagement:{enabled:true,task_optional:true}});try{
+  const before=JSON.stringify(f.history.data.task);
+  const saved=await f.operate('follow_up',{after_seconds:5,goal:'Consider whether there is a useful update to share.'});
+  assert.equal(saved.status,'scheduled');f.advance(5001);
+  assert.equal((await f.request('/conversation/follow-up/poll',{})).status,'queued');
+  const [m]=await f.request('/inbox/peek');assert.equal(m.source,'follow_up');
+  await f.request('/turn',{conversation_only:true,message_ids:[m.id]});
+  const status=await f.request('/status');assert.equal(status.follow_up,true);assert.equal(status.reply_work_allowed,false);
+  assert.equal(status.task_capabilities.conversation_only,true);assert.equal(status.task_capabilities.autonomous_work_allowed,false);
+  for(const name of ['move','work_resume','task_accept','attention_watch'])await assert.rejects(()=>f.operate(name,{}),/follow-up/i);
+  assert.equal(JSON.stringify(f.history.data.task),before);
+  const loaded=new (require('../workshop-state.cjs').WorkshopState)(path.join(f.home,'workshop.json'));
+  assert.equal(loaded.data.last_conversation_turn.follow_up,true);assert.equal(loaded.data.conversation_follow_up.status,'admitted');
+  assert.equal(loaded.data.inbox.length,0);assert.equal(JSON.stringify(loaded.data.task),before);
+ }finally{f.close();}
+});
+test('follow-up poll respects updater admission and Stop cancels the saved wake',async()=>{
+ const f=fixture();try{
+  await f.operate('follow_up',{after_seconds:1,goal:'Reconsider conversation'});f.advance(1001);
+  fs.mkdirSync(path.join(f.home,'installation-updates'));
+  const gate=path.join(f.home,'installation-updates','gate.json');
+  fs.writeFileSync(gate,JSON.stringify({version:1,transaction_id:'foreign',closed:true}));
+  await f.request('/conversation/follow-up/poll',{},400);
+  assert.equal(f.history.data.conversation_follow_up.status,'scheduled');
+  fs.unlinkSync(gate);await f.request('/stop',{});
+  assert.equal(f.history.data.conversation_follow_up.status,'cancelled');
+  assert.equal((await f.request('/conversation/follow-up/poll',{})).status,'cancelled');
+  assert.equal(f.history.data.inbox.length,0);
+ }finally{f.close();}
+});
+test('follow-up admission rechecks real effect holds and never enters ordinary work',async()=>{
+ for(const kind of ['activity','task','conversation']){
+  const f=fixture();try{
+   const saved=await f.operate('follow_up',{after_seconds:1,goal:'later'});f.advance(1001);
+   await f.request('/conversation/follow-up/poll',{});
+   await f.request('/turn',{message_ids:[saved.id]},400);
+   const held={started_at:new Date().toISOString(),interrupted:true,actions:[{id:'uncertain',status:'uncertain'}]};
+   if(kind==='activity')f.history.data.last_turn={...held,activity:true};
+   if(kind==='task')f.history.data.last_turn={...held,task_id:f.task.id};
+   if(kind==='conversation')f.history.data.last_conversation_turn=held;
+   const original=JSON.stringify(f.history.data);
+   assert.deepEqual((await f.request('/conversation/admission')).eligible_ids,[]);
+   await f.request('/turn',{conversation_only:true,message_ids:[saved.id]},400);
+   assert.equal(JSON.stringify(f.history.data),original);
+  }finally{f.close();}
+ }
+});
 test('an exact exposed correction answered in the active turn needs no second conversation prompt',async()=>{
  const f=fixture();try{
   await f.request('/turn',{renewable_lease:true,continuation:true});

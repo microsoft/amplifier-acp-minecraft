@@ -1,6 +1,6 @@
 // Transport/resource admission only. Instance still owns engage/hold decisions.
 const delegation=require('./delegation.cjs');
-const REPLY_TOOLS=new Set(['huddle','observe','conversation','entities','inventory','inspect','read_sign','survey','map','plan_route','find','chat','tell','task_capabilities','sequence_status','resume_activity']);
+const REPLY_TOOLS=new Set(['follow_up','huddle','observe','conversation','entities','inventory','inspect','read_sign','survey','map','plan_route','find','chat','tell','task_capabilities','sequence_status','resume_activity']);
 class ConversationAdmission {
  constructor(history,cfg,{now=Date.now}={}){this.history=history;this.cfg=cfg;this.now=now;}
  limit(){if(this.cfg.human_engagement?.enabled===true)return null;const n=this.cfg.human_reply_turns_per_hour??12;return Number.isInteger(n)&&n>=0&&n<=60?n:0;}
@@ -9,6 +9,7 @@ class ConversationAdmission {
  eligible(message){
   const data=this.history.data,e=data.events.find(e=>e.id===message.id),at=Date.parse(e?.time);
   if(message.source==='huddle')return this.huddleEligible?.(message)===true;
+  if(message.source==='follow_up')return this.followUpEligible?.(message)===true&&!(data.conversation_admissions||[]).some(r=>r.ids.includes(message.id));
   if(message.source==='agent')return (!!delegation.conversation(this.history,this.cfg,message,this.now())||(this.peerRemaining()>0&&!!delegation.peer(this.history,this.cfg,message,this.now())))&&!(data.conversation_admissions||[]).some(r=>r.ids.includes(message.id));
   if(message.source==='activity')return this.cfg.human_engagement?.activity_scope==='conversation_only'&&this.cfg.human_engagement?.enabled===true&&data.task?.status!=='stopped'&&message.attention_offer?.ticket&&message.effect_scope==='conversation_only'&&(data.activity_deliveries||[]).some(r=>r.id===message.id&&r.revision===message.activity?.revision&&this.now()-r.at<120000)&&!(data.conversation_admissions||[]).some(r=>r.ids.includes(message.id));
   return message.source==='human'&&e?.source==='human'&&e.kind==='chat'&&e.accepted===true&&
@@ -34,7 +35,8 @@ class ConversationAdmission {
   // A lost response or restart must not submit these inputs again automatically.
   this.history.data.conversation_admissions=[...this.recent(),{at:this.now(),ids:[...ids],...(selected[0].source==='agent'?{kind:'peer_proposal'}:{})}];
   this.history.data.turn={started_at:new Date(this.now()).toISOString(),conversation_only:true,task_id:null,
-   ambient_activity:selected.every(m=>m.source==='activity'),peer_proposal:selected.every(m=>m.source==='agent'),request_ids:[...ids],messages:selected,...(replyRoute?{reply_route:replyRoute}:{}),reply_recipient:selected[0].whisper?selected[0].username:null,actions:[],may_mutate:false};
+   ambient_activity:selected.every(m=>m.source==='activity'),peer_proposal:selected.every(m=>m.source==='agent'),follow_up:selected.every(m=>m.source==='follow_up'),request_ids:[...ids],messages:selected,...(replyRoute?{reply_route:replyRoute}:{}),reply_recipient:selected[0].whisper?selected[0].username:null,actions:[],may_mutate:false};
+  if(this.history.data.turn.follow_up)this.history.data.conversation_follow_up={...this.history.data.conversation_follow_up,status:'admitted',admitted_at:this.now()};
   for(let i=inbox.length-1;i>=0;i--)if(ids.includes(inbox[i].id))inbox.splice(i,1);
   if(selected[0].source==='huddle'){this.history.data.turn.huddle_room_id=selected[0].room_id;this.history.data.turn.explicit_speech=true;}
   require('./input-outcomes.cjs').admit(this.history.data);

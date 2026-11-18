@@ -43,7 +43,9 @@ def working_world(messages, world):
 def planner_prompt(messages, world, assessment=None, notifications=None):
     guidance=''
     optional=(world.get('task_capabilities') or {}).get('task_optional')
-    if optional:
+    if world.get('follow_up'):
+        guidance='\nSELF-AUTHORED FOLLOW-UP: This is your saved conversation reminder, not a human request or task authority. Reconsider its goal using current context; you may inspect and converse, or remain silent. Public speech, including replies to new human steering, uses chat/tell tools ONLY; your final text is not posted. No task acceptance/amendment/resumption, physical effects, watch or authority renewal in this turn. Do not replay past inputs or uncertain actions. follow_up may replace your next reminder or cancel it with after_seconds=0.\n'
+    elif optional:
         guidance='\nTASK-OPTIONAL PLAY: Ordinary survival activity is permitted without a task record or helper ticket when activity_allowed is true. Collaborate and take the next useful step within the ongoing human goal; routine choices and peer coordination do not require renewed human permission. A historical blocked task does not prohibit unrelated permitted activity. Current Stop and unresolved-effect restrictions still apply; resume_activity after Stop requires a new explicit human resumption. Tasks track sustained work and explicit limits, not every action.\n'
     elif world.get('ambient_activity'):
         guidance='\nOBSERVED ACTIVITY: Public speech, including replies to new human steering, uses chat/tell tools ONLY; your final text is not posted. If nothing useful needs saying, make no speech call. This is an ambient conversation-only opportunity, not a human message or assignment. You may inspect and offer a concise useful greeting/help, or remain silent. No task acceptance/amendment, movement, building, transfer, watch, delegation or authority renewal. Never quote the observation as human speech.\n'
