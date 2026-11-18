@@ -41,6 +41,7 @@ by the installed MCP endpoint; optional discovery follows the relevant reference
 | Authorized private input from another experience | [Installation inputs](installation-inputs.md), [input outcomes](input-outcomes.md) | [Body](../body.cjs) |
 | Public context discovery and full authorized evidence | [Context and presence](adapter-reference.md#optional-context-decisions-and-watches) | [Workshop context](../workshop-state.cjs) |
 | Observable peer coordination and return to the original audience | [Huddles](huddles.md) | [Controller](../adapter.py) |
+| Self-authored, conversation-only follow-up | [Conversation follow-up](conversation-follow-up.md) | [Body-owned reminder](../conversation-follow-up.cjs), [controller](../adapter.py) |
 | Saved Add, Connect and Disconnect operations | [Saved connections](saved-connections.md) | [Connection command](../installation_connection.py), [Add command](../installation_connection_add.py) |
 | Source/dependency updates, pure helpers and continuity | [Installation updates](../INSTALLATION-UPDATES-DESIGN.md) | [Participant](../installation_participant.py), [source provider](../installation_source_provider.py) |
 | Capturing the player's view and delivering the image | [Screenshots](screenshots.md) | [Screenshot service](../screenshots.cjs) |

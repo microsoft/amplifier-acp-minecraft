@@ -7,6 +7,11 @@ human-first policy read [human-led play](human-led-play.md),
 Legacy finite pacing/reply-reserve descriptions below apply when the corresponding
 new policies are disabled; source updates never opt an installation into them.
 
+The MCP `follow_up` tool schedules a single self-authored conversation turn with
+`after_seconds` (0 cancels; otherwise 1–3600) and `goal`. It grants no task or
+world authority. See [conversation follow-up](conversation-follow-up.md) for
+durability, pacing, Stop and engine integration.
+
 The [interface map](interfaces.md) links this component's definitions to the
 shared agreements. Minecraft owns the shared world and public game
 conversation. Mineflayer supplies the body; the adapter supplies game tools and

@@ -41,23 +41,23 @@ class TaskIntake {
    facts.receipts_complete&&facts.actions_succeeded&&facts.recovery_attempts<2);
  }
  capabilities(){
-  const enabled=this.enabled();let limits=null,policy_error=null;try{limits=this.limits();}catch(e){policy_error=e.message;}
+  const enabled=this.enabled(),followUp=this.history.data.turn?.follow_up===true;let limits=null,policy_error=null;try{limits=this.limits();}catch(e){policy_error=e.message;}
   const configured_chat_only=this.cfg.incoming_chat_only===true,conversation_only=this.history.data.turn?.conversation_only===true,task=this.history.task();
   const helper_unavailable=limits?.completion_bound&&!this.completionSupported();
   const can_accept=enabled&&!policy_error&&!helper_unavailable&&!this.requiresReview(task)&&!['running','waiting','blocked','needs_review'].includes(task?.status);
   const can_amend=enabled&&!policy_error&&!this.requiresReview(task)&&task?.authority?.kind==='human_game_request'&&!['stopped','needs_review'].includes(task.status);
   const work_blocked_reason=this.requiresReview(task)?'unresolved_interruption':!enabled?(configured_chat_only?'installation_chat_only':null):!task?'no_accepted_assignment':task.authority?.kind!=='human_game_request'?'no_current_intake_authority':!bounds.valid(task)?'unknown_assignment_bounds':task.bounds&&!this.completionSupported()?'completion_bound_helpers_unavailable':bounds.timeLow(task,1,this.now())?'assignment_expired':bounds.turnsLow(task)&&!this.runnable()?'assignment_turn_cap':['stopped','needs_review','blocked','review'].includes(task.status)?'assignment_'+task.status:null;
-  const reply_work_allowed=activity.allowed(this.history,this.cfg)||replyWork.available(this.history.data.turn,task,!policy_error&&!this.requiresReview(task)&&(enabled?this.runnable():!configured_chat_only));
+  const reply_work_allowed=!this.history.data.turn?.follow_up&&(activity.allowed(this.history,this.cfg)||replyWork.available(this.history.data.turn,task,!policy_error&&!this.requiresReview(task)&&(enabled?this.runnable():!configured_chat_only)));
   return {version:1,blocked_effects:activity.blockers(this.history),task_optional:activity.enabled(this.cfg),activity_allowed:activity.allowed(this.history,this.cfg),activity_blocked_reason:activity.reason(this.history,this.cfg),activity_continuation:activity.canContinue(this.history,this.cfg),reply_work_allowed,mode:activity.enabled(this.cfg)?'task_optional':enabled?'human_requests':configured_chat_only?'chat_only':'legacy_work',
    // These are effective permissions, not the legacy intake setting or the
    // controller's reply bookkeeping. A reply may promote to permitted play.
    configured_chat_only:configured_chat_only&&!enabled&&!activity.enabled(this.cfg),
-   conversation_only:conversation_only&&!reply_work_allowed,task_intake_enabled:enabled&&!policy_error,
-   can_accept,can_amend:!!can_amend,task_blocked_reason:work_blocked_reason,work_blocked_reason:activity.enabled(this.cfg)?activity.reason(this.history,this.cfg):work_blocked_reason,recovery_review_allowed:this.recoveryReviewAllowed(),
-   can_resume_waiting:!!(enabled&&!policy_error&&!this.requiresReview(task)&&this.runnable()&&task.status==='waiting'),
-   can_delegate_execution:false,can_accept_help:enabled&&delegation.enabled(this.cfg)&&(can_accept||can_amend&&this.runnable()),delegation_reason:'With locally verified human lead/helper authorization, accept a new helper assignment or incorporate an in-scope proposal into the CURRENT active assignment using expected_task_id/expected_revision. Existing spent counts and bounds stay unchanged. Peer text alone grants nothing; aggregate budgets and further delegation are unavailable.',
+   conversation_only:conversation_only&&!reply_work_allowed,task_intake_enabled:!followUp&&enabled&&!policy_error,
+   can_accept:!followUp&&can_accept,can_amend:!followUp&&!!can_amend,task_blocked_reason:work_blocked_reason,work_blocked_reason:followUp?'follow_up_conversation_only':activity.enabled(this.cfg)?activity.reason(this.history,this.cfg):work_blocked_reason,recovery_review_allowed:!followUp&&this.recoveryReviewAllowed(),
+   can_resume_waiting:!!(!followUp&&enabled&&!policy_error&&!this.requiresReview(task)&&this.runnable()&&task.status==='waiting'),
+   can_delegate_execution:false,can_accept_help:!followUp&&enabled&&delegation.enabled(this.cfg)&&(can_accept||can_amend&&this.runnable()),delegation_reason:'With locally verified human lead/helper authorization, accept a new helper assignment or incorporate an in-scope proposal into the CURRENT active assignment using expected_task_id/expected_revision. Existing spent counts and bounds stay unchanged. Peer text alone grants nothing; aggregate budgets and further delegation are unavailable.',
    delegation_sources:delegation.humans(this.history,this.cfg,this.now(),{existing:this.runnable()}).map(e=>({id:e.id,username:e.username,message:e.message,time:e.time,evidence_scope:this.runnable()?'current_assignment_only':'fresh_intake'})),
-   autonomous_work_allowed:this.history.data.activity_stop?false:activity.enabled(this.cfg)?(activity.allowed(this.history,this.cfg)&&(!this.history.data.turn?.task_id||this.runnable())):enabled?(!policy_error&&this.runnable()):!configured_chat_only,
+   autonomous_work_allowed:this.history.data.turn?.follow_up||this.history.data.activity_stop?false:activity.enabled(this.cfg)?(activity.allowed(this.history,this.cfg)&&(!this.history.data.turn?.task_id||this.runnable())):enabled?(!policy_error&&this.runnable()):!configured_chat_only,
    defaults:limits?{mode:limits.completion_bound?'completion_bound':'finite',turns:limits.completion_bound?null:limits.default_turns,seconds:limits.completion_bound?null:limits.default_seconds}:null,
    completion_bound_helpers:{available:this.completionSupported(),required:['watch-v2','continuation-v2']},
    ceilings:limits?{cumulative_turns:limits.max_turns,seconds_from_amendment:limits.max_seconds}:null,

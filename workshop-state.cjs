@@ -199,7 +199,7 @@ class WorkshopState {
 
   task.status='running';task.wait_for=null;task.wait_started_at=null;try{this.save();}catch(error){this.data=original;throw error;}return task;
  }
- stop({activity=false}={}){inputOutcomes.settle(this.data,{interrupted:true,reason:'explicit_stop'});if(activity)this.data.activity_stop={at:Date.now()};if(this.data.turn)this.data[this.data.turn.conversation_only?'last_conversation_turn':'last_turn']={...this.data.turn,interrupted:!!this.data.turn.actions?.some(a=>a.status==='pending'||a.status==='uncertain')};if(['running','waiting','blocked','needs_review','review'].includes(this.data.task?.status))this.data.task.status='stopped';this.data.turn=null;this.save();}
+ stop({activity=false}={}){require('./conversation-follow-up.cjs').cancel(this.data);inputOutcomes.settle(this.data,{interrupted:true,reason:'explicit_stop'});if(activity)this.data.activity_stop={at:Date.now()};if(this.data.turn)this.data[this.data.turn.conversation_only?'last_conversation_turn':'last_turn']={...this.data.turn,interrupted:!!this.data.turn.actions?.some(a=>a.status==='pending'||a.status==='uncertain')};if(['running','waiting','blocked','needs_review','review'].includes(this.data.task?.status))this.data.task.status='stopped';this.data.turn=null;this.save();}
  query(q,cfg,live){
   const owner=q.access?.mode==='owner';
   if(!owner&&(q.access?.mode!=='grant'||!cfg.context_grant||q.access.grant!==cfg.context_grant))throw Error('Invalid conversation grant');

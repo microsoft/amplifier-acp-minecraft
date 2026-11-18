@@ -1,5 +1,26 @@
 import unittest
-from delivery_queue import select_turn_messages, attention_reply_messages
+from delivery_queue import select_turn_messages, attention_reply_messages, due_follow_up
+
+
+class FollowUpDelivery(unittest.IsolatedAsyncioTestCase):
+    async def test_due_reminder_uses_existing_admission_and_never_mixes_human_authority(self):
+        follow = {'id':'self','source':'follow_up','reply_scope':'follow_up:self'}
+        human = {'id':'human','source':'human'}
+        self.assertEqual(select_turn_messages([follow,human]),[follow])
+        self.assertEqual(attention_reply_messages([follow],[]),[])
+        self.assertEqual(attention_reply_messages([follow],['self']),[follow])
+        for case in ('due','human','quota','blocked','busy'):
+            queued=[human] if case=='human' else []
+            paths=[]
+            async def request(path,payload=None):
+                paths.append(path)
+                if path=='/inbox/peek':return queued
+                if path=='/conversation/admission':return {'remaining':0 if case=='quota' else 1,'eligible_ids':['self'] if case!='blocked' else []}
+                if path=='/conversation/follow-up/poll':queued.append(follow);return {}
+                self.fail(path)
+            result=await due_follow_up(request,{'follow_up_pending':True,'busy':case=='busy'})
+            self.assertEqual(result,[follow] if case=='due' else [],case)
+            self.assertEqual(paths.count('/conversation/follow-up/poll'),int(case in ('due','blocked')),case)
 
 
 class DeliveryQueueTests(unittest.TestCase):

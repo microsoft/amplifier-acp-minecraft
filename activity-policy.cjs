@@ -3,6 +3,9 @@
 function enabled(cfg){return cfg.human_engagement?.enabled===true&&cfg.human_engagement?.task_optional===true;}
 function reason(history,cfg){
  if(!enabled(cfg))return 'task_optional_disabled';
+ return effectReason(history);
+}
+function effectReason(history){
  if(history.data.activity_stop)return 'explicit_stop';
  const turn=history.data.last_turn;
  if(turn?.activity&&((turn.interrupted&&!require('./activity-settlement.cjs').reviewed(turn))||turn.actions?.some(a=>a.status==='pending'||a.status==='uncertain'&&a.review?.outcome!=='no_effect'&&!(turn.effect_review?.future_work_only&&['settled_failed_movement','settled_failed_storage','settled_partial_gather','settled_partial_build','settled_failed_placement','settled_failed_crafting_preparation','settled_failed_furnace_collection','settled_partial_speech'].includes(a.review?.outcome)))))return 'unresolved_activity_effects';
@@ -22,7 +25,7 @@ function canContinue(history,cfg){
    ((!turn.activity_report||['waiting','blocked'].includes(turn.activity_report.status))&&Number.isFinite(Date.parse(turn.activity_report?.reported_at??turn.started_at))&&Date.now()-Date.parse(turn.activity_report?.reported_at??turn.started_at)>=300000));
 }
 function promote(history,cfg){
- if(!allowed(history,cfg)||!history.data.turn?.conversation_only)throw Error('Ordinary activity is stopped or has unresolved effects');
+ if(!allowed(history,cfg)||!history.data.turn?.conversation_only||history.data.turn.follow_up)throw Error('Ordinary activity is stopped or has unresolved effects; follow-up turns remain conversation-only');
  history.data.turn={...history.data.turn,conversation_only:false,activity:true,task_id:null,may_mutate:true};history.save();
 }
 function resume(history,cfg,{request_id,reason:explanation}){
@@ -56,4 +59,4 @@ function blockers(history){
    meaning:'Inspect these exact retained receipts. Missing evidence is unknown; this observation never permits replay or clears the hold.'};
  });
 }
-module.exports={blockers,enabled,reason,allowed,canContinue,promote,resume,reviewNoEffect};
+module.exports={blockers,enabled,reason,effectReason,allowed,canContinue,promote,resume,reviewNoEffect};

@@ -4,6 +4,12 @@ import unittest
 from planner_prompt import planner_prompt, working_world, INSTRUCTIONS
 
 class PlannerPrompt(unittest.TestCase):
+    def test_self_follow_up_never_inherits_task_optional_play_or_human_attribution(self):
+        text=planner_prompt([{'id':'self','source':'follow_up','message':'consider next steps'}],{'follow_up':True,'conversation_only':True,'task_capabilities':{'task_optional':True,'task_intake_enabled':True}})
+        self.assertIn('SELF-AUTHORED FOLLOW-UP',text)
+        self.assertIn('not a human request or task authority',text)
+        self.assertIn('your final text is not posted',text)
+        self.assertNotIn('TASK-OPTIONAL PLAY:',text)
     def test_fresh_authority_and_uncertain_evidence_are_not_rewritten_or_dropped(self):
         world={'task':{'id':'same','deadline':123,'max_turns':135,'turns':120},
                'receipts':[{'id':'unknown','confirmed':False}], 'conversation':{'revision':'fresh'}}

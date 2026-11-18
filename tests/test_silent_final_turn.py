@@ -13,7 +13,7 @@ import adapter
 
 
 class SilentFinalTurn(unittest.IsolatedAsyncioTestCase):
-    async def exercise(self, *, human=False, changed=None, useful=False, continuation=False):
+    async def exercise(self, *, human=False, changed=None, useful=False, continuation=False, follow_up=False):
         paths=[]
         active=False
         message={'id':'source', 'source':'human' if human else 'agent', 'message':'A fresh observation.'}
@@ -21,22 +21,28 @@ class SilentFinalTurn(unittest.IsolatedAsyncioTestCase):
         conversation={'revision':'original', 'messages':[]}
         world={'ready':True, 'busy':False, 'generation':1, 'task':None,
                'conversation_only':True, 'peer_proposal':not human, 'conversation':conversation}
+        queued=False
+        if follow_up:
+            message.update(source='follow_up',reply_scope='follow_up:source')
+            world.update(follow_up=True,follow_up_pending=True,peer_proposal=False,
+                         task_capabilities={'autonomous_work_allowed':False,'task_optional':True})
         if continuation:
             world.update(conversation_only=False,peer_proposal=False,ordinary_activity=True,
                          task_capabilities={'activity_continuation':True,'autonomous_work_allowed':True})
 
         def control(cfg,path,payload=None):
-            nonlocal active
+            nonlocal active, queued
             paths.append((path,payload))
             if path in ('/state','/observation'):
                 return {**world,'turn_active':active,'pending_messages':1}
             if path=='/conversation/admission':
                 return {'version':1,'unmetered':True,'eligible_ids':['source']}
-            if path=='/inbox/peek':return [] if continuation else [message]
+            if path=='/inbox/peek':return [] if continuation or follow_up and not queued else [message]
+            if path=='/conversation/follow-up/poll':queued=True;return {'status':'queued'}
             if path=='/continuation':return {'action':'continue'}
             if path=='/turn':
                 self.assertEqual(payload['conversation_only'],not continuation)
-                self.assertEqual(payload['peer_only'],not human and not continuation)
+                self.assertEqual(payload['peer_only'],not human and not continuation and not follow_up)
                 self.assertEqual(payload['continuation'],continuation)
                 active=True
                 return {'active':True}
@@ -56,6 +62,10 @@ class SilentFinalTurn(unittest.IsolatedAsyncioTestCase):
             def transport_closed(self):return False
             async def close(self):pass
             async def prompt(self,*args,**kwargs):
+                if follow_up:
+                    outer.assertIn('SELF-AUTHORED FOLLOW-UP',args[0])
+                    outer.assertNotIn('move',self.permission_tools())
+                    outer.assertNotIn('task_accept',self.permission_tools())
                 if not human and not continuation:
                     outer.assertIn('including replies to new human steering',args[0])
                 if not human and (useful or changed):control({},'/action',{'name':'chat','arguments':{'text':'The barrel is ready.'}})
@@ -99,6 +109,14 @@ class SilentFinalTurn(unittest.IsolatedAsyncioTestCase):
     async def test_silent_peer_finishes_normally_without_public_reply(self):
         replies,events=await self.exercise()
         self.assertEqual(replies,[])
+        self.assertTrue(any(e.get('reason')=='explicit_chat_delivery' for e in events))
+
+    async def test_saved_follow_up_admits_a_conversation_without_task_or_public_final(self):
+        replies,events=await self.exercise(follow_up=True)
+        self.assertEqual(replies,[])
+        started=next(e for e in events if e['kind']=='turn_started')
+        self.assertTrue(started['conversation_only'])
+        self.assertEqual(started['messages'][0]['source'],'follow_up')
         self.assertTrue(any(e.get('reason')=='explicit_chat_delivery' for e in events))
 
     async def test_autonomous_continuation_final_is_not_a_public_peer_trigger(self):
