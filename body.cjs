@@ -795,7 +795,13 @@ const server=http.createServer(async(req,res)=>{
     else if(req.method==='POST'&&req.url==='/activity/review-interrupted'){
       const a=await json(req);
       if(!ready||busy||actionSequence.active||bot.currentWindow||Date.now()<turnUntil||a.generation!==generation)throw Error('Activity review superseded or player not idle');
-      result=require('./activity-settlement.cjs').review(history,cfg,a,{position:{x:bot.entity.position.x,y:bot.entity.position.y,z:bot.entity.position.z},inventory:containers.inventorySnapshot(bot.inventory)});
+      let session;
+      if(Object.hasOwn(a,'permission_denial')){
+        requireAdmission();
+        if(bot.inventory?.selectedItem!==null)throw Error('Permission denial review requires a known empty raw cursor');
+        session=JSON.parse(fs.readFileSync(path.join(path.dirname(process.argv[2]),'session.json'),'utf8'));
+      }
+      result=require('./activity-settlement.cjs').review(history,cfg,a,{position:{x:bot.entity.position.x,y:bot.entity.position.y,z:bot.entity.position.z},inventory:containers.inventorySnapshot(bot.inventory),...(session?{session}:{})});
     }
     else if(req.method==='POST'&&['/activity/review-settled-moves','/activity/review-settled-actions','/task/review-settled-actions'].includes(req.url)){
       const a=await json(req);
