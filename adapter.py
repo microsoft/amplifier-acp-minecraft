@@ -1,530 +1,152 @@
-"""One independent ACP endpoint + one Minecraft body. No fleet or model SDK."""
-from task_bounds import allowance_remaining
+"""Deliver fresh public game chat to the installation's bound ACP session."""
 import argparse
 import asyncio
 import hashlib
 import json
-import math
 import os
-import re
 from pathlib import Path
 import time
 import urllib.request
-from conversation_awareness import Awareness, SourceReplayRefused
-from planner_prompt import planner_prompt
-from context_snapshot import retained_request
-from prompt_lifecycle import await_terminal
-from sequence_settlement import settle_sequence
-from acp_client import Client, turn_disposition, GAME_TOOLS, REPLY_TOOLS
-from attention import Attention, fingerprint
-from assessment import Assessment, POLICY, signature
-from watches import Watches
-from conversation_attention import ConversationAttention
 
-
-def minecraft_reply_lines(text, limit=8, width=230):
-    """Fit the Java chat/body UTF-16 limit; make any bounded shortening visible."""
-    def prefix(value, available):
-        used=0
-        for i, char in enumerate(value):
-            used+=2 if ord(char)>0xffff else 1
-            if used>available:return value[:i]
-        return value
-    remaining=' '.join(text.split());lines=[]
-    while remaining and len(lines)<limit:
-        part=prefix(remaining,width)
-        if len(part)<len(remaining):
-            # Surface packetization of an already settled answer, never an ACP
-            # message-completion heuristic. Fall back to words for long sentences.
-            endings=list(re.finditer(r'[.!?…][\"\'”’)]*(?=\s|$)',part))
-            if endings:part=part[:endings[-1].end()]
-            elif ' ' in part:part=part.rsplit(' ',1)[0]
-        lines.append(part)
-        remaining=remaining[len(part):].lstrip()
-    truncated=bool(remaining)
-    if truncated:
-        suffix=' [Message shortened.]'
-        lines[-1]=prefix(lines[-1],width-len(suffix)).rstrip()+suffix
-    return lines,truncated
-
-
-async def deliver_final_reply(text, revision, request, observe, *, sleep=asyncio.sleep, explicit_speech=False, private_reply=False):
-    # Optional engagement publishes only intentional chat/tell tool calls. A
-    # settled final is not a second public message, regardless of its wording.
-    if explicit_speech:
-        observe('final_reply_withheld',reason='explicit_chat_delivery',sent_chunks=0)
-        return
-    if private_reply:
-        delivery=await request('/reply',{'text':text,'conversation_revision':revision})
-        observe('private_reply_recorded',recorded=delivery.get('delivery')=='recorded',reply_id=delivery.get('reply_id'))
-        return
-    lines,truncated=minecraft_reply_lines(text)
-    sent=0
-    for line in lines:
-        if sent:await sleep(.8)
-        delivery=await request('/reply',{'text':line,'conversation_revision':revision})
-        if delivery.get('sent') is False:
-            observe('final_reply_withheld',reason='public_context_changed_before_delivery',sent_chunks=sent)
-            break
-        sent+=1
-    observe('final_reply_delivery',sent_chunks=sent,planned_chunks=len(lines),
-            shortened=truncated,all_chunks_sent=sent==len(lines))
-
-
-def continuation_messages(state):
-    ordinary=state.get('task_capabilities',{}).get('activity_continuation')
-    return [{'source':'continuation','message':('Reassess unfinished ordinary activity from the latest settled receipts and any progress report; inspect current facts and do not replay effects. Report a real wait, blocker or completion when appropriate. Tasks are optional.' if ordinary else 'Continue the accepted game task. Inspect current world state and progress before acting.')}]
+from acp_client import Client
+from harness_capabilities import ordinary_sources, sources
+from installation_guard import durable_write
+from installation_session_probe import saved_endpoint
+from update_admission import held
 
 
 def control(cfg, path, payload=None):
-    req = urllib.request.Request(f"http://127.0.0.1:{cfg['control_port']}{path}",
+    req = urllib.request.Request(
+        f"http://127.0.0.1:{cfg['control_port']}{path}",
         data=json.dumps(payload).encode() if payload is not None else None,
-        headers={'Authorization': 'Bearer '+cfg['token'], 'Content-Type':'application/json'})
+        headers={'Authorization': 'Bearer ' + cfg['token'], 'Content-Type': 'application/json'},
+    )
     with urllib.request.urlopen(req, timeout=70) as response:
         return json.load(response)
 
 
-def save(path, value):
-    tmp=path.with_suffix('.tmp');tmp.write_text(json.dumps(value,indent=2));os.chmod(tmp,0o600);tmp.replace(path)
+def public_message(event):
+    """The public game session has exactly one audience. Nothing private goes here."""
+    if (not isinstance(event, dict) or event.get('whisper') is not False
+            or event.get('provenance') != 'minecraft_public_chat'
+            or event.get('source') not in ('human', 'agent')
+            or any(not isinstance(event.get(k), str) or not event[k] for k in ('id', 'username', 'message'))):
+        raise ValueError('Unexpected event in public Minecraft inbox')
+    message = {key: event[key] for key in ('id', 'source', 'username', 'message')}
+    message['time'] = event.get('time')
+    attribution = event.get('transport')
+    if isinstance(attribution, dict) and attribution.get('kind') == 'server_player_uuid' and attribution.get('username') == message['username']:
+        message['server_attribution'] = {key: attribution.get(key) for key in ('kind','uuid','signature_verified')}
+    else:
+        message['server_attribution'] = None
+    return message
 
 
-CAPACITY_NOTICE_INTERVAL = 15 * 60
-
-
-def load_capacity_notice(path):
-    """Only a notification timestamp; never a task, queue, or capacity grant."""
+async def deliver(home, event, client, binding, request, observe):
+    message = public_message(event)
+    facts = sources([event.get('source_fact')])
+    metadata = None
+    if facts and facts[0]['id'] == message['id'] and ordinary_sources(client.info):
+        key = json.dumps([binding, client.session, facts], sort_keys=True).encode()
+        metadata = {'version': 1, 'inputId': 'minecraft-ordinary-' + hashlib.sha256(key).hexdigest(), 'sources': facts}
+    # Keep the original source even across an unknown ACK or crash. The body
+    # grants exactly one claimant and never requeues it. Only that claimant
+    # may write dispatch intent, before crossing the ACP transport boundary.
+    event_key = hashlib.sha256(json.dumps([binding, client.session, message['id']]).encode()).hexdigest()
+    directory = home / 'world-tools-delivery' / event_key
+    source = {'event': message, 'session': client.session, 'binding': binding, 'source_fact': facts[0] if facts else None}
+    source_file = directory / 'source.json'
+    if source_file.exists():
+        if json.loads(source_file.read_text()) != source:
+            raise RuntimeError('Saved Minecraft event conflicts with its original source')
+    else:
+        durable_write(source_file, source)
+    receipt_file = directory / 'delivery.json'
+    ack = await request('/inbox/ack', {'id': message['id']})
+    if ack.get('acknowledged') is not True or ack.get('id') != message['id']:
+        raise RuntimeError('Minecraft inbox acknowledgment does not match the selected event')
+    if receipt_file.exists():
+        # Even a restored copy of an old inbox cannot re-dispatch a claimed event.
+        observe('chat_delivery_already_recorded', event_id=message['id'], session_id=client.session)
+        return
+    durable_write(receipt_file, {'status': 'dispatch_intent', 'at': time.time()})
+    observe('chat_delivery_started', event_id=message['id'], session_id=client.session)
+    prompt = ('Public Minecraft chat. To speak in the game use a Minecraft chat tool.\n'
+              + json.dumps(message, ensure_ascii=False))
     try:
-        value=json.loads(path.read_text()).get('last_attempt_at')
-        if type(value) in (int,float) and math.isfinite(value) and value>=0:
-            return {'last_notice_at':value}
-    except (OSError,ValueError,AttributeError):
-        pass
-    return {}
-
-
-async def capacity_gate(calls,state,request,observe,waiting,*,now=None,sleep=asyncio.sleep,while_waiting=None,notice_path=None):
-    """Rate limits wait before consuming messages; never cancel or renew a task."""
-    now=time.time() if now is None else now
-    calls[:]=[t for t in calls if t>now-3600]
-    if len(calls)<30:
-        if waiting.get('active'):observe('budget_resumed')
-        # One freed slot may refill immediately. Keep notice cadence across those
-        # short resumptions, independently of the actual capacity-wait telemetry.
-        waiting.pop('active',None);waiting.pop('notified',None)
-        return True
-    delay=max(.05,min(calls)+3600-now)
-    if not waiting.get('active'):
-        observe('budget_wait',resume_after_seconds=delay)
-        waiting['active']=True
-    has_work=state.get('pending_messages',0)>0 or (state.get('task') or {}).get('status') in ('running','waiting')
-    if has_work and not waiting.get('notified'):
-        last=waiting.get('last_notice_at')
-        if last is not None and last>now:
-            # A wall-clock correction must not suppress notices indefinitely.
-            waiting['last_notice_at']=last=now
-            if notice_path is not None:save(notice_path,{'last_attempt_at':now})
-        waiting['notified']=True
-        if last is None or now-last>=CAPACITY_NOTICE_INTERVAL:
-            waiting['last_notice_at']=now
-            # Persist before sending: a lost reply or restart must not replay a
-            # notice which may already have appeared in the public conversation.
-            if notice_path is not None:save(notice_path,{'last_attempt_at':now})
-            await request('/notice',{'kind':'budget'})
-        else:
-            observe('budget_notice_suppressed',reason='recent_capacity_notice',
-                    retry_after_seconds=CAPACITY_NOTICE_INTERVAL-(now-last))
-    if while_waiting:
-        await while_waiting()
-    await sleep(min(10,delay))
-    return False
-
-
-async def human_reply_messages(request,connect,attention):
-    """Human-only input lane; source/ticket integrity survives unmetered replies."""
-    def available(admission):
-        return admission.get('version')==1 and (admission.get('unmetered') is True or (admission.get('remaining') or 0)>0)
-    def select(messages,admission):
-        eligible=set(admission.get('eligible_ids',[]))
-        selected=[m for m in messages if m.get('id') in eligible and m.get('source')=='human']
-        # A ticket binding peers cannot be split or promoted into this reserve.
-        selected=[m for m in selected if not m.get('attention_offer') or not any(
-            peer.get('source')!='human' and peer.get('attention_offer')==m['attention_offer'] for peer in messages)]
-        if not selected:return []
-        offer=selected[0].get('attention_offer')
-        audience=selected[0].get('username') if selected[0].get('whisper') else None
-        return [m for m in selected if m.get('attention_offer')==offer and
-                (m.get('username') if m.get('whisper') else None)==audience and
-                m.get('reply_scope')==selected[0].get('reply_scope')][:8]
-
-    admission=await request('/conversation/admission')
-    if not available(admission):return []
-    selected=select(await request('/inbox/peek'),admission)
-    if not selected and attention and await request('/participation?human_only=1'):
-        client=await connect()
-        await attention.consider(request,client,human_only=True)
-        admission=await request('/conversation/admission')
-        if not available(admission):return []
-        selected=select(await request('/inbox/peek'),admission)
-    return selected
+        result = await client.prompt(prompt, source_metadata=metadata, snapshot_key=binding)
+    except BaseException:
+        durable_write(receipt_file, {'status': 'unknown', 'at': time.time()})
+        observe('chat_delivery_unknown', event_id=message['id'], session_id=client.session)
+        raise
+    durable_write(receipt_file, {'status': 'returned', 'stop_reason': result['stop_reason'],
+                                 'unsettled_tools': result.get('unsettled_tools', []), 'at': time.time()})
+    observe('chat_delivery_finished', event_id=message['id'], session_id=client.session,
+            stop_reason=result['stop_reason'], unsettled_tool_count=len(result.get('unsettled_tools', ())))
 
 
 async def run(home):
-    from update_admission import held as update_held
-    cfg=json.loads((home/'config.json').read_text())
-    endpoint=json.loads((home/'endpoint.json').read_text())
-    endpoint['mcp_servers']=[{'type':'http','name':'minecraft','url':cfg.get('mcp_url',f"http://127.0.0.1:{cfg['control_port']}/mcp"),
-        'headers':[{'name':'Authorization','value':'Bearer '+cfg['token']}]}]
-    if cfg.get('context_provider_id'):
-        endpoint['session_meta']={'io.github.bkrabach.conversation':{'provider_id':cfg['context_provider_id'],'grant':cfg['context_grant']}}
-    identity=hashlib.sha256(json.dumps(endpoint,sort_keys=True).encode()).hexdigest()
-    def observe(kind,**data):
-        print(json.dumps({'time':time.time(),'kind':kind,**data}),flush=True)
-    incoming_chat_only=cfg.get('incoming_chat_only') is True
-    intake_enabled=(cfg.get('human_task_intake') or {}).get('enabled') is True
-    assessment_enabled=(not incoming_chat_only or intake_enabled) and (cfg.get('decision_attention') or {}).get('policy')==POLICY
-    attention=(Assessment if assessment_enabled else Attention)(home,cfg.get('decision_attention'),observe)
-    state_signature=signature if assessment_enabled else fingerprint
-    client=None
-    calls_path=home/'calls.json'
-    calls=json.loads(calls_path.read_text()) if calls_path.exists() else []
-    reply_calls_path=home/'reply-calls.json'
-    reply_calls=json.loads(reply_calls_path.read_text()) if reply_calls_path.exists() else []
-    notice_path=home/'capacity-notice.json'
-    budget_waiting=load_capacity_notice(notice_path)
-    activity_attention=ConversationAttention(observe) if (cfg.get('human_engagement') or {}).get('activity_scope')=='conversation_only' else None
-    huddle_attention=ConversationAttention(observe) if cfg.get('huddles') else None
-    last_huddle_poll=0
-    connection_failures=0
-    last_continuation=None
-    async def request(path,payload=None):
-        return await asyncio.to_thread(control,cfg,path,payload)
-    # Authored watches are optional and live in the body's store. Only a semantic
-    # condition needs the decision helper; its absence must not stop the controller.
-    watch_decision=cfg.get('decision_attention') or {}
-    watches=Watches(home,watch_decision,request,observe) if cfg.get('agent_watches') and (not incoming_chat_only or intake_enabled) else None
-    if watches and not watch_decision.get('command'):
-        observe('watch_decision_unavailable',reason='decision_attention_command_not_configured')
-    conversation_attention=ConversationAttention(observe) if (cfg.get('conversation_attention') or {}).get('enabled') else None
-    async def connect():
-        nonlocal client, connection_failures
-        # Both attention and prompt delivery can follow an idle endpoint restart.
-        # Reload before either request, and before reserving any work or inbox.
-        # A disconnect after a prompt starts remains interrupted; never replay it.
-        if client is not None and client.transport_closed():
-            observe('connection_closed_before_turn',session_id=client.session)
-            await client.close();client=None
-        if client is not None:return client
-        client=Client(endpoint,observe);await client.start()
-        client.permission_active=lambda: control(cfg,'/status').get('turn_active',False)
-        def permission_tools():
-            status=control(cfg,'/status')
-            if status.get('conversation_only'):
-                return (GAME_TOOLS if status.get('reply_work_allowed') else REPLY_TOOLS) | ({'task_accept','task_amend','task_accept_help','work_resume'} if status.get('task_intake_enabled') and not status.get('ambient_activity') and not status.get('follow_up') else set())
-            return GAME_TOOLS
-        client.permission_tools=permission_tools
-        if not client.info.get('agentCapabilities',{}).get('mcpCapabilities',{}).get('http'):
-            raise RuntimeError('This adapter requires an ACP endpoint supporting HTTP MCP')
-        previous=None
-        if (home/'session.json').exists():
-            stored=json.loads((home/'session.json').read_text())
-            if stored.get('binding')==identity:previous=stored.get('session')
-        await client.open_session(previous)
-        save(home/'session.json',{'binding':identity,'session':client.session})
-        connection_failures=0
-        return client
+    cfg = json.loads((home / 'config.json').read_text())
+    client = None
 
-    async def observe_attention(state):
-        if not state.get('task') or state.get('task_capabilities',{}).get('activity_continuation'):
-            return state
-        watch_managed=False
-        notifications=[]
-        if watches:
-            await watches.poll()
-            notifications=await watches.pending()
-            watch_managed=await watches.managed()
-        if notifications and (state.get('task') or {}).get('status')=='waiting':
-            await request('/wake',{'task_id':state['task']['id'],'generation':state['generation']})
-            observe('watch_applied',application='wake',ids=[n['id'] for n in notifications])
-            state=await request('/state')
-        elif not watch_managed and await attention.consider(state):
-            fresh=await request('/state')
-            if state_signature(fresh)==state_signature(state) and fresh.get('generation')==state.get('generation'):
-                await request('/wake',{'task_id':state['task']['id'],'generation':state['generation']})
-                observe('assessment_applied',application='wake',task_id=state['task']['id'],fingerprint=state_signature(state))
-                state=await request('/state')
-            else:
-                observe('assessment_discarded',reason='observation_changed_before_wake',fingerprint=state_signature(state))
-        return state
+    def observe(kind, **data):
+        print(json.dumps({'time': time.time(), 'kind': kind, **data}), flush=True)
 
-    async def observe_capacity_wait():
-        # Planner capacity does not suspend bounded attention. A delivery may
-        # satisfy an authored watch before it expires, even while no ACP turn
-        # can start. Waking marks existing work ready; capacity still blocks it.
-        fresh=await request('/state')
-        task=fresh.get('task') or {}
-        if (not fresh.get('busy') and not fresh.get('turn_active')
-            and task.get('status')=='waiting' and allowance_remaining(task)):
-            await observe_attention(fresh)
+    async def request(path, payload=None):
+        return await asyncio.to_thread(control, cfg, path, payload)
 
-    # A controller restart must not replay an uncertain in-flight task.
-    while True:
-        turn_started=False
-        try:
-            if update_held(home,acknowledge=True):
-                await asyncio.sleep(2);continue
-            await request('/recover',{});break
-        except Exception:
-            await asyncio.sleep(2)
-    while True:
-        turn_started=False
-        try:
-            if update_held(home,acknowledge=True):
-                await asyncio.sleep(2);continue
-            state=await request('/state')
-            if not state.get('ready'):
-                await asyncio.sleep(2);continue
-            if huddle_attention and time.monotonic()-last_huddle_poll>=5:
-                last_huddle_poll=time.monotonic()
-                try:await request('/huddle/context')
-                except Exception as error:observe('huddle_unavailable',category=type(error).__name__)
-            # Retire only elapsed peer/activity deliveries, retaining their
-            # original source as undelivered evidence. Human input is untouched.
-            if state.get('pending_messages',0)>0:
-                await request('/inbox/retire-expired',{})
-            # Leave queued messages in the body. Stop clears them immediately;
-            # state is reread after each wait so deadlines still expire normally.
-            work_allowed=state.get('task_capabilities',{}).get('autonomous_work_allowed',not incoming_chat_only)
-            if (work_allowed or state.get('task_capabilities',{}).get('recovery_review_allowed')) and not state.get('turn_active') and not state.get('busy'):
-                continuation=await request('/continuation',{'generation':state.get('generation')})
-                continuation_key=(state.get('task',{}).get('id') if state.get('task') else None,json.dumps(continuation,sort_keys=True))
-                if continuation.get('action') not in ('hold','continue') and continuation_key!=last_continuation:
-                    observe('continuation_policy',**continuation)
-                last_continuation=continuation_key
-                state=await request('/state')
-                work_allowed=state.get('task_capabilities',{}).get('autonomous_work_allowed',not incoming_chat_only)
-            calls[:]=[t for t in calls if t>time.time()-3600]
-            conversation_only=False
-            messages=[]
-            if intake_enabled or not work_allowed or len(calls)>=30:
-                messages=await human_reply_messages(request,connect,conversation_attention)
-                conversation_only=bool(messages)
-            if not messages and huddle_attention:
-                if await request('/huddle/participation'):
-                    await huddle_attention.consider(request,await connect(),huddle=True)
-                admission=await request('/conversation/admission')
-                eligible=set(admission.get('eligible_ids',[]))
-                messages=[m for m in await request('/inbox/peek') if m.get('source')=='huddle' and m.get('id') in eligible][:1]
-                conversation_only=bool(messages)
-            if not messages and activity_attention:
-                if await request('/activity/participation'):
-                    await activity_attention.consider(request,await connect(),activity=True)
-                admission=await request('/conversation/admission')
-                eligible=set(admission.get('eligible_ids',[]))
-                messages=[m for m in await request('/inbox/peek') if m.get('source')=='activity' and m.get('id') in eligible][:1]
-                conversation_only=bool(messages)
-            if not messages and ((cfg.get('human_task_intake',{}).get('delegation') or {}).get('enabled') is True or ((cfg.get('human_engagement') or {}).get('enabled') is True and cfg.get('agent_dialogue') is True)):
-                # Peer delivery remains ambient at the host and grants no task authority.
-                if conversation_attention and await request('/participation'):
-                    await conversation_attention.consider(request,await connect())
-                admission=await request('/conversation/admission')
-                eligible=set(admission.get('eligible_ids',[]))
-                messages=[m for m in await request('/inbox/peek') if m.get('source')=='agent' and m.get('id') in eligible][:1]
-                conversation_only=bool(messages)
-            if not messages and state.get('follow_up_pending'):
-                # A self-authored reminder is a separate conversation input, not
-                # human authority or a task continuation. The body reserves it.
-                from delivery_queue import due_follow_up
-                messages=await due_follow_up(request,state)
-                conversation_only=bool(messages)
-            if not work_allowed and not conversation_only:
-                await asyncio.sleep(2);continue
-            if not conversation_only:
-                # Explicit installation policy removes connector pacing, not
-                # task authority or host/provider limits. Calls remain counted.
-                if (cfg.get('human_engagement') or {}).get('enabled') is not True:
-                    if not await capacity_gate(calls,state,request,observe,budget_waiting,while_waiting=observe_capacity_wait,notice_path=notice_path):continue
-                messages=await request('/inbox/peek')
-            if not messages and conversation_attention and await request('/participation'):
-                await connect()
-                await conversation_attention.consider(request,client)
-                messages=await request('/inbox/peek')
-            if not messages:
-                state=await observe_attention(state)
-                if (state.get('task') or {}).get('status')!='running' and not state.get('task_capabilities',{}).get('activity_continuation'):
-                    await asyncio.sleep(1);continue
-                messages=continuation_messages(state)
-                await asyncio.sleep(0 if (cfg.get('human_engagement') or {}).get('enabled') is True else 3)
-                newer=await request('/inbox/peek')
-                if newer:messages=newer
-            from delivery_queue import select_turn_messages, attention_reply_messages, optional_reply
-            messages=select_turn_messages(messages)
-            admission=await request('/conversation/admission') if any(optional_reply(m) for m in messages) else {}
-            eligible_ids=admission.get('eligible_ids',[])
-            if any(m.get('source')=='follow_up' for m in messages) and admission.get('remaining')==0:
-                eligible_ids=[]
-            optional=attention_reply_messages(messages,eligible_ids)
-            if optional is not None:
-                if optional:
-                    messages=optional;conversation_only=True
-                else:
-                    # An unavailable social delivery cannot starve either
-                    # ordinary work or its existing dependency-watch checks.
-                    if work_allowed:state=await observe_attention(state)
-                    if work_allowed and ((state.get('task') or {}).get('status')=='running' or state.get('task_capabilities',{}).get('activity_continuation')):
-                        messages=continuation_messages(state)
-                        conversation_only=False
-                    else:
-                        await asyncio.sleep(2);continue
-            await connect()
-            offers=[m['attention_offer'] for m in messages if m.get('attention_offer')]
-            attention_offer=offers[0] if offers else None
-            if offers and any(offer!=attention_offer for offer in offers):
-                raise RuntimeError('Mixed attention offers cannot share a turn')
-            await request('/turn',{'activity':bool(state.get('task_capabilities',{}).get('activity_continuation')),'renewable_lease':not conversation_only,'conversation_only':conversation_only,'expected_generation':state.get('generation'),'continuation':all(m.get('source')=='continuation' for m in messages),'peer_only':all(m.get('source')=='agent' for m in messages),'message_ids':[m['id'] for m in messages if m.get('id')]})
-            turn_started=True
-            state=await request('/state')  # The new turn resets action/time budgets.
-            watch_notifications=[]
-            if watches and not conversation_only and not state.get('ordinary_activity'):
-                await watches.poll()
-                watch_notifications=await watches.pending()
-            assessment=None
-            if assessment_enabled and not conversation_only and not state.get('ordinary_activity'):
-                assessment=await attention.before_turn(state)
-                fresh=await request('/state')
-                if not fresh.get('turn_active') or fresh.get('generation')!=state.get('generation'):
-                    raise RuntimeError('Turn stopped during assessment')
-                if assessment and state_signature(fresh)!=assessment['fingerprint']:
-                    observe('assessment_discarded',reason='observation_changed',fingerprint=assessment['fingerprint'])
-                    assessment=None
-                state=fresh
-                if assessment:
-                    observe('assessment_applied',application='advisory',task_id=state['task']['id'],fingerprint=assessment['fingerprint'])
-            if watch_notifications:
-                observe('watch_applied',application='advisory',ids=[n['id'] for n in watch_notifications])
-            if cfg.get('huddle') or cfg.get('huddles'):
-                try:
-                    await request('/huddle/context')
-                except Exception as error:
-                    observe('huddle_unavailable',category=type(error).__name__)
-            world=await request('/observation')
-            if not world.get('turn_active') or world.get('generation')!=state.get('generation'):
-                raise RuntimeError('Turn stopped before planner observation')
-            observe('turn_started',messages=messages,conversation_only=conversation_only)
-            prompt=planner_prompt(messages,world,assessment,watch_notifications)
-            if conversation_only:
-                reply_calls[:]=[t for t in reply_calls if t>time.time()-3600]
-                reply_calls.append(time.time());save(reply_calls_path,reply_calls)
-            else:
-                calls.append(time.time());save(calls_path,calls)
-            awareness=Awareness(home,client,world.get('conversation',{}),observe,binding=identity)
-            operator_awareness=None
+    try:
+        while True:
             try:
-                operator_awareness=Awareness(home,client,await request('/operator-inputs'),observe,audience='operator',binding=identity)
-            except Exception as error:
-                observe('operator_awareness_unavailable',category=type(error).__name__,fallback='queued_input')
-            try:
-                source_metadata=await awareness.ordinary_prompt(messages)
-            except SourceReplayRefused as refusal:
-                # No prompt was dispatched in this reservation. Retain the same
-                # error finish and original delivery evidence as before; this
-                # expected no-replay decision is not a transport failure.
-                # connect() still detects an actually closed transport normally.
-                await request('/finish',{'error':True})
-                observe('source_prompt_suppressed',reason=refusal.reason,
-                        source_count=len(messages),new_prompt_sent=False,completion='not_established')
-                continue
-            pending=asyncio.create_task(client.prompt(prompt,attention_offer=attention_offer,source_metadata=source_metadata,
-                snapshot_retained=retained_request(messages,world),snapshot_key=identity))
-            last_renewed=time.monotonic()
-            last_huddle_checked=time.monotonic()
-            try:
-                while not pending.done():
-                    await asyncio.wait({pending},timeout=1)
-                    if not pending.done():
-                        if (cfg.get('huddle') or cfg.get('huddles')) and time.monotonic()-last_huddle_checked>=5:
-                            last_huddle_checked=time.monotonic()
+                if held(home, acknowledge=True):
+                    await asyncio.sleep(1)
+                    continue
+                event = (await request('/inbox/peek'))['event']
+                if event is not None:
+                    public_message(event)
+                if client is None or client.transport_closed():
+                    if client is not None:
+                        await client.close()
+                    endpoint, previous, binding = saved_endpoint(home)
+                    client = Client(endpoint, observe)
+                    await client.start()
+                    if client.info.get('agentCapabilities', {}).get('mcpCapabilities', {}).get('http') is not True:
+                        raise RuntimeError('ACP endpoint does not offer HTTP MCP')
+                    if previous is None:
+                        # A new session is an externally visible creation. Keep intent
+                        # across crashes so a lost return cannot create another one.
+                        fd = os.open(home / 'session-create.intent', os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+                        with os.fdopen(fd, 'w') as intent:
+                            intent.write(binding)
+                            intent.flush()
+                            os.fsync(intent.fileno())
+                        if os.name != 'nt':
+                            directory = os.open(home, os.O_RDONLY | os.O_DIRECTORY)
                             try:
-                                await request('/huddle/context')
-                            except Exception as error:
-                                observe('huddle_unavailable',category=type(error).__name__)
-                        status=await request('/status')
-                        if not status.get('turn_active'):
-                            await client.cancel()
-                            # Authority has already closed. Cancellation is not
-                            # settlement: observe a bounded terminal reply, never replay.
-                            observe('planner_cancel_settlement',**(await await_terminal(pending)))
-                            if not pending.done():pending.cancel()
-                            await client.close();client=None
-                            raise RuntimeError('Action authority ended; inspect effects before continuing')
-                        lease=status.get('action_lease') or {}
-                        if lease.get('version')!=1:
-                            raise RuntimeError('Body lacks action lease protocol; update paired adapter/body at idle')
-                        if lease.get('renewable') and time.monotonic()-last_renewed>=30:
-                            await request('/turn/renew',{'lease_id':lease['lease_id'],'task_id':lease['task_id']})
-                            last_renewed=time.monotonic()
-                        if client.lifecycle:client.lifecycle.sample()
-                        try:
-                            await awareness.consider(await request('/conversation'))
-                            if operator_awareness:
-                                await operator_awareness.consider(await request('/operator-inputs'))
-                        except Exception as error:
-                            observe('awareness_source_unavailable',category=type(error).__name__)
-                result=await pending
-                await awareness.finish()
-                if operator_awareness:
-                    await operator_awareness.finish()
-            finally:
-                if not pending.done():pending.cancel()
-            operation=await settle_sequence(request,result,observe)
-            if operation['waited']:
-                # The model ended before seeing final physical results. Preserve
-                # those receipts, but do not publish an unsupported completion claim.
-                result['final_text']=''
-                observe('final_reply_withheld',reason='background_operation_settled_after_prompt')
-            final_status=await request('/status')
-            if conversation_only and final_status.get('conversation_only') is False:
-                calls.append(time.time());save(calls_path,calls)
-                observe('reply_work_accounted',task_id=(final_status.get('task') or {}).get('id'))
-            disposition=turn_disposition(result,final_status.get('busy',False))
-            # If the human stopped the work, do not post a late final response.
-            text=result.get('final_text',result['text']).strip()
-            if disposition=='complete' and text:
-                fresh=await request('/conversation')
-                private_reply=(final_status.get('reply_route') or {}).get('kind')=='installation'
-                revision=fresh.get('revision') if private_reply else awareness.final_revision(fresh)
-                if revision is None:
-                    observe('final_reply_withheld',reason='public_context_not_exposed_or_incorporated')
-                else:
-                    await deliver_final_reply(text,revision,request,observe,
-                        explicit_speech=bool(final_status.get('explicit_speech') or world.get('peer_proposal') or world.get('ambient_activity') or world.get('follow_up')
-                                             or (messages and all(m.get('source')=='continuation' for m in messages))),private_reply=private_reply)
-            observe('turn_completed',stop_reason=result['stop_reason'],disposition=disposition,
-                    unsettled_tool_count=len(result.get('unsettled_tools',[])))
-            if watches and not conversation_only and disposition=='complete':
-                await watches.acknowledge(watch_notifications)
-            await request('/finish',{'error':disposition=='interrupted','budget_limited':disposition=='limited'})
-        except asyncio.CancelledError:
-            if client:await client.close()
-            raise
-        except Exception as e:
-            if turn_started:
-                try:await request('/finish',{'error':True})
-                except Exception:pass
-            observe('adapter_error',error=str(e),error_type=type(e).__name__,phase='turn' if turn_started else 'connection_or_scheduling')
-            if client:
-                await client.close();client=None
-            try:
-                status=await request('/status')
-                if turn_started and (status.get('turn_active') or (status.get('task') or {}).get('status')=='needs_review'):
-                    await request('/notice',{'kind':'paused'})
-            except Exception:pass
-            if client:await client.close();client=None
-            if not turn_started:
-                connection_failures+=1
-                delay=min(60,5*2**min(connection_failures-1,4))
-                observe('connection_retry_wait',seconds=delay,queued_messages_preserved=True)
-                await asyncio.sleep(delay)
-            else:await asyncio.sleep(3)
+                                os.fsync(directory)
+                            finally:
+                                os.close(directory)
+                    await client.open_session(previous)
+                    if previous is None:
+                        durable_write(home / 'session.json', {'binding': binding, 'session': client.session})
+                    client.permission_active = lambda: not held(home)
+                if event is None:
+                    await asyncio.sleep(1)
+                    continue
+                if held(home):
+                    continue
+                await deliver(home, event, client, binding, request, observe)
+            except Exception as error:
+                # The event remains in the inbox only if the body has never claimed it.
+                # A later iteration may connect to deliver an independently queued event.
+                observe('adapter_error', error_type=type(error).__name__, error=str(error))
+                if client is not None:
+                    await client.close()
+                    client = None
+                await asyncio.sleep(5)
+    finally:
+        if client is not None:
+            await client.close()
 
 
 if __name__=='__main__':

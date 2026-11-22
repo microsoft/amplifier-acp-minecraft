@@ -18,6 +18,7 @@ import time
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 from adapter import control
+from mcp_game_fixture import call_tool, GameToolError
 from ops.rcon import command
 
 
@@ -52,12 +53,9 @@ def main():
             return command(args.properties, text)
 
         def act(name, **arguments):
-            result = control(cfg, '/action', {'name': name, 'arguments': arguments})
+            result = call_tool(cfg, name, arguments)
             report['receipts'].append({'action': name, 'arguments': arguments, 'result': result})
             return result
-
-        def turn():
-            control(cfg, '/finish', {}); control(cfg, '/turn', {})
 
         def teleport(x, y, z):
             rcon(f'tp ContainerTester {x + .5} {y} {z + .5}')
@@ -93,11 +91,11 @@ def main():
                     for side in range(-1, 2):
                         bx, bz = x + dx * step + dz * side, z + dz * step + dx * side
                         rcon(f'fill {bx} 81 {bz} {bx} {80 + step} {bz} stone')
-                teleport(x, 81, z); turn()
+                teleport(x, 81, z)
                 arrive(x + dx * 3, 84, z + dz * 3)
                 arrive(x, 81, z)
                 report['checks'].append(f'Three full-block rises and descent, direction {dx},{dz}, server-confirmed')
-            turn()
+
             rcon('fill -48 81 32 -16 88 64 air')
             teleport(-36, 81, 44)
             arrive(-34, 81, 47)

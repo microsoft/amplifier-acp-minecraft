@@ -65,21 +65,6 @@ function replyRecord(data,route){
  if(!record||record.receipt.request_id!==route.request_id||digest(record.source)!==digest(route.source))throw Error('Private reply source binding changed');
  return record;
 }
-function saveReply(history,text){
- const turn=history.data.turn,route=turn?.reply_route,record=replyRecord(history.data,route);
- if(typeof text!=='string'||!text.trim()||Buffer.byteLength(text)>capability.source_replies.max_text_bytes)throw Error('Private reply exceeds its bounded text limit');
- const id=digest([route.request_id,turn.started_at,text]),previous=(record.source_replies||[]).find(r=>r.id===id);
- if(previous)return {...structuredClone(previous),duplicate:true};
- if((record.source_replies||[]).length>=capability.source_replies.max_items){
-  const omitted=record.source_replies_omitted;record.source_replies_omitted=true;
-  try{history.save();}catch(error){if(omitted===undefined)delete record.source_replies_omitted;else record.source_replies_omitted=omitted;throw error;}
-  throw Error('Private reply capacity reached; inspect retained source outcomes');
- }
- const item={id,at:new Date().toISOString(),text,audience:structuredClone(record.source.audience),delivery:'recorded'};
- const old=record.source_replies;record.source_replies=[...(old||[]),item];
- try{history.save();}catch(error){if(old===undefined)delete record.source_replies;else record.source_replies=old;throw error;}
- return structuredClone(item);
-}
 function query(history,caller,payload,{now=Date.now()}={}){
  object(payload,['version','requests']);if(payload.version!==1||!Array.isArray(payload.requests)||!payload.requests.length||payload.requests.length>16)throw Error('Supply 1–16 exact source outcome requests');
  const keys=new Set();
@@ -94,4 +79,4 @@ function query(history,caller,payload,{now=Date.now()}={}){
  });
  return {version:1,observed_at:new Date(now).toISOString(),outcomes:rows};
 }
-module.exports={projectInput,replyRoute,replyRecord,saveReply,capability,callers,authenticate,allowed,enqueue,query,source};
+module.exports={projectInput,replyRoute,replyRecord,capability,callers,authenticate,allowed,enqueue,query,source};

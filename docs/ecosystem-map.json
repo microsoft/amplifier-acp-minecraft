@@ -3,21 +3,21 @@
   "citations": [
     {
       "path": "README.md",
-      "ref": "57cb48e47753ee44040205dfd6c8e64c6b969ef1",
-      "sha256": "9b92dde4407aa349616bbd1c68b4562ec8b4cbba8d2fccdcbd4b0e269fb2611e",
-      "url": "https://github.com/microsoft/amplifier-acp-minecraft/blob/57cb48e47753ee44040205dfd6c8e64c6b969ef1/README.md"
+      "ref": "fdf0103340f27453474f1fcb3951b14b18bd1ca3",
+      "sha256": "12fe3f56598083d1d576749c169c29fd97b05cced8b5ae9623e719a770f07e83",
+      "url": "https://github.com/microsoft/amplifier-acp-minecraft/blob/fdf0103340f27453474f1fcb3951b14b18bd1ca3/README.md"
     },
     {
       "path": "docs/interfaces.md",
-      "ref": "57cb48e47753ee44040205dfd6c8e64c6b969ef1",
-      "sha256": "11de6727031f00db11bbd988c647814d1a1c8029c2eb768710ecea759bd11ab6",
-      "url": "https://github.com/microsoft/amplifier-acp-minecraft/blob/57cb48e47753ee44040205dfd6c8e64c6b969ef1/docs/interfaces.md"
+      "ref": "fdf0103340f27453474f1fcb3951b14b18bd1ca3",
+      "sha256": "a88d5615cbe6d6f8c7293420ee98a48f2c2af43d9bd898246098970760248ec4",
+      "url": "https://github.com/microsoft/amplifier-acp-minecraft/blob/fdf0103340f27453474f1fcb3951b14b18bd1ca3/docs/interfaces.md"
     },
     {
       "path": "contracts/minecraft.md",
-      "ref": "57cb48e47753ee44040205dfd6c8e64c6b969ef1",
-      "sha256": "f9ca845e73ec90ddfe961fb0016e8d794410ed018b0e4f8607674582bfb70d74",
-      "url": "https://github.com/microsoft/amplifier-acp-minecraft/blob/57cb48e47753ee44040205dfd6c8e64c6b969ef1/contracts/minecraft.md"
+      "ref": "fdf0103340f27453474f1fcb3951b14b18bd1ca3",
+      "sha256": "3399b58c3d02054175bd2093910b037498097bc7857d14b8a94308183854e192",
+      "url": "https://github.com/microsoft/amplifier-acp-minecraft/blob/fdf0103340f27453474f1fcb3951b14b18bd1ca3/contracts/minecraft.md"
     }
   ],
   "display_name": "Minecraft Connector for Amplifier",
@@ -63,7 +63,7 @@
     {
       "id": "controller",
       "kind": "internal",
-      "label": "ACP session and work controller"
+      "label": "Game chat and ACP session"
     },
     {
       "id": "body",
@@ -92,7 +92,7 @@
   ],
   "page_kind": "user-facing connector",
   "purpose": "Bring independent AI agents into a Minecraft world as players who can talk, explore and build together.",
-  "ref": "57cb48e47753ee44040205dfd6c8e64c6b969ef1",
+  "ref": "fdf0103340f27453474f1fcb3951b14b18bd1ca3",
   "repository": "microsoft/amplifier-acp-minecraft",
   "roles": [
     "Connection",

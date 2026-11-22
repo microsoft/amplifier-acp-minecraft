@@ -17,6 +17,7 @@ import time
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 from adapter import control
+from mcp_game_fixture import call_tool, GameToolError
 from ops.rcon import command
 
 
@@ -50,7 +51,7 @@ def main():
             proc = subprocess.Popen([args.node, str(ROOT / 'body.cjs'), str(config)], stdout=log, stderr=log)
             def r(text): return command(args.properties, text)
             def act(name, **arguments):
-                return control(cfg, '/action', {'name': name, 'arguments': arguments})
+                return call_tool(cfg, name, arguments)
             try:
                 for _ in range(150):
                     try:
@@ -65,7 +66,7 @@ def main():
                 time.sleep(.4)
                 if args.furnace_only:
                     r('setblock 2 81 1 furnace'); r('give FacingTester cobblestone 1'); r('give FacingTester oak_slab 2')
-                    time.sleep(.3); control(cfg, '/turn', {})
+                    time.sleep(.3)
                     loaded=act('furnace',x=2,y=81,z=1,operation='load',item='cobblestone',count=1,fuel='oak_slab',fuel_count=2)
                     report['checks'].append({'load':loaded})
                     # Real furnace time is independent from the model/turn clock.
@@ -87,7 +88,7 @@ def main():
                     for name, prop, values in [('repeater','delay',[1,2,3,4]), ('comparator','mode',['compare','subtract'])]:
                         for initial in values:
                             for target in values:
-                                control(cfg, '/finish', {}); control(cfg, '/turn', {})
+
                                 r(f'setblock 2 81 1 {name}[{prop}={initial},facing=north]'); time.sleep(.15)
                                 inspected=act('inspect',x=2,y=81,z=1)
                                 arguments={'x':2,'y':81,'z':1,'operation':'set',prop:target,
@@ -102,7 +103,7 @@ def main():
                     return
                 for item in ([] if args.redstone_only else ['furnace', 'blast_furnace', 'smoker', 'repeater', 'comparator', 'oak_stairs', 'stone_brick_stairs', 'piston', 'sticky_piston']):
                     r(f'give FacingTester {item} 6'); time.sleep(.2)
-                    control(cfg, '/finish', {}); control(cfg, '/turn', {})
+
                     for facing in ['north', 'south', 'east', 'west'] + (['up', 'down'] if 'piston' in item else []):
                         r('setblock 2 81 1 air'); time.sleep(.15)
                         result = act('place', x=2, y=81, z=1, item=item, support_face='up', facing=facing)
@@ -111,7 +112,7 @@ def main():
                         assert 'Test passed' in confirmation, confirmation
                         report['checks'].append({'item': item, 'facing': facing, 'result': result,
                                                  'independent_server_confirmation': confirmation})
-                control(cfg, '/finish', {}); control(cfg, '/turn', {})
+
                 r('setblock 2 81 1 air'); r('give FacingTester redstone 2'); time.sleep(.2)
                 result = act('place', x=2, y=81, z=1, item='redstone', support_face='up')
                 assert result['verified'] and result['actual'] == 'redstone_wire', result
@@ -120,7 +121,7 @@ def main():
                 report['checks'].append({'item': 'redstone', 'result': result,
                                          'independent_server_confirmation': confirmation})
                 for name in ([] if args.redstone_only else ['stone_button','lever']):
-                    control(cfg, '/finish', {}); control(cfg, '/turn', {})
+
                     r(f'setblock 2 81 1 {name}[face=floor,powered=false]'); time.sleep(.2)
                     inspected=act('inspect',x=2,y=81,z=1)
                     arguments={'x':2,'y':81,'z':1,'operation_id':'fixture-'+name,'block_revision':inspected['block_revision'],'operation':'press' if name=='stone_button' else 'set'}

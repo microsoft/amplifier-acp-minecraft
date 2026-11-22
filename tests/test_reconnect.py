@@ -1,3 +1,4 @@
+"""Exercise the production public inbox loop through an actual ACP subprocess."""
 import asyncio
 from contextlib import redirect_stdout
 import io
@@ -5,212 +6,123 @@ import json
 from pathlib import Path
 import sys
 import tempfile
-import time
 import unittest
-from unittest.mock import patch
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, Mock, patch
 
 import adapter
-from acp_client import Client
-
-FIXTURE = Path(__file__).with_name('reconnect_fixture.py')
+from installation_session_probe import saved_endpoint
 
 
-class Reconnect(unittest.IsolatedAsyncioTestCase):
-    async def exercise(self, scenario):
-        """Run the real scheduling loop and real ACP subprocesses against a body fixture."""
-        clients, paths, finishes, sleeps, attention_posts, prompt_worlds = [], [], [], [], [], []
-        social = scenario.startswith('attention-')
-        task = {'id': 'accepted-task', 'status': 'running', 'turns': 12,
-                'max_turns': 45, 'deadline': 9999999999999}
-        messages = [{'id': str(i), 'source': 'human', 'message': 'Continue accepted work'} for i in ((1,) if social else (1, 2))]
-        active = False
-        reserved = 0
-        real_sleep = asyncio.sleep
+def public(identity, **changes):
+    return {'id': identity, 'source': 'agent', 'provenance': 'minecraft_public_chat',
+            'username': 'OtherPlayer', 'message': 'One public observation.', 'whisper': False, **changes}
 
-        class TrackedClient(Client):
-            def __init__(self, *args, **kwargs):
-                super().__init__(*args, **kwargs)
-                clients.append(self)
 
-            async def prompt(self, text, *args, **kwargs):
-                prompt_worlds.append(json.loads(text.rsplit('\n', 1)[-1])['world'])
-                return await super().prompt(text, *args, **kwargs)
-
-        def control(config, path, payload=None):
-            nonlocal active, reserved
-            paths.append(path)
-            if path in ('/state', '/observation'):
-                if len(finishes) >= 2 or (scenario == 'during-prompt' and finishes):
-                    raise asyncio.CancelledError()
-                return {'ready': True, 'busy': False, 'generation': 1, 'turn_active': active,
-                        'pending_messages': len(messages), 'task': dict(task),
-                        'view_fixture': 'recent' if path == '/observation' else 'full'}
-            if path == '/status':
-                return {'turn_active': active, 'busy': False, 'task': dict(task), 'action_lease': {'version': 1, 'renewable': False}}
-            if path == '/continuation':
-                return {'action': 'continue'}
-            if path == '/conversation/admission':
-                return {'version':1,'remaining':12,'eligible_ids':[m['id'] for m in messages]}
-            if path == '/inbox/peek':
-                return messages[:1]
-            if path == '/participation':
-                if payload is None:
-                    return {'signature': 'fresh', 'occurred_at': 123, 'context': {'conversation_id': 'fixture'}} if finishes and not attention_posts else None
-                attention_posts.append(payload)
-                messages.append({'id': '2', 'source': 'human', 'message': 'A new public question', 'attention_offer': payload['offer']})
-                return {'queued': True}
-            if path == '/turn':
-                self.assertEqual(payload['message_ids'], [messages[0]['id']])
-                messages.pop(0)
-                active = True
-                reserved += 1
-                if not payload.get('conversation_only'):task['turns'] += 1
-                return {}
-            if path == '/finish':
-                active = False
-                finishes.append(dict(payload))
-                if social:
-                    task['status'] = 'waiting'
-                # Let the asyncio process monitor receive the fixture's exit before
-                # another scheduling iteration, like a completed idle service restart.
-                if scenario != 'keep-open':
-                    deadline = time.monotonic() + 2
-                    while clients[-1].process.returncode is None and time.monotonic() < deadline:
-                        time.sleep(.005)
-                return {}
-            return {}
-
-        async def sleep(delay):
-            sleeps.append(delay)
-            if scenario in ('reload-fails', 'attention-reload-fails', 'resume-fails') and finishes:
-                raise asyncio.CancelledError()
-            if social and finishes and not attention_posts and delay == 1:
-                # An attention transport failure must not silently strand the event.
-                raise asyncio.CancelledError()
-            await real_sleep(0)
-
+class Delivery(unittest.IsolatedAsyncioTestCase):
+    async def exercise(self, scenario, events, *, saved=True, ack=None, restart=False):
+        calls = []
         with tempfile.TemporaryDirectory() as tmp:
             home = Path(tmp)
-            (home / 'config.json').write_text(json.dumps({'control_port': 1, 'token': 'fixture',
-                                                        'conversation_attention': {'enabled': social}}))
-            (home / 'endpoint.json').write_text(json.dumps({
-                'command': [sys.executable, str(FIXTURE), tmp, scenario], 'cwd': tmp}))
-            output = io.StringIO()
-            with patch.object(adapter, 'Client', TrackedClient), patch.object(adapter, 'control', control), \
-                 patch.object(adapter.asyncio, 'sleep', sleep), redirect_stdout(output):
-                with self.assertRaises(asyncio.CancelledError):
-                    await asyncio.wait_for(adapter.run(home), timeout=10)
-            frames = [json.loads(line) for line in (home / 'requests.jsonl').read_text().splitlines()]
-            calls = json.loads((home / 'calls.json').read_text())
-            session = json.loads((home / 'session.json').read_text())
-            events = [json.loads(line) for line in output.getvalue().splitlines()]
-        return {'frames': frames, 'calls': calls, 'session': session, 'events': events,
-                'paths': paths, 'finishes': finishes, 'sleeps': sleeps, 'reserved': reserved,
-                'messages': messages, 'task': task, 'attention_posts': attention_posts, 'prompt_worlds': prompt_worlds}
+            (home/'config.json').write_text(json.dumps({'control_port': 1, 'token': 'fixture'}))
+            (home/'endpoint.json').write_text(json.dumps({
+                'command': [sys.executable, str(Path(__file__).with_name('reconnect_fixture.py')), tmp, scenario],
+                'cwd': tmp,
+            }))
+            if saved:
+                binding = saved_endpoint(home)[2]
+                (home/'session.json').write_text(json.dumps({'session': 'durable-session', 'binding': binding}))
+            legacy = {'task': {'id': 'existing', 'status': 'running', 'deadline': 100}, 'inbox': ['old']}
+            original = json.dumps(legacy)
+            (home/'workshop.json').write_text(original)
 
-    async def test_closed_endpoint_reloads_before_reserving_another_turn(self):
-        result = await self.exercise('close-between')
-        methods = [v['method'] for v in result['frames']]
-        self.assertEqual(methods.count('session/prompt'), 2)
-        self.assertEqual(methods.count('session/new'), 1)
-        self.assertEqual(methods.count('session/load'), 1)
-        self.assertEqual(result['reserved'], 2)
-        self.assertEqual(len(result['calls']), 2)
-        self.assertTrue(all(not value['error'] for value in result['finishes']))
-        self.assertEqual(result['session']['session'], 'durable-session')
-        self.assertEqual({v['session'] for v in result['frames'] if v['method'] == 'session/prompt'}, {'durable-session'})
-        self.assertEqual(result['task']['turns'], 14)
-        self.assertEqual(result['task']['max_turns'], 45)
-        self.assertEqual(result['task']['deadline'], 9999999999999)
-        self.assertEqual([w['view_fixture'] for w in result['prompt_worlds']], ['recent', 'recent'])
+            def control(config, path, data=None):
+                calls.append(path)
+                if path == '/inbox/peek':
+                    return {'event': events[0] if events else None}
+                self.assertEqual(path, '/inbox/ack')
+                self.assertEqual(data, {'id': events[0]['id']})
+                if ack is not None:
+                    return ack
+                return {'id': events.pop(0)['id'], 'acknowledged': True}
 
-    async def test_live_transport_is_reused_without_probe_or_replay(self):
-        result = await self.exercise('keep-open')
-        self.assertEqual([v['method'] for v in result['frames']],
-                         ['initialize', 'session/new', 'session/prompt', 'session/prompt'])
-        self.assertTrue(all(not value['error'] for value in result['finishes']))
+            async def stop_on_wait(delay):
+                raise asyncio.CancelledError()
 
-    async def test_advertised_resume_reconnects_same_session_before_next_admission(self):
-        result = await self.exercise('resume-only')
-        methods = [v['method'] for v in result['frames']]
-        self.assertEqual(methods, ['initialize', 'session/new', 'session/prompt',
-                                  'initialize', 'session/resume', 'session/prompt'])
-        self.assertEqual(result['session']['session'], 'durable-session')
-        self.assertEqual(result['reserved'], 2)
-        self.assertEqual(result['task']['turns'], 14)
-        self.assertEqual(result['task']['deadline'], 9999999999999)
-        self.assertTrue(all(not value['error'] for value in result['finishes']))
+            with patch.object(adapter, 'control', control), patch.object(adapter.asyncio, 'sleep', stop_on_wait), redirect_stdout(io.StringIO()):
+                for _ in range(2 if restart else 1):
+                    with self.assertRaises(asyncio.CancelledError):
+                        await asyncio.wait_for(adapter.run(home), timeout=10)
+            self.assertEqual((home/'workshop.json').read_text(), original)
+            log = home/'requests.jsonl'
+            return [json.loads(line) for line in log.read_text().splitlines()] if log.exists() else [], calls
 
-    async def test_failed_resume_keeps_pending_input_authority_and_budget(self):
-        result = await self.exercise('resume-fails')
-        self.assertEqual([v['method'] for v in result['frames']],
-                         ['initialize', 'session/new', 'session/prompt', 'initialize', 'session/resume'])
-        self.assertEqual(result['session']['session'], 'durable-session')
-        self.assertEqual(result['reserved'], 1)
-        self.assertEqual([m['id'] for m in result['messages']], ['2'])
-        self.assertEqual(result['task']['turns'], 13)
-        self.assertEqual(result['task']['max_turns'], 45)
-        self.assertEqual(result['task']['deadline'], 9999999999999)
+    async def test_original_session_receives_only_new_public_messages_once(self):
+        frames, calls = await self.exercise('keep-open', [public('1'), public('2')])
+        self.assertEqual([f['method'] for f in frames], ['initialize','session/load','session/prompt','session/prompt'])
+        self.assertEqual([f['session'] for f in frames[1:]], ['durable-session'] * 3)
+        self.assertEqual(calls.count('/inbox/ack'), 2)
 
-    async def test_failed_reload_after_completed_turn_keeps_next_message_and_budget(self):
-        result = await self.exercise('reload-fails')
-        self.assertEqual(result['reserved'], 1)
-        self.assertEqual(len(result['calls']), 1)
-        self.assertEqual(len(result['finishes']), 1)
-        self.assertEqual([m['id'] for m in result['messages']], ['2'])
-        self.assertNotIn('/notice', result['paths'])
-        self.assertEqual(result['task']['turns'], 13)
-        errors = [e for e in result['events'] if e['kind'] == 'adapter_error']
-        self.assertEqual([e['phase'] for e in errors], ['connection_or_scheduling'])
-        self.assertIn(5, result['sleeps'])
+    async def test_fresh_install_creates_one_session_for_two_messages(self):
+        frames, _ = await self.exercise('keep-open', [public('1'), public('2')], saved=False)
+        self.assertEqual([f['method'] for f in frames], ['initialize','session/new','session/prompt','session/prompt'])
 
-    async def test_disconnect_during_prompt_remains_interrupted_not_automatically_replayed(self):
-        result = await self.exercise('during-prompt')
-        self.assertEqual(result['reserved'], 1)
-        self.assertEqual(len(result['calls']), 1)
-        self.assertEqual(len(result['finishes']), 1)
-        self.assertTrue(result['finishes'][0]['error'])
-        self.assertEqual(sum(v['method'] == 'session/prompt' for v in result['frames']), 1)
-        self.assertEqual([m['id'] for m in result['messages']], ['2'])
+    async def test_lost_initial_session_creation_is_not_repeated_after_restart(self):
+        inbox = [public('1')]
+        frames, calls = await self.exercise('lost-new-result', inbox, saved=False, restart=True)
+        self.assertEqual([r['method'] for r in frames], ['initialize','session/new','initialize'])
+        self.assertEqual(len(inbox), 1)
+        self.assertNotIn('/inbox/ack', calls)
 
-    async def test_closed_endpoint_reloads_before_attention_then_reserves_one_offered_turn(self):
-        result = await self.exercise('attention-close')
-        methods = [v['method'] for v in result['frames']]
-        self.assertEqual(methods, ['initialize', 'session/new', 'session/prompt',
-                                  'initialize', 'session/load', '_amplifier/attention', 'session/prompt'])
-        self.assertEqual(len(result['attention_posts']), 1)
-        self.assertEqual(result['reserved'], 2)
-        self.assertEqual(len(result['calls']), 1)
-        self.assertTrue(all(not r['error'] for r in result['finishes']))
-        self.assertEqual(result['frames'][-1]['session'], 'durable-session')
-        self.assertEqual(result['frames'][-1]['meta']['com.microsoft.amplifier.attention'],
-                         {'id': 'offer', 'ticket': 'fixture-ticket'})
-        self.assertEqual(result['task']['turns'], 13)
-        self.assertEqual(result['task']['max_turns'], 45)
+    async def test_private_whisper_operator_and_historical_work_do_not_become_prompts(self):
+        for events in ([], [public('1', whisper=True)], [public('1', source='operator')],
+                       [public('1', provenance='minecraft_whisper')], [public('1', source='continuation')]):
+            with self.subTest(events=events):
+                frames, calls = await self.exercise('keep-open', events)
+                self.assertNotIn('session/prompt', [r['method'] for r in frames])
+                self.assertNotIn('/inbox/ack', calls)
 
-    async def test_failed_reload_before_attention_preserves_candidate_and_budget(self):
-        result = await self.exercise('attention-reload-fails')
-        self.assertEqual(len(result['attention_posts']), 0)
-        self.assertEqual(result['reserved'], 1)
-        self.assertEqual(len(result['calls']), 1)
-        self.assertEqual(len(result['finishes']), 1)
-        self.assertNotIn('_amplifier/attention', [v['method'] for v in result['frames']])
-        self.assertEqual(result['task']['turns'], 13)
-        errors = [e for e in result['events'] if e['kind'] == 'adapter_error']
-        self.assertEqual([e['phase'] for e in errors], ['connection_or_scheduling'])
+    async def test_reload_refusal_preserves_pending_message(self):
+        inbox = [public('1')]
+        frames, calls = await self.exercise('reload-fails', inbox)
+        self.assertEqual([r['method'] for r in frames], ['initialize','session/load'])
+        self.assertEqual(len(inbox), 1)
+        self.assertNotIn('/inbox/ack', calls)
 
-    async def test_known_no_forward_rejection_keeps_existing_effect_guard_and_no_replay(self):
-        result = await self.exercise('attention-rejected')
-        events = [e for e in result['events'] if e['kind'] == 'attention_not_forwarded']
-        self.assertEqual(len(events), 1)
-        self.assertEqual(events[0]['offer_id'], 'offer')
-        self.assertIs(events[0]['effects_settled'], False)
-        self.assertEqual(sum(v['method'] == 'session/prompt' for v in result['frames']), 2)
-        self.assertEqual(len(result['attention_posts']), 1)
-        self.assertEqual(result['reserved'], 2)
-        self.assertFalse(result['finishes'][0]['error'])
-        self.assertTrue(result['finishes'][1]['error'])
-        self.assertEqual(result['task']['turns'], 13)
-        self.assertEqual(result['task']['max_turns'], 45)
-        self.assertEqual(result['task']['deadline'], 9999999999999)
-        self.assertEqual(result['session']['session'], 'durable-session')
+    async def test_quiet_session_loads_tools_without_a_prompt(self):
+        frames, calls = await self.exercise('keep-open', [])
+        self.assertEqual([r['method'] for r in frames], ['initialize','session/load'])
+        self.assertEqual(frames[1]['mcp_names'], ['minecraft'])
+        self.assertEqual(calls, ['/inbox/peek'])
+
+    async def test_ambiguous_prompt_is_claimed_and_never_resent_after_controller_restart(self):
+        inbox = [public('1')]
+        frames, calls = await self.exercise('during-prompt', inbox, restart=True)
+        self.assertEqual([r['method'] for r in frames],
+                         ['initialize','session/load','session/prompt','initialize','session/load'])
+        self.assertEqual(inbox, [])
+        self.assertEqual(calls.count('/inbox/ack'), 1)
+
+    async def test_mismatched_ack_never_dispatches(self):
+        frames, _ = await self.exercise('keep-open', [public('1')], ack={'id':'different','acknowledged':True})
+        self.assertNotIn('session/prompt', [r['method'] for r in frames])
+
+
+    async def test_negotiated_host_gets_the_original_body_source(self):
+        capability = {'version': 1, 'metadata': 'com.microsoft.amplifier.source-delivery',
+                      'receiptsMethod':'_amplifier/source_receipts', 'ordinaryPrompts':True,
+                      'promptRetry':'inspectOnly'}
+        info = {'_meta': {'io.github.bkrabach.agent-instance': {'inputContinuity': {'sourceDelivery':capability}}}}
+        client = SimpleNamespace(info=info, session='original', prompt=AsyncMock(return_value={'stop_reason':'end_turn'}))
+        fact = {'id':'abc', 'revision':'original-revision','occurredAt':1}
+        event = public('abc', source_fact=fact)
+        request = AsyncMock(return_value={'id':'abc','acknowledged':True})
+        with tempfile.TemporaryDirectory() as tmp:
+            await adapter.deliver(Path(tmp), event, client, 'binding', request, Mock())
+            receipt, = (Path(tmp)/'world-tools-delivery').glob('*/delivery.json')
+            self.assertEqual(json.loads(receipt.read_text())['status'], 'returned')
+            # Simulate restoration of the old body's pre-ACK inbox.
+            await adapter.deliver(Path(tmp), event, client, 'binding', request, Mock())
+            self.assertEqual(client.prompt.await_count, 1)
+        self.assertEqual(client.prompt.await_args.kwargs['source_metadata']['sources'], [fact])
+        request.assert_awaited_with('/inbox/ack', {'id':'abc'})

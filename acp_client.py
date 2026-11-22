@@ -43,7 +43,7 @@ class _Callbacks:
         # callback. The raw observer may already have seen later wire frames;
         # those must not retroactively authorize an earlier permission request.
         item = wire(update)
-        if session_id == self.owner.session and item.get('sessionUpdate') in ('tool_call', 'tool_call_update'):
+        if not self.owner.replaying and session_id == self.owner.session and item.get('sessionUpdate') in ('tool_call', 'tool_call_update'):
             tid = item['toolCallId']
             self.owner._record_tool_call(item)
             self.owner.tool_calls[tid] = {**self.owner.tool_calls.get(tid, {}), **item}
@@ -56,25 +56,18 @@ TOOL_IDENTITY = "com.microsoft.amplifier.tool"
 __version__ = "0.1.0"
 
 # One source for both callback enforcement and the agent-visible policy.
-GAME_TOOLS = frozenset({'follow_up','attack','equip','consume','huddle','observe','survey','inspect','find','chat','tell','task_capabilities','move','follow','cancel_movement','action_sequence','cancel_sequence','start_sequence','sequence_status','gather','craft','place','build','give','stop','work_begin','work_report','work_reopen','map','plan_route','dig','set_open','activate_control','tell','work_note','inventory','entities','shear','furnace','container','attention_watch','attention_watches','attention_cancel','read_sign','write_sign','screenshot','screenshots','screenshot_read','conversation','till','task_accept','task_amend','task_accept_help','work_resume','resume_activity'})
-
-
-REPLY_TOOLS = frozenset({'follow_up','huddle','observe','conversation','entities','inventory','inspect','read_sign','survey','map','plan_route','find','chat','tell','task_capabilities','sequence_status','resume_activity'})
+GAME_TOOLS = frozenset({
+    'attack', 'equip', 'consume', 'conversation', 'till', 'entities', 'shear',
+    'furnace', 'inventory', 'container', 'tell', 'observe', 'survey', 'map',
+    'plan_route', 'read_sign', 'write_sign', 'activate_control', 'set_open', 'dig',
+    'inspect', 'find', 'chat', 'move', 'follow', 'gather', 'craft', 'place', 'build',
+    'give', 'cancel_movement', 'stop', 'operation_status', 'legacy_work',
+    'screenshot', 'screenshots', 'screenshot_read',
+})
 
 
 class ProtocolError(RuntimeError):
     pass
-
-
-def turn_disposition(result, body_busy=False):
-    """A clean protocol budget boundary is resumable, an unfinished action isn't."""
-    if body_busy or result.get('unsettled_tools'):
-        return 'interrupted'
-    if result.get('stop_reason') == 'end_turn':
-        return 'complete'
-    if result.get('stop_reason') in ('max_tokens','max_turn_requests'):
-        return 'limited'
-    return 'interrupted'
 
 
 class Client:
@@ -172,66 +165,12 @@ class Client:
     def permission_context(self):
         """Describe this client's current policy, never grant a tool invocation."""
         policy = {'server': 'minecraft', 'tools': sorted(self.permission_tools()),
-                  'approval': 'allow_once', 'scope': 'same ACP session, active game turn, not session replay'}
+                  'approval': 'allow_once', 'scope': 'same connected ACP session and registered Minecraft tool; disabled during replay and maintenance'}
         revision = hashlib.sha256(json.dumps(policy, sort_keys=True).encode()).hexdigest()
         active = bool(self.session) and not self.replaying and not self.maintenance_active and bool(self.permission_active())
         return {'policy_revision': revision, 'session_id': self.session, 'active': active,
                 'server': policy['server'], 'allow_once_tools': policy['tools'] if active else [],
                 'scope': policy['scope']}
-
-    def supports_awareness(self):
-        def mapping(value):
-            return value if isinstance(value, dict) else {}
-        meta = mapping(mapping(self.info).get('_meta'))
-        capability = mapping(mapping(mapping(meta.get('io.github.bkrabach.agent-instance')).get('inputContinuity')).get('awareness'))
-        return (mapping(meta.get('steering')).get('supported') is True
-                and capability.get('version') == 1 and capability.get('activeOnly') is True
-                and capability.get('promptIdRequired') is True)
-
-    def supports_input_receipts(self):
-        # Steering support alone does not promise native Runtime receipt reads.
-        # Preserve each third-party endpoint's actual advertised guarantees.
-        meta = self.info.get('_meta') if isinstance(self.info, dict) else None
-        steering = meta.get('steering') if isinstance(meta, dict) else None
-        return (isinstance(steering, dict) and steering.get('supported') is True
-                and steering.get('receiptsMethod') == '_session/input_receipts')
-
-    def _no_forward_binding(self, method, params):
-        """Freeze bounded request facts before the SDK sends the operation."""
-        def mapping(value):
-            return value if isinstance(value, dict) else {}
-
-        def identity(value):
-            try:
-                return isinstance(value, str) and 1 <= len(value.encode('utf-8')) <= 512
-            except UnicodeEncodeError:
-                return False
-
-        namespace = 'com.microsoft.amplifier.attention'
-        cap = mapping(mapping(mapping(self.info).get('_meta')).get(namespace))
-        if (method not in ('session/prompt', '_session/steering')
-                or type(cap.get('version')) is not int or cap['version'] != 1
-                or type(cap.get('noForwardRejectionVersion')) is not int
-                or cap['noForwardRejectionVersion'] != 1 or cap.get('promptMetadata') != namespace):
-            return None
-        params = mapping(params)
-        offer = mapping(mapping(params.get('_meta')).get(namespace))
-        sid, offer_id = params.get('sessionId'), offer.get('id')
-        return (sid, offer_id) if identity(sid) and sid == self.session and identity(offer_id) else None
-
-    def _no_forward_receipt(self, binding, data):
-        """Validate host evidence only after an SDK-correlated RequestError."""
-        if binding is None or not isinstance(data, dict):
-            return None
-        sid, offer_id = binding
-        receipt = data.get('com.microsoft.amplifier.attention')
-        if (not isinstance(receipt, dict) or sid != self.session
-                or type(receipt.get('version')) is not int or receipt['version'] != 1
-                or receipt.get('outcome') != 'not_forwarded'
-                or receipt.get('sessionId') != sid or receipt.get('id') != offer_id):
-            return None
-        # Do not retain arbitrary error data, messages or the offer's ticket.
-        return {'version': 1, 'id': offer_id, 'sessionId': sid, 'outcome': 'not_forwarded'}
 
     def _record_tool_call(self, item):
         """Keep identity at announcement time, not a later mutable display update."""
@@ -441,13 +380,6 @@ class Client:
             self.activity_at = started
         reported = started
         frames, size = self.frames, self.observed_bytes
-        no_forward_binding = self._no_forward_binding(method, params)
-        if no_forward_binding is not None:
-            # Send the same immutable IDs captured above even if a caller later
-            # mutates its dictionaries. Prompt content is not copied or changed.
-            namespace = 'com.microsoft.amplifier.attention'
-            params = {**params, '_meta': {**params['_meta'],
-                      namespace: dict(params['_meta'][namespace])}}
         operation = asyncio.create_task(self._invoke(method, params))
         drain = None
         try:
@@ -484,14 +416,6 @@ class Client:
             rejected.request_rejected = True
             rejected.request_method = method
             rejected.request_error_code = error.code
-            receipt = self._no_forward_receipt(no_forward_binding, error.data)
-            if receipt is not None:
-                rejected.no_forward_receipt = receipt
-                self.observe('attention_not_forwarded', method=method,
-                             session_id=receipt['sessionId'], offer_id=receipt['id'],
-                             request_error_code=error.code, effects_settled=False)
-            # Retain the existing error/authority path. This fact neither settles
-            # prior work nor grants replay, a new offer or another task turn.
             raise rejected from None
         except (ConnectionError, OSError) as error:
             self._fail(ProtocolError('ACP transport closed; delivery is unknown'))
@@ -513,10 +437,10 @@ class Client:
                     self.update_queue.get_nowait()
                     self.update_queue.task_done()
 
-    async def prompt(self, text, timeout=None, on_chunk=None, attention_offer=None, snapshot_retained=None, snapshot_key='default', source_metadata=None):
+    async def prompt(self, text, timeout=None, on_chunk=None, snapshot_retained=None, snapshot_key='default', source_metadata=None):
         if self.maintenance_active:
             raise ProtocolError('Maintenance is still settling; no game prompt sent')
-        metadata = {"com.microsoft.amplifier.attention": attention_offer} if attention_offer else {}
+        metadata = {}
         if source_metadata is not None:
             from harness_capabilities import ordinary_metadata, SOURCE_META
             metadata[SOURCE_META] = ordinary_metadata(self.info, source_metadata)
@@ -528,15 +452,7 @@ class Client:
         self.tool_announcements = {}
         permissions = self.permission_context()
         self.observe('permission_context_supplied', **permissions)
-        permission_text = (
-            'Current adapter permission policy for this turn:\n' + json.dumps(permissions) + '\n'
-            'An earlier adapter denial describes that earlier invocation, not a permanent restriction. '
-            'If this current policy explicitly covers an operation that is still needed for your permitted activity, '
-            'you may try it through the offered tool. Each invocation is checked again; a new denial or human Stop still applies. '
-            'This snapshot does not prove the operation succeeded, resolve uncertain prior effects, '
-            'grant access on another connection, or extend task scope/deadlines/budgets. '
-            'Inspect uncertain or partial effects before retrying.\n'
-        )
+        permission_text = 'Current Minecraft tool permissions:\n' + json.dumps(permissions)
 
         async def update(message):
             nonlocal characters, after_tool

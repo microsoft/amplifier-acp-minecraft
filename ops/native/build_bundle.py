@@ -175,6 +175,9 @@ def build(output, cache, *, browser=True, native_shared=None, native_driver=None
             for kind in ('python', 'node'):
                 extracted = extract(fetch(spec[kind], cache), scratch/kind)
                 shutil.copytree(extracted, output/kind, symlinks=True)
+            # Existing immutable package-v1 updater clients require the inventoried
+            # task_helper binary to stage a source upgrade. Fresh connections never
+            # install or run it. Keep the archive readable by those clients.
             helper_root=extract(fetch(spec['task_helper'],cache),scratch/'task-helper',single_root=False)
             helper_name='agent-runtime.exe' if selected.startswith('windows-') else 'agent-runtime'
             helper=helper_root/helper_name

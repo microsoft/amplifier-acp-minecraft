@@ -14,11 +14,9 @@ game adapter remains portable; do not enroll this optional driver on another OS.
   ACP SDK's `direct_url.json` immutable upstream commit, not its version alone.
   Build and validate before closing game admission. Source rollback must never
   restore old workshop, session, input, authority or accounting files.
-* `task-helpers`: a separately selected published executable, digest checked
-  before execution. Discover support with the static `helper-capabilities`
-  command. Installation of this pure helper must not select a native engine,
-  change credentials, evaluate a watch, or invoke a model. Existing watch stores,
-  cursors, TTLs and accounting remain unchanged.
+* Existing installations can also have a separately enrolled `task-helpers`
+  binary. Keep its recorded version and independently owned update registration.
+  Fresh connections need only the Minecraft component.
 * `minecraft` lifecycle participant: applies whenever an enrolled instance,
   runtime, external engine, container image, Minecraft or helper component changes,
   even if Minecraft itself has no candidate. Scope uses explicit registered
@@ -45,8 +43,8 @@ IDs and restart scope. Protocol-2 providers also receive
    **before** any service/admission mutation. Never touch unrelated services.
 2. Close only new Minecraft admission with a durable transaction-owned body
    gate. A read-only idle check followed by stopping a controller is insufficient:
-   another turn can enter between those operations. In-flight work and its
-   existing lease may settle; do not cancel, finish or renew a task to obtain idle.
+   another chat or world action can enter between those operations. Allow
+   admitted work to finish and preserve all unresolved operation receipts.
    Return `ready:false,reason:busy` promptly while unsettled. The command budget
    is 30 seconds; repeated prepare calls use the same receipt and gate.
 3. At a genuinely settled boundary, stop only captured controller units and
@@ -86,9 +84,9 @@ new authority/accounting fields, retained incoming events, process/world drift,
 pre-existing and external pauses, and lost replies.
 
 `installation_participant.py` implements lifecycle v1. The body synchronously
-checks `installation-updates/gate.json` before reserving a turn. The controller
-acknowledges the gate outside its work loop, binding the acknowledgment to its
-PID, boot ID and process start time. Existing action leases can settle normally.
+checks `installation-updates/gate.json` before a new world action. The controller
+acknowledges the gate between incoming chats, binding the acknowledgment to its
+PID, boot ID and process start time. An in-flight world action settles normally.
 The gate is durable across body/controller restarts and has no implicit timeout.
 This participant never changes systemd masks or enabled state: its gate and
 stopped controller provide the update pause, and pre-existing masks stay intact.
@@ -105,7 +103,7 @@ state. If a body started for verification must be stopped again before source
 rollback, the same participant gate, idle proof and continuity checks apply.
 Once listener restoration starts, code rollback is refused.
 
-Task helpers use the generic updater's built-in GitHub `kind: runtime` provider
+If previously enrolled, legacy task helpers use the generic updater's built-in GitHub `kind: runtime` provider
 at a **separate** game `task-helpers/agent-runtime` path. The generic updater
 verifies published digests; Minecraft additionally checks static tagged-bound
 capabilities before restoring. This is not the agent's selected execution engine.
@@ -122,7 +120,6 @@ Create a private owner config outside agent/container mounts. Required fields:
   "python": "/absolute/base-python",
   "node": "/absolute/node-22-or-newer",
   "npm_cli": "/absolute/npm-cli.js",
-  "task_helper": "/absolute/player-home/task-helpers/agent-runtime",
   "channel": "latest-passing-development",
   "required_checks": ["test"],
   "units": {
@@ -140,7 +137,7 @@ then run `installation_enrollment.py --config /absolute/config.json --helpers
 /absolute/helper-directory --python /absolute/owner-python`. It emits a delta;
 it performs no registration write, service operation or policy opt-in. The owner
 updater merges that delta without deleting existing components/participants.
-Both `minecraft` and `task-helpers` explicitly request
+The source and any previously enrolled helper request
 `restart_scope={services:[],instance:false,slack_homes:[]}`. The participant owns
 game units; the generic updater owns no game services.
 
@@ -153,17 +150,16 @@ The participant invokes the session probe using the stable enrolled game `venv/b
 only initialize/session-load operations and permission callbacks disabled.
 It does not send prompts, maintenance, receipt acknowledgments or session/new.
 By default the probe receives a 12-second operation budget within the legacy
-30-second participant command limit; this does not change task lifetime, provider settings or action
-leases. Lost restore acknowledgment still skips all re-verification and resumes
+30-second participant command limit. Lost restore acknowledgment still skips all re-verification and resumes
 restoration only; no session load runs after listeners may have resumed.
 
 For source-provider enrollment, the controller must use the stable enrolled
 `venv/bin/python` and `app/adapter.py` paths; the body must use the enrolled app.
-Configure `task_helpers.command` to the separate helper path once during initial
-setup. These bootstrap path changes are not performed by a scheduled update.
+Existing owner configurations that include `task_helper` continue to verify
+that independently enrolled executable. Fresh setup omits it.
 Use a source revision containing this admission protocol. Preserve all original
 state and policies during that bootstrap, and verify an idle `/installation-state`
-response, exact saved session files, unit commands and helper capabilities.
+response, exact saved session files and unit commands.
 Do not point updater control-plane code/config at the source directory it replaces.
 
 Failure receipts are private and retain a transaction ID and immutable context.
@@ -290,8 +286,8 @@ installation for long-history sessions until both sides are installed and checke
 ## Multiple Minecraft connections on one Instance
 
 Each connection keeps its own home, game session, context provider/secret,
-services, task authority and updater state directory. Do not repoint an existing
-home at another world or copy its accepted task into a new connection.
+services, world action receipts and updater state directory. Keep each home
+bound to its enrolled world and session.
 
 Existing enrollment IDs remain unchanged. A second connection may explicitly set
 these owner configuration fields before enrollment:
@@ -300,8 +296,7 @@ these owner configuration fields before enrollment:
 {
   "participant_id": "minecraft-visit",
   "component_ids": {
-    "minecraft": "minecraft-visit",
-    "task-helpers": "task-helpers-visit"
+    "minecraft": "minecraft-visit"
   }
 }
 ```
@@ -316,12 +311,12 @@ IDs do not share tasks, authorize work, or grant access to another world.
 
 ## Engagement and source evidence
 
-Before an update closes game admission, the participant defers for recent
-server-attributed human chat, pending fresh human input, or observed movement or
-interaction in the body's existing activity window. Idle presence and peer
-chatter do not defer it. Once an update has durably entered its lifecycle, it
-finishes verification/restoration without recapturing or dropping its hold.
-This is an idle check in the existing updater, not a second scheduler.
+During an upgrade from the legacy connector, the updater honors its existing
+human-engagement indication. The conversation-and-tools connector reports the
+current operation and its readiness to disconnect. Updates observe the saved
+session, Stop, exact action receipts, and queued chat, with new chat allowed to
+append. Legacy Workshop tasks, limits, and interruptions stay in their original
+files throughout installation and rollback. The lifecycle never reissues them.
 
 New source plans regenerate `app-source.json.files` from the frozen installed
 application, including built UI assets and excluding dependencies/Python caches.

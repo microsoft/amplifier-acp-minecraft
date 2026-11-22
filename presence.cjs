@@ -1,6 +1,5 @@
 // Public game observations for another ACP experience. No game control authority.
 const crypto = require('node:crypto');
-const bounds=require('./task-bounds.cjs');
 const {McpServer} = require('@modelcontextprotocol/sdk/server/mcp.js');
 const {StreamableHTTPServerTransport} = require('@modelcontextprotocol/sdk/server/streamableHttp.js');
 const {z} = require('zod');
@@ -10,18 +9,8 @@ function status(snapshot, label) {
   const fields = ['username','ready','busy','turn_active','position','feet_block','health','food','time','inventory','players'];
   const result = Object.fromEntries(fields.filter(k => snapshot[k] !== undefined).map(k => [k,snapshot[k]]));
   const observed_at=new Date().toISOString();
-  const t=snapshot.task;
-  result.task=t?Object.fromEntries(['id','goal','status','turns','max_turns','deadline','wait_for']
-    .filter(k=>t[k]!==undefined).map(k=>[k,t[k]])):null;
-  if(t)result.task.limit_state=bounds.limitState(t,Date.parse(observed_at));
-  if(t?.bounds!==undefined)result.task.bounds=bounds.valid(t)?bounds.get(t):{status:'unknown'};
-  // Reassessment entries contain observations and raw action receipts. Expose
-  // only the agent's short report, even when a nested observation is present.
-  if(t)result.task.progress=(t.progress||[]).slice(-8).map(entry=>({
-    at:entry.at,summary:String(entry.summary||'').slice(0,2000)
-  }));
   return {world:label,observed_at,...result,
-    coverage:'Observed game state; progress and completion are agent reports. This connection is read-only.'};
+    coverage:'Game state observed by this player.'};
 }
 function activity(snapshot, limit, label) {
   const events=(snapshot.public_chat||snapshot.events||[]).filter(isPublicChatEvent);
@@ -44,7 +33,7 @@ function createHandler({token,snapshot,label='Minecraft',screenshots,onError=()=
       require('./screenshots.cjs').registerTools(server,screenshots,'minecraft_');
       const reply=value=>({content:[{type:'text',text:JSON.stringify(value)}]});
       server.registerTool('minecraft_status',{
-        description:'See this same agent in its connected Minecraft world: current raw position and feet block, inventory, other players and bounded task progress. Does not wake a planner or change the world.',
+        description:'See this same agent in its connected Minecraft world: current raw position and feet block, inventory and nearby players.',
         inputSchema:{},annotations:{readOnlyHint:true,destructiveHint:false}
       },async()=>reply(status(snapshot(),label)));
       server.registerTool('minecraft_recent_activity',{

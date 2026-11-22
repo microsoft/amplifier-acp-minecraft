@@ -33,12 +33,16 @@ def owner_io(backend):
 
 def enrollment_ids(cfg):
     """Exact installation-owned IDs let one Instance enroll multiple game connections."""
-    ids = cfg.get('component_ids', {'minecraft':'minecraft', 'task-helpers':'task-helpers'})
+    defaults = {'minecraft':'minecraft'}
+    if 'task_helper' in cfg:
+        defaults['task-helpers'] = 'task-helpers'
+    ids = cfg.get('component_ids', defaults)
     participant = cfg.get('participant_id', 'minecraft')
-    if (not isinstance(ids, dict) or set(ids) != {'minecraft','task-helpers'}
+    if (not isinstance(ids, dict) or set(ids) not in ({'minecraft'}, {'minecraft','task-helpers'})
+            or ('task_helper' in cfg and 'task-helpers' not in ids)
             or any(not isinstance(v,str) or not re.fullmatch('[a-z][a-z0-9-]{0,63}',v)
                    for v in [participant,*ids.values()])
-            or len(set(ids.values())) != 2
+            or len(set(ids.values())) != len(ids)
             or {'instance','runtime','engine','container-image'} & set(ids.values())):
         raise ValueError('Invalid per-connection updater IDs')
     return participant, ids
@@ -279,7 +283,8 @@ def authority_checks(before, after, *, allow_expiry=False):
     checks = {key:before[key] == after[key] for key in ('authority_hash','task_hash')}
     evidence = before.get('expiry_projection')
     observed = after.get('observed_at_ms')
-    if (allow_expiry and not all(checks.values()) and isinstance(evidence, dict)
+    if (allow_expiry and not before.get('direct') and not after.get('direct')
+            and not all(checks.values()) and isinstance(evidence, dict)
             and type(observed) is int and type(evidence.get('deadline_ms')) is int
             and observed >= evidence['deadline_ms']
             and all(after[key] == evidence.get(key) for key in checks)):
@@ -289,15 +294,64 @@ def authority_checks(before, after, *, allow_expiry=False):
     return checks
 
 
+def legacy_history(home):
+    # Fresh conversation/tool installations have no Workshop task store.
+    path = Path(home)/'workshop.json'
+    if path.is_symlink():
+        raise ContinuityError('Unexpected Workshop history link')
+    try:
+        return read(path)
+    except FileNotFoundError:
+        return {}
+
+
+def world_state(home):
+    directory = Path(home)/'world-tools'
+    path = directory/'state.json'
+    if directory.is_symlink() or path.is_symlink():
+        raise ContinuityError('Unexpected world tool state link')
+    try:
+        record = read(path)
+    except FileNotFoundError:
+        return None
+    if (not isinstance(record, dict) or type(record.get('version')) is not int
+            or record['version'] != 1 or not isinstance(record.get('operations'), dict)
+            or not isinstance(record.get('public_inbox'), list) or 'stopped' not in record):
+        raise ContinuityError('World tool state cannot be verified')
+    return record
+
+
+def world_continuity(before, after):
+    old, new = before.get('world_tools'), after.get('world_tools')
+    if old is None and new is None:
+        return {}
+    # A newly observed chat can initialize the journal even while gated.
+    # Only chat can appear; owner Stop and every attempted effect stay exact.
+    empty = before.get('initial_world_tools', {
+        'operations_hash':digest({}), 'stop_hash':digest(None), 'other_hash':digest({}), 'inbox':[]})
+    expected = old if old is not None else empty
+    checks = {'world_tool_receipts':new is not None and
+              new['operations_hash'] == expected['operations_hash'],
+              'world_stop': new is not None and new['stop_hash'] == expected['stop_hash'],
+              'world_other_state':new is not None and new['other_hash'] == expected['other_hash'],
+              'world_pending_chat': new is not None and
+              new['inbox'][:len(expected['inbox'])] == expected['inbox']}
+    return checks
+
+
 def snapshot(home, services, body=None, status=None):
     """Read twice around the body observation in the caller to detect races.
 
     All saved history except the rolling event journal is protected, including
     newly added fields, pending sources, unknown receipts and sequence IDs.
     """
-    history = read(Path(home)/'workshop.json')
+    history = legacy_history(home)
+    world = world_state(home)
+    direct = (body or {}).get('lifecycle_version') == 2
+    if direct and (status or {}).get('lifecycle_version') != 2:
+        raise NotIdle('World operation status changed between observations')
     authority = {k: v for k, v in history.items() if k not in OBSERVATIONS}
-    if body is not None and body.get('task') != history.get('task'):
+    if body is not None and not direct and body.get('task') != history.get('task'):
         raise NotIdle('Body and saved task disagree; inspect again after settlement')
     return {
         'home': str(Path(home).resolve()),
@@ -309,17 +363,34 @@ def snapshot(home, services, body=None, status=None):
         'turn': history.get('turn'),
         'sequence_states': [v.get('status') for v in history.get('action_sequences', [])],
         'protected_files': protected_files(home),
+        'initial_world_tools':{
+            'operations_hash':digest({}), 'stop_hash':digest(history.get('activity_stop') or
+                ({'source':'legacy_stop'} if (history.get('task') or {}).get('status') == 'stopped' else None)),
+            'other_hash':digest({'block_controls':history.get('block_controls') or {},
+                                 'installation_input_receipts':history.get('installation_input_receipts') or {},
+                                 'task_source_cutoff':history.get('task_source_cutoff') or 0,
+                                 'inbox':[]}),
+            'inbox':[]},
+
+        'world_tools': None if world is None else {
+            'operations_hash':digest(world['operations']), 'stop_hash':digest(world['stopped']),
+            'other_hash':digest({key:value for key,value in world.items()
+                if key not in ('version','operations','stopped','public_inbox','events')}),
+            'inbox':[digest(item) for item in world['public_inbox']]},
+        'direct': direct,
         'source_metadata': digest(read(Path(home)/'app-source.json')) if (Path(home)/'app-source.json').exists() else None,
         'services': services,
         'body': None if body is None else {k: body.get(k) for k in (
-            'ready', 'busy', 'turn_active', 'action_lease', 'inventory', 'position')},
+            'ready', 'busy', 'active_operation', 'turn_active', 'action_lease', 'inventory', 'position')},
         'sequence': None if status is None else status.get('action_sequence'),
         'human_engagement': (body or {}).get('human_engagement'),
-        'status_observed': isinstance(status, dict) and 'action_sequence' in status,
+        'status_observed': isinstance(status, dict) and (
+            ('active_operation' in status and 'active_operation' in body) if direct else 'action_sequence' in status),
         'status_idle': isinstance(status, dict) and status.get('ready') is True
-            and status.get('busy') is False and status.get('turn_active') is False
-            and status.get('action_lease') == (body or {}).get('action_lease')
-            and status.get('task') == history.get('task'),
+            and status.get('busy') is False and (status.get('active_operation') is None if direct else
+                status.get('turn_active') is False
+                and status.get('action_lease') == (body or {}).get('action_lease')
+                and status.get('task') == history.get('task')),
     }
 
 
@@ -354,15 +425,21 @@ def require_idle(value):
     body = value['body']
     if not body or not value['status_observed'] or not value['status_idle']:
         raise NotIdle('Active body requires fresh state and operation status')
-    if body['ready'] is not True or body['busy'] is not False or body['turn_active'] is not False:
+    if body['ready'] is not True or body['busy'] is not False:
         raise NotIdle('Body is not demonstrably settled')
+    if body.get('inventory') is None or body.get('position') is None:
+        raise NotIdle('World continuity observation is missing')
+    if value.get('direct'):
+        if body.get('active_operation') is not None:
+            raise NotIdle('World tool operation is still in progress')
+        return
+    if body['turn_active'] is not False:
+        raise NotIdle('Legacy body turn is active or unknown')
     lease = body.get('action_lease')
     if (not isinstance(lease, dict) or lease.get('version') != 1
             or 'lease_id' not in lease or lease['lease_id'] is not None
             or lease.get('expires_at') != 0 or lease.get('renewable') is not False):
         raise NotIdle('Action lease is active or unknown')
-    if body.get('inventory') is None or body.get('position') is None:
-        raise NotIdle('World continuity observation is missing')
     if value['sequence'] is not None:
         raise NotIdle('Sequence still active')
 
@@ -377,6 +454,7 @@ def continuity(before, after, *, body_restart=False, allow_expiry=False):
         'task': authority['task_hash'],
         'files': before['protected_files'] == after['protected_files'],
     }
+    checks.update(world_continuity(before, after))
     if authority.get('finite_deadline_expiry'):
         checks['finite_deadline_expiry'] = True
     for key in ('inbox', 'participation_pending'):

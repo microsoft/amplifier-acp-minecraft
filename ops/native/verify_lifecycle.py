@@ -54,9 +54,8 @@ if a.role=='body':
   def log_message(self,*args):pass
   def do_GET(self):
    if self.headers.get('Authorization')!='Bearer '+cfg['token']:self.send_error(403);return
-   data={'version':1,'task':json.loads((home/'workshop.json').read_text())['task'],
-    'ready':True,'busy':False,'turn_active':False,'window_open':False,'action_sequence':None,
-    'action_lease':{'version':1,'lease_id':None,'expires_at':0,'renewable':False},
+   data={'version':1,'lifecycle_version':2,'active_operation':None,
+    'ready':True,'busy':False,'window_open':False,
     'inventory':{'slots':[{'name':'pickaxe','damage':48}],'cursor':None},'position':{'x':1,'y':64,'z':3}}
    self.send_response(200);self.end_headers();self.wfile.write(json.dumps(data).encode())
  http.server.HTTPServer(('127.0.0.1',cfg['control_port']),Handler).serve_forever()
@@ -141,13 +140,9 @@ try:
  environment_python='python.exe' if os.name=='nt' else 'bin/python3'
  cfg['native_platform'].update(python=str(home/'venv'/environment_python),environment_python=environment_python)
  cfg.update(app=str(home/'app'),venv=str(home/'venv'),python=sys.executable,node=str(BUNDLE/manifest['commands']['node']),npm_cli=str(BUNDLE/'app/package.json'),channel='latest-passing-development',required_checks=['disposable-boundary'])
- helpers=home/'task-helpers';helpers.mkdir();protect(helpers)
- helper=helpers/('agent-runtime.exe' if os.name=='nt' else 'agent-runtime')
- shutil.copy2(BUNDLE/manifest['commands']['task_helper'],helper);protect(helper)
- if os.name!='nt':helper.chmod(0o700)
  shared_plans=root/'shared'/'plans';shared_plans.mkdir(parents=True);protect(shared_plans.parent);protect(shared_plans)
  initial(shared_plans.parent/'state.json',{'state':'succeeded','transaction':None})
- cfg.update(task_helper=str(helper),shared_plans=str(shared_plans))
+ cfg.update(shared_plans=str(shared_plans))
  initial(home/'app-source.json',{'revision':'a'*40,'fixture':True})
  original={p.name:p.read_bytes() for p in home.iterdir() if p.is_file() and p.name!='app-source.json'}
  original_source=read(home/'app-source.json')

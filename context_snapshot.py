@@ -1,5 +1,4 @@
 """Optional producer-owned refreshed observations, never transcript deletion."""
-import json
 
 META = 'com.microsoft.amplifier.context-snapshot'
 
@@ -10,20 +9,6 @@ def supported(info):
     return (isinstance(cap, dict) and type(cap.get('version')) is int
             and cap['version'] == 1 and cap.get('contentBlocks') is True
             and cap.get('originalHistoryPreserved') is True)
-
-
-def retained_request(messages, world):
-    task = world.get('task') or {}
-    # Preserve original supplied messages verbatim, including IDs, source facts,
-    # corrections and limits. Never replace them with an LLM summary.
-    value = json.dumps({'messages': messages, 'historical_assignment': {
-        k: task[k] for k in ('id', 'goal', 'request', 'status', 'turns', 'max_turns',
-                            'deadline', 'bounds', 'authority_revision') if k in task}}, ensure_ascii=False)
-    text = ('Historical Minecraft request and assignment facts, not renewed authority. '
-            'The latest observation supplies current terrain, inventory, receipts and permissions. '
-            'Retrieve original observations with session_history when needed.\n' + value)
-    # Oversized exact requests fall back unchanged; do not truncate authority.
-    return text if len(text.encode('utf-8')) <= 32768 else None
 
 
 def blocks(info, permission_text, text, retained, key, policy_revision):

@@ -181,6 +181,7 @@ class ParticipantTests(unittest.TestCase):
         self.assertEqual(p.value['session']['saved_session_loaded'],True)
 
     def test_helper_only_and_unchanged_busy_failure_do_not_load_session(self):
+        self.cfg['task_helper']=str(self.home/'task-helpers/agent-runtime')
         self.envelope['plan']['components']=['task-helpers'];p=self.ready()
         p.verify('applied');p.restore('applied')
         self.assertNotIn(('session','load-only'),self.backend.actions)

@@ -41,6 +41,37 @@ class InstallationGuardTests(unittest.TestCase):
         self.assertTrue(all(continuity(before, self.snap()).values()))
         self.assertEqual(json.loads((self.home/'workshop.json').read_text()), self.history)
 
+    def test_world_actions_and_chat_survive_legacy_source_cutover(self):
+        before = self.snap()
+        self.body = {'ready':True, 'busy':False, 'active_operation':None, 'lifecycle_version':2,
+                     'inventory':self.body['inventory'], 'position':self.body['position']}
+        folder = self.home/'world-tools'
+        folder.mkdir()
+        path = folder/'state.json'
+        world = {'version':1, 'stopped':None, 'operations':{}, 'public_inbox':[{'id':'new'}],
+                 'block_controls':{}, 'installation_input_receipts':{}, 'task_source_cutoff':0, 'inbox':[]}
+        path.write_text(json.dumps(world))
+        after = self.snap()
+        self.assertTrue(all(continuity(before, after, body_restart=True).values()))
+        world['operations']['unknown'] = {'status':'unknown'}
+        path.write_text(json.dumps(world))
+        with self.assertRaises(ContinuityError):
+            continuity(after, self.snap())
+        before = self.snap()
+        world['public_inbox'].append({'id':'next'})
+        path.write_text(json.dumps(world))
+        self.assertTrue(all(continuity(before, self.snap()).values()))
+        world['public_inbox'].pop(0)
+        path.write_text(json.dumps(world))
+        with self.assertRaises(ContinuityError):
+            continuity(before, self.snap())
+        self.body['active_operation'] = 'unsettled-use'
+        with self.assertRaises(NotIdle):
+            require_idle(self.snap())
+        del self.body['active_operation']
+        with self.assertRaises(NotIdle):
+            require_idle(self.snap())
+
     def test_every_busy_or_unknown_boundary_defers(self):
         original = self.snap()
         mutations = [lambda v: v.update(turn={'id': 'work'}),

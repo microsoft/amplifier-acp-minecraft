@@ -190,7 +190,7 @@ class Provider:
         if any(not (app/name).is_file() for name in ('update-admission.cjs','update_admission.py','tests/test_installation_guard.py')):
             raise ContinuityError('Candidate cannot preserve installation admission support')
         run([str(venv/'bin/python'),'-m','unittest','discover','-s','tests','-p','test_installation_guard.py'],cwd=app,env=environment,stderr=subprocess.STDOUT)
-        run([self.c['node'],'--test','tests/body-lease.test.cjs'],cwd=app,env=environment,stderr=subprocess.STDOUT)
+        run([self.c['node'],'--test','tests/body-world-tools.test.cjs','tests/body-lease.test.cjs'],cwd=app,env=environment,stderr=subprocess.STDOUT)
         return sdk
 
     def screenshot_policy(self):

@@ -25,11 +25,6 @@ def ordinary_sources(info):
             and cap.get('promptRetry') == 'inspectOnly')
 
 
-def source_work(info):
-    cap = mapping(mapping(instance(info).get('inputContinuity')).get('sourceDelivery'))
-    return source_delivery(info) and cap.get('workReferences') is True
-
-
 def ordinary_metadata(info, value):
     """Validate the negotiated wire shape; never infer a source from prompt text."""
     v = mapping(value)
@@ -41,29 +36,6 @@ def ordinary_metadata(info, value):
             or not facts):
         raise ValueError('Ordinary source metadata is invalid or not negotiated')
     return {'version': 1, 'inputId': identity, 'sources': facts}
-
-
-def work_references(row, info):
-    """Host responsibility references are separate from Minecraft task authority."""
-    if not source_work(info):
-        return None
-    unknown = {'references': [], 'coverage': 'unknown'}
-    refs = mapping(row).get('work')
-    coverage = mapping(row).get('workCoverage')
-    if (not isinstance(refs, list) or len(refs) > 64
-            or coverage not in ('partial', 'retained_session_records')):
-        return unknown
-    result, seen = [], set()
-    for item in refs:
-        item = mapping(item)
-        if (any(not isinstance(item.get(k), str) or not 1 <= len(item[k].encode()) <= 512
-                for k in ('id', 'ownerAgentId', 'inputId', 'state'))
-                or type(item.get('revision')) is not int or item['revision'] < 0
-                or item['id'] in seen):
-            return unknown
-        seen.add(item['id'])
-        result.append({k: item[k] for k in ('id', 'ownerAgentId', 'revision', 'state', 'inputId')})
-    return {'references': result, 'coverage': coverage}
 
 
 def maintenance(info):
@@ -88,36 +60,3 @@ def sources(values):
         seen.add(identity)
         result.append({'id': identity, 'revision': revision, 'occurredAt': occurred})
     return result
-
-
-def attention_context(context, source_facts, info):
-    """Old strict schemas get exactly the old message fields."""
-    if not source_delivery(info):
-        return context
-    by_id = {s['id']: s for s in sources(source_facts)}
-    result = dict(context)
-    result['messages'] = []
-    for message in context.get('messages', []):
-        item = dict(message)
-        if (source := by_id.get(item.get('id'))) is not None:
-            item.update(revision=source['revision'], occurred_at=source['occurredAt'])
-        result['messages'].append(item)
-    return result
-
-
-ATTENTION_META = 'com.microsoft.amplifier.attention'
-ATTENTION_METHOD = '_amplifier/attention'
-def attention(info):
-    cap=mapping(mapping(info).get('_meta')).get(ATTENTION_META)
-    cap=mapping(cap)
-    return cap if type(cap.get('version')) is int and cap['version']==1 and cap.get('enabled') is True and cap.get('method')==ATTENTION_METHOD else {}
-
-def activity(info):
-    cap=mapping(attention(info).get('activity'))
-    return (type(cap.get('version')) is int and cap['version']==1
-            and cap.get('contextField')=='activities' and type(cap.get('maxItems')) is int
-            and 1 <= cap['maxItems'] <= 16)
-
-def human_messages(info):
-    cap=mapping(attention(info).get('humanMessages'))
-    return type(cap.get('version')) is int and cap['version']==1 and cap.get('budgetPolicy')=='independent_of_ambient'

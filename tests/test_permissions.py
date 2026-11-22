@@ -1,12 +1,11 @@
 import json,sys,unittest
 from pathlib import Path
-from acp_client import Client, GAME_TOOLS, REPLY_TOOLS
+from acp_client import Client, GAME_TOOLS
 class Permissions(unittest.IsolatedAsyncioTestCase):
- async def check(self,scenario,active=True,reply=False):
+ async def check(self,scenario,active=True):
   c=Client({'command':[sys.executable,str(Path(__file__).with_name('permission_fixture.py')),scenario],'cwd':'/tmp'},lambda *a,**kw:None)
   try:
    await c.start();await c.open_session();c.permission_active=lambda:active
-   if reply:c.permission_tools=lambda:REPLY_TOOLS
    return json.loads((await c.prompt('test',5))['text'])['outcome']
   finally:await c.close()
  async def test_only_game_tool_once(self):self.assertEqual(await self.check('game'),{'outcome':'selected','optionId':'once'})
@@ -19,7 +18,7 @@ class Permissions(unittest.IsolatedAsyncioTestCase):
   self.assertEqual(await self.check('game:cancel_movement'),{'outcome':'selected','optionId':'once'})
   self.assertEqual((await self.check('game:cancel_movement',False))['outcome'],'cancelled')
  async def test_survival_tools_use_same_scoped_permission_boundary(self):
-  for tool in ('entities','shear','furnace','container','attention_watch','attention_watches','attention_cancel','read_sign','write_sign'):
+  for tool in ('entities','shear','furnace','container','read_sign','write_sign'):
    self.assertEqual(await self.check('game:'+tool),{'outcome':'selected','optionId':'once'})
    self.assertEqual((await self.check('game:'+tool,False))['outcome'],'cancelled')
 
@@ -74,7 +73,6 @@ class Permissions(unittest.IsolatedAsyncioTestCase):
    self.assertEqual(json.loads(result['final_text'])['outcome']['outcome'],'selected')
   finally:await c.close()
 
- async def test_reply_scope_denies_all_game_effects_and_task_changes(self):
-  for tool in GAME_TOOLS:
-   result=await self.check('game:'+tool,reply=True)
-   self.assertEqual(result['outcome'],'selected' if tool in REPLY_TOOLS else 'cancelled',tool)
+ async def test_retired_planning_names_cannot_receive_authority(self):
+  for tool in ('work_begin','task_accept','attention_watch','start_sequence','follow_up'):
+   self.assertEqual((await self.check('game:'+tool))['outcome'],'cancelled')

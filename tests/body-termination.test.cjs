@@ -35,7 +35,7 @@ function standIn(t,onConnection){
  t.after(()=>{for(const s of sockets)s.destroy();server.close();});
  return {server,sockets};
 }
-const events=home=>JSON.parse(fs.readFileSync(path.join(home,'workshop.json'),'utf8')).events.map(e=>e.kind);
+const events=home=>JSON.parse(fs.readFileSync(path.join(home,'world-tools','state.json'),'utf8')).events.map(e=>e.kind);
 
 test('requested termination leaves the game, then ends by the signal rather than status 0',posix,async t=>{
  const game=standIn(t),body=await start(t,{game:await listening(game.server)});

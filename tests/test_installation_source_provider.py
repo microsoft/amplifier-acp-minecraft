@@ -148,6 +148,14 @@ class SourceProviderTests(unittest.TestCase):
         self.assertEqual(delta['components'][1]['kind'],'runtime')
         for c in delta['components']:self.assertEqual(c['restart_scope'],{'services':[],'instance':False,'slack_homes':[]})
         self.assertEqual(delta['participants'][0]['protocol'],1)
+    def test_fresh_registration_only_enrolls_the_minecraft_source(self):
+        self.cfg.pop('task_helper')
+        self.cfg['component_ids']={'minecraft':'minecraft'}
+        config=self.root/'config.json';durable_write(config,self.cfg)
+        delta=registration(config,Path(__file__).resolve().parent.parent,Path(sys.executable))
+        self.assertEqual([c['id'] for c in delta['components']],['minecraft'])
+        self.assertNotIn('task-helpers',delta['participants'][0]['components'])
+
     def test_saved_connection_enrollment_is_explicit_fixed_argv_and_no_dead_add(self):
         helper=Path(self.cfg['task_helper']);helper.parent.mkdir();helper.write_text('existing')
         config=self.root/'config.json';durable_write(config,self.cfg)

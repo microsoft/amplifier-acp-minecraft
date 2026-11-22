@@ -172,7 +172,7 @@ class PermissionIdentity(unittest.IsolatedAsyncioTestCase):
             'version': 1, 'rawInputShape': 'arguments'}
         return c
 
-    def argument_call(self, tool='work_report', arguments=None):
+    def argument_call(self, tool='inspect', arguments=None):
         call = self.call(tool)
         call.update(title='mcp_minecraft_' + tool, name='mcp_minecraft_' + tool,
                     kind='other', rawInput={} if arguments is None else arguments)
@@ -204,8 +204,8 @@ class PermissionIdentity(unittest.IsolatedAsyncioTestCase):
         self.announce(c, call)
         self.assertEqual(self.outcome(c, call), 'selected')
         for identity in ({'version':1,'kind':'builtin','name':'bash'},
-                         {'version':1,'kind':'caller','name':'work_report','server':'minecraft'},
-                         {'version':1,'kind':'mcp','name':'work_report','server':'filesystem'},
+                         {'version':1,'kind':'caller','name':'inspect','server':'minecraft'},
+                         {'version':1,'kind':'mcp','name':'inspect','server':'filesystem'},
                          {'version':1,'kind':'mcp','name':'arbitrary_host_command','server':'minecraft'}):
             c = self.argument_client(); call = self.argument_call()
             call['_meta'][TOOL_IDENTITY] = identity

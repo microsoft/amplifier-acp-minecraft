@@ -14,14 +14,12 @@ const snapshot={username:'Builder',ready:true,position:{x:-507.92,y:64.5,z:-545.
     {id:'private',kind:'chat',username:'Player',message:'Private whisper',whisper:true},
     {id:'receipt',kind:'action_result',result:{secret:'Do not expose raw receipts'}}],
   token:'never-public',receipts:[{private:true}]};
-test('status keeps useful progress without source requests or control details',()=>{
+test('status exposes game facts and omits historical work and private details',()=>{
  const result=status(snapshot,'Workshop');
- assert.equal(result.task.status,'waiting');assert.deepEqual(result.position,snapshot.position);
+ assert.equal(result.task,undefined);
+ assert.deepEqual(result.position,snapshot.position);
  assert.deepEqual(result.feet_block,snapshot.feet_block);
- assert.equal(result.task.request,undefined);assert.equal(result.task.request_id,undefined);
  assert.equal(result.token,undefined);assert.equal(result.receipts,undefined);
- assert.equal(result.task.progress[0].summary,'Waiting for material');
- assert.equal(result.task.progress[0].observation,undefined);
  assert.ok(!JSON.stringify(result).includes('private-request'));
  assert.equal(status({username:'Builder',ready:false},'Workshop').ready,false);
  assert.equal(status({username:'Builder',ready:false},'Workshop').feet_block,undefined);
@@ -52,12 +50,9 @@ test('real MCP boundary exposes only observation tools and cannot begin work',as
  assert.deepEqual(listing.result.tools.map(x=>x.name).sort(),['minecraft_recent_activity','minecraft_status']);
  const read=await (await rpc('tools/call',{name:'minecraft_status',arguments:{}})).json();
  const projected=JSON.parse(read.result.content[0].text);
- assert.equal(projected.task.id,'existing-task');
+ assert.equal(projected.task,undefined);
  assert.deepEqual(projected.position,snapshot.position);
  assert.deepEqual(projected.feet_block,snapshot.feet_block);
- assert.equal(projected.task.limit_state.deadline.elapsed,true);
- assert.equal(projected.task.limit_state.turns.reached,false);
- assert.equal(projected.task.limit_state.observed_at,projected.observed_at);
  for(const name of ['work_begin','move','stop','task','minecraft_status;work_begin']){
    const denied=await (await rpc('tools/call',{name,arguments:{}})).json();
    assert.ok(denied.error||denied.result?.isError);

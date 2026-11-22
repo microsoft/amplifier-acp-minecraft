@@ -1,4 +1,4 @@
-"""Read-only experiment measurements; counts are not scores of agent quality."""
+"""Read-only analysis of historical workshop.json experiments."""
 import argparse
 from collections import Counter
 from datetime import datetime
@@ -79,7 +79,7 @@ def analyze(root, started_at, players, observations=None):
 if __name__=='__main__':
     p=argparse.ArgumentParser();p.add_argument('--root',type=Path,required=True)
     p.add_argument('--briefs',type=Path,required=True);p.add_argument('--out',type=Path,required=True)
-    p.add_argument('--observations',type=Path,help='Directory recorded by observe_run.py; preserves events evicted from player history')
+    p.add_argument('--observations',type=Path,help='Optional original experiment event recordings')
     p.add_argument('--players',nargs='+',required=True)
     a=p.parse_args();r=analyze(a.root,json.loads(a.briefs.read_text())['started_at'],a.players,a.observations)
     a.out.write_text(json.dumps(r,indent=2));a.out.chmod(0o600)

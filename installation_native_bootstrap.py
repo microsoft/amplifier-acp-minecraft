@@ -45,7 +45,7 @@ def plan_paths(bundle,plan):
             or not Path(endpoint['command'][0]).is_absolute()
             or not Path(endpoint.get('cwd','')).is_absolute()):
         raise ValueError('Explicit existing engine executable and working directory required')
-    if 'task_helpers' in game:raise ValueError('Fresh setup supplies its own fixed packaged task-helper path')
+    if 'task_helpers' in game:raise ValueError('Fresh connections do not use a task helper')
     if not Path(endpoint['command'][0]).is_file() or not Path(endpoint['cwd']).is_dir():
         raise ValueError('Existing engine endpoint must be available; setup does not install or sign it in')
     return root,root/'home',root/'state'
@@ -99,10 +99,9 @@ def setup(bundle,plan):
     driver,library=copies[0][1],copies[1][1]
     python=bundle/manifest['commands']['python'];node=bundle/manifest['commands']['node']
     relative_python=Path(manifest['commands']['python']).relative_to('python')
-    helper_name=Path(manifest['commands']['task_helper']).name
     cfg={'home':str(home),'state':str(state),'app':str(home/'app'),'venv':str(home/'venv'),
          'python':str(python),'node':str(node),'npm_cli':str(bundle/'app/package.json'),
-         'task_helper':str(home/'task-helpers'/helper_name),'channel':'stable',
+         'channel':'stable',
          'required_checks':['published-native-package'],'session_verification_seconds':12,
          'native_platform':{'version':1,'driver':str(driver),'config':str(config),
            'library':str(library),'library_sha256':native['library_sha256'],
@@ -129,10 +128,9 @@ def setup(bundle,plan):
             # fresh setup, never as a repair during admission or observation.
             io.prepare_data_journal_directories()
             for directory in ('stages','backups'):io.mkdir(state/directory)
-            for prefix,destination in [('app',home/'app'),('python',home/'venv'),('task-helper',home/'task-helpers')]:
+            for prefix,destination in [('app',home/'app'),('python',home/'venv')]:
                 copy_private_payload(bundle,prefix,destination,manifest)
             game=json.loads(json.dumps(plan['game']))
-            game['task_helpers']={'command':[cfg['task_helper']]}
             if (game.get('screenshots') or {}).get('enabled') is True and not game['screenshots'].get('browser_path'):
                 browser=subprocess.check_output([str(node),'-e',
                     "process.stdout.write(require('playwright').chromium.executablePath())"],
