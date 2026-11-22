@@ -20,7 +20,7 @@ def public(identity, **changes):
 
 
 class Delivery(unittest.IsolatedAsyncioTestCase):
-    async def exercise(self, scenario, events, *, saved=True, ack=None, restart=False):
+    async def exercise(self, scenario, events, *, saved=True, ack=None, restart=False, wake_id=None):
         calls = []
         with tempfile.TemporaryDirectory() as tmp:
             home = Path(tmp)
@@ -36,10 +36,18 @@ class Delivery(unittest.IsolatedAsyncioTestCase):
             original = json.dumps(legacy)
             (home/'workshop.json').write_text(original)
 
+            wakes = [{'id':wake_id,'note':'Inspect','time':'now','source':'agent_wake',
+                      'session':'durable-session','binding':binding}] if wake_id else []
+
             def control(config, path, data=None):
                 calls.append(path)
                 if path == '/inbox/peek':
-                    return {'event': events[0] if events else None}
+                    return {'event': events[0] if events else None, 'wake':wakes[0] if wakes else None}
+                if path == '/wake/claim':
+                    self.assertEqual(data['id'], wakes.pop()['id'])
+                    return {'id':data['id'],'state':'claimed'}
+                if path == '/wake/finish':
+                    return {'id':data['id'],'state':'returned'}
                 self.assertEqual(path, '/inbox/ack')
                 self.assertEqual(data, {'id': events[0]['id']})
                 if ack is not None:
@@ -126,3 +134,26 @@ class Delivery(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(client.prompt.await_count, 1)
         self.assertEqual(client.prompt.await_args.kwargs['source_metadata']['sources'], [fact])
         request.assert_awaited_with('/inbox/ack', {'id':'abc'})
+
+    async def test_wake_no_chat_same_session_no_second_dispatch_after_unknown(self):
+        wake = {'source':'agent_wake','id':'one','note':'Inspect','time':'now','session':'original','binding':'bind'}
+        request = AsyncMock(return_value={'id':'one','state':'claimed'})
+        client = SimpleNamespace(session='original', prompt=AsyncMock(side_effect=TimeoutError()))
+        with tempfile.TemporaryDirectory() as tmp:
+            with self.assertRaises(ValueError):
+                await adapter.deliver_wake(Path(tmp),wake,client,'changed',request,Mock())
+            request.assert_not_awaited()
+            with self.assertRaises(TimeoutError):
+                await adapter.deliver_wake(Path(tmp),wake,client,'bind',request,Mock())
+            await adapter.deliver_wake(Path(tmp),wake,client,'bind',request,Mock())
+        client.prompt.assert_awaited_once()
+        header, payload = client.prompt.await_args.args[0].split('\n')
+        self.assertEqual(header, 'Agent-requested wake. Nobody spoke in the game.')
+        self.assertEqual(json.loads(payload), {k:wake[k] for k in ('id','source','note','time')})
+
+    async def test_quiet_wake_uses_original_acp_session_once(self):
+        frames, calls = await self.exercise('keep-open', [], wake_id='vigil-proof', restart=True)
+        prompts = [f for f in frames if f['method']=='session/prompt']
+        self.assertEqual([f['session'] for f in prompts], ['durable-session'])
+        self.assertEqual(calls.count('/wake/finish'), 1)
+        self.assertNotIn('/inbox/ack', calls)

@@ -85,6 +85,32 @@ async def deliver(home, event, client, binding, request, observe):
             stop_reason=result['stop_reason'], unsettled_tool_count=len(result.get('unsettled_tools', ())))
 
 
+async def deliver_wake(home, wake, client, binding, request, observe):
+    if wake['source'] != 'agent_wake' or (wake['session'], wake['binding']) != (client.session, binding):
+        raise ValueError('Wake belongs to a different saved session')
+    identity = {k: wake[k] for k in ('id', 'session', 'binding')}
+    message = {k: wake[k] for k in ('id', 'source', 'note', 'time')}
+    # This durable claim precedes the ACP request. Losing either response never
+    # causes a second prompt. A failed/unknown call keeps its claim for review.
+    claim = await request('/wake/claim', identity)
+    if claim != {'id': wake['id'], 'state': 'claimed'}:
+        raise RuntimeError('Wake claim does not match')
+    key = hashlib.sha256(json.dumps([binding, client.session, wake['id']]).encode()).hexdigest()
+    receipt = home / 'agent-wake-delivery' / key / 'delivery.json'
+    if receipt.exists():
+        observe('agent_wake_already_recorded', wake_id=wake['id'], session_id=client.session)
+        return
+    durable_write(receipt, {'status': 'dispatch_intent', 'id': wake['id'], 'at': time.time()})
+    observe('agent_wake_claimed', wake_id=wake['id'], session_id=client.session)
+    text = 'Agent-requested wake. Nobody spoke in the game.\n' + json.dumps(message, ensure_ascii=False)
+    result = await client.prompt(text, snapshot_key=binding)
+    if result.get('unsettled_tools'):
+        raise RuntimeError('Wake has unsettled tool calls')
+    durable_write(receipt, {'status': 'returned', 'stop_reason': result['stop_reason'], 'at': time.time()})
+    await request('/wake/finish', identity)
+    observe('agent_wake_returned', wake_id=wake['id'], session_id=client.session, stop_reason=result['stop_reason'])
+
+
 async def run(home):
     cfg = json.loads((home / 'config.json').read_text())
     client = None
@@ -101,7 +127,9 @@ async def run(home):
                 if held(home, acknowledge=True):
                     await asyncio.sleep(1)
                     continue
-                event = (await request('/inbox/peek'))['event']
+                inbox = await request('/inbox/peek')
+                event = inbox['event']
+                wake = inbox.get('wake')
                 if event is not None:
                     public_message(event)
                 if client is None or client.transport_closed():
@@ -112,6 +140,8 @@ async def run(home):
                     await client.start()
                     if client.info.get('agentCapabilities', {}).get('mcpCapabilities', {}).get('http') is not True:
                         raise RuntimeError('ACP endpoint does not offer HTTP MCP')
+                    if previous is None and wake is not None:
+                        raise ValueError('Wake requires its original saved session')
                     if previous is None:
                         # A new session is an externally visible creation. Keep intent
                         # across crashes so a lost return cannot create another one.
@@ -130,6 +160,9 @@ async def run(home):
                     if previous is None:
                         durable_write(home / 'session.json', {'binding': binding, 'session': client.session})
                     client.permission_active = lambda: not held(home)
+                if wake is not None and (event is None or wake['time'] <= event.get('time', '')) and not held(home):
+                    await deliver_wake(home, wake, client, binding, request, observe)
+                    continue
                 if event is None:
                     await asyncio.sleep(1)
                     continue

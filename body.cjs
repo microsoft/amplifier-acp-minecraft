@@ -2,6 +2,7 @@ const entityActions=require('./entity-actions.cjs');
 const effectOutcome=require('./effect-outcome.cjs');
 // One Minecraft player and scoped MCP tool server. No agent implementation here.
 const fs = require('node:fs');
+const wake = require('./agent-wake.cjs');
 const http = require('node:http');
 const crypto = require('node:crypto');
 const path = require('node:path');
@@ -53,7 +54,11 @@ function endProcess(){
 function stop(source) {
   if(history.data.stopped)return;
   history.data.stopped = {at:Date.now(), source};
-  try { history.save(); } finally { cancelAction(); }
+  try {
+    const pending=wake.pending(history);
+    if(pending) wake.transition(history,pending,'queued','cancelled');
+    else history.save();
+  } finally { cancelAction(); }
 }
 function originalInputEvidence() {
   return {...history.legacy,...history.data,
@@ -153,6 +158,10 @@ function gatherTargets(a){
 
 const readTools=new Set(['observe','conversation','entities','inventory','inspect','read_sign','survey','map','plan_route','find','legacy_work','operation_status']);
 async function operate(name,a) {
+  if(name==='wake') return wake.queue(history,home,a,()=>{
+    requireAdmission();
+    if (!ready || history.data.stopped) throw Error('Player is unavailable or stopped');
+  });
   if(name==='operation_status') {
     const receipt=history.receipt(a.operation_id);
     if(!receipt||receipt.tool==='private_reply')return {status:'not_found'};
@@ -376,6 +385,7 @@ const xyz={x:z.number().int(),y:z.number().int(),z:z.number().int()};
 const support_face=z.enum(['north','south','east','west','up','down']).optional();
 const revision=z.string().min(1).max(128).optional();
 const definitions={
+  wake:['Request one immediate agent wake on this saved game session. The agent owns timing. Reuse the same ID after an unknown outcome.',{id:z.string().min(1).max(64),note:z.string().max(500)}],
   attack:['Strike one exact visible living non-player mob within three blocks using the held item. Never chases or repeats. Preserve breeding stock and player animals; named/owned and baby animals are refused. Inspect entities and choose an authorized target. Returns server damage/death observations, not proof of collected food or exclusive kill credit. An unconfirmed result must not be replayed.',{id:z.number().int(),uuid:z.string().uuid()}],
   equip:['Equip an inventory item in the main hand and verify it. Uses registered item names, not a weapon whitelist; choose tools or equipment appropriate to your plan.',{item:z.string().min(1).max(80)}],
   consume:['Eat one registered food item from inventory and verify its count change. Does not gather, cook or retry; inspect the result and current food/health.',{item:z.string().min(1).max(80)}],
@@ -415,7 +425,7 @@ const definitions={
 };
 function inputSchema(name) {
   const shape=definitions[name][1];
-  return readTools.has(name)||['stop','cancel_movement'].includes(name)?shape:
+  return readTools.has(name)||['stop','cancel_movement','wake'].includes(name)?shape:
     {...shape,operation_id:z.string().regex(/^[a-zA-Z0-9_-]{8,100}$/).describe('Durable ID for this intent. Use operation_status after uncertainty.')};
 }
 function mcpServer() {
@@ -466,7 +476,15 @@ const server=http.createServer(async(req,res)=>{
     if(req.method==='GET' && ['/status','/installation-state'].includes(req.url)) result=lifecycle();
     else if(req.method==='GET' && ['/state','/observation'].includes(req.url)) result=snapshot();
     else if(req.method==='GET' && req.url==='/conversation') result=conversation.snapshot();
-    else if(req.method==='GET' && req.url==='/inbox/peek') {const e=history.data.public_inbox[0];result={event:e?{...e,source_fact:require('./source-revision.cjs').publicSource(e)}:null};}
+    else if(req.method==='GET' && req.url==='/inbox/peek') {const e=history.data.public_inbox[0];result={event:e?{...e,source_fact:require('./source-revision.cjs').publicSource(e)}:null,wake:wake.pending(history)};}
+    else if(req.method==='POST' && req.url==='/wake/claim') {
+      const args=await json(req), saved=wake.binding(home);
+      requireAdmission();
+      if(!ready || history.data.stopped || saved.session!==args.session || saved.binding!==args.binding) throw Error('Wake session unavailable');
+      result=wake.transition(history,args,'queued','claimed');
+    } else if(req.method==='POST' && req.url==='/wake/finish') {
+      result=wake.transition(history,await json(req),'claimed','returned');
+    }
     else if(req.method==='POST' && req.url==='/inbox/ack') {const {id}=await json(req);requireAdmission(); result=history.acknowledge(id);}
     else if(req.method==='POST' && req.url==='/private/read') result=require('./world-tools-private.cjs').readPrivate(history,(await json(req)).request_id);
     else if(req.method==='POST' && req.url==='/private/reply') {
