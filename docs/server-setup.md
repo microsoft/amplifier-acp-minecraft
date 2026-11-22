@@ -297,6 +297,9 @@ connections. Keep the saved connection credentials/session for reconnection.
 
 Configure the world, authenticated routes, identity and game capabilities for this player. Inspect the tools advertised to the actual agent. Installations can differ in their access to screenshots, storage and worlds. Planning, reminders and task accounting belong to the agent. Existing owners retain their original work and outstanding receipts through a connector update.
 
+Keep each connection’s `world-tools/` directory with its original `workshop.json` when backing up or moving the player. New world operations retain their tool arguments, effect scope and outcome independently of the rolling chat and event log. On startup, the adapter copies available start and terminal records for unresolved legacy actions into the owner-private `world-tools/legacy-action-evidence.json`. It uses that evidence to block replay and overlapping actions while admitting independent work. If the original evidence was already lost, the hold remains in effect until the owner recovers matching records from that connection’s history.
+
+
 ## 5. Start and verify in layers
 
 For manual local operation from the reviewed source directory:

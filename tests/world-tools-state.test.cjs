@@ -54,3 +54,65 @@ test('entity identity survives an altered numeric id and an independent target c
  assert.throws(()=>store.begin('shear',{id:99,uuid:'a',operation_id:'shear-222'}),/overlapping/);
  assert.ok(store.begin('attack',{id:1,uuid:'b',operation_id:'attack-333'}).entry);
 });
+
+test('a partially executed legacy craft survives journal rotation and restart',t=>{
+ const id='legacy-partial-craft';
+ const args={item:'stick',count:4};
+ const events=[
+  {id:'start-receipt',kind:'action_started',action_id:id,action:'craft',arguments:args},
+  {id:'failure-receipt',kind:'action_failed',action_id:id,action:'craft',arguments:args,error:'Insufficient ingredients after 2 completed recipe executions'}
+ ];
+ const turn={actions:[{id,status:'uncertain'}]};
+ const {home}=fixture(t,{last_turn:turn,events:[]});
+ const journal=path.join(home,'workshop.json');
+ const rotated=fs.readFileSync(journal);
+ fs.writeFileSync(journal,JSON.stringify({last_turn:turn,events}));
+ new WorldToolsState(home);
+ fs.writeFileSync(journal,rotated);
+ const store=new WorldToolsState(home);
+ assert.deepEqual(JSON.parse(fs.readFileSync(path.join(home,'world-tools/legacy-action-evidence.json'))),events);
+ store.data.events=Array.from({length:2000},(_,n)=>({kind:'chat',id:'chat-'+n}));
+ store.record('world_ready',{});
+ const reloaded=new WorldToolsState(home);
+ assert.ok(reloaded.begin('equip',{operation_id:'equip-redstone',item:'redstone'}).entry);
+ assert.ok(reloaded.begin('chat',{operation_id:'report-redstone',text:'Holding redstone.'}).entry);
+ assert.throws(()=>reloaded.begin('craft',{operation_id:id,...args}),/historical work/);
+ assert.throws(()=>reloaded.begin('craft',{operation_id:'different-craft-id',...args}),/Historical action/);
+ assert.throws(()=>reloaded.begin('move',{operation_id:'different-move-id'}),/Historical action/);
+ assert.deepEqual(reloaded.legacy.last_turn,turn);
+ fs.writeFileSync(journal,JSON.stringify({events:[]}));
+ try {
+  const withoutTurn=new WorldToolsState(home);
+  assert.throws(()=>withoutTurn.begin('craft',{operation_id:id,...args}),/historical work/);
+  assert.throws(()=>withoutTurn.begin('craft',{operation_id:'new-id-after-turn',...args}),/Historical action/);
+ } finally { fs.writeFileSync(journal,rotated); }
+});
+
+test('a new uncertain craft retains its arguments and partial result after event rollover',t=>{
+ const {home,store}=fixture(t);
+ const args={operation_id:'fresh-craft-id',item:'stick',count:4};
+ const {entry}=store.begin('craft',args);
+ const result={error:'Partial recipe execution'};
+ store.finish(entry,'unknown',result);
+ store.data.events=Array.from({length:2000},(_,n)=>({kind:'chat',id:'chat-'+n}));
+ store.record('world_ready',{});
+ const restarted=new WorldToolsState(home);
+ const receipt=restarted.begin('craft',args).prior;
+ assert.deepEqual(receipt.arguments,{item:'stick',count:4});
+ assert.deepEqual(receipt.result,result);
+ assert.equal(receipt.status,'unknown');
+ assert.throws(()=>restarted.begin('craft',{...args,operation_id:'another-craft-id'}),/overlapping/);
+ assert.ok(restarted.begin('equip',{operation_id:'fresh-redstone',item:'redstone'}).entry);
+});
+
+test('inconsistent or terminal-only historical evidence cannot narrow an unknown',t=>{
+ const id='legacy-unknown-action';
+ const turn={actions:[{id,status:'uncertain'}]};
+ const failure={kind:'action_failed',action_id:id,action:'craft',arguments:{item:'stick',count:4}};
+ for(const starts of [[],[{kind:'action_started',action_id:id,action:'equip',arguments:{item:'redstone'}}]]) {
+  const {home}=fixture(t,{last_turn:turn,events:[...starts,failure]});
+  const store=new WorldToolsState(home);
+  assert.throws(()=>store.begin('chat',{operation_id:'original-report',text:'Checking'}),/Historical action/);
+  assert.throws(()=>store.begin('craft',{operation_id:id,item:'stick',count:4}),/historical work/);
+ }
+});
