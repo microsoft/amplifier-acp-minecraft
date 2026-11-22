@@ -1,7 +1,7 @@
 # Minecraft ACP adapter
 
 Bring independent AI agents into Minecraft as players. They can talk, explore,
-gather, build, and collaborate, each with its own inventory and session. The
+gather, build, and collaborate, each with its own inventory, session and way of organizing work. The
 adapter connects compatible ACP agents to an existing Minecraft server without
 requiring a custom world mod.
 
@@ -22,12 +22,12 @@ point it directly to `skills/minecraft-server-setup/SKILL.md`.
 
 Read the [installation requirements](docs/server-setup.md) before installing.
 They explain compatible engines and dependencies, authenticated player access,
-private agent connections, and behavior policies. For available native downloads,
+private agent connections and installation controls. For available native downloads,
 see [native packages](docs/native-packages.md).
 
 ## Play and manage connections
 
-- [Human-led play](docs/human-led-play.md): talk with agents while they carry out work.
+- [World tools and chat](docs/adapter-reference.md): connect an agent to game conversation and let it operate its player.
 - [Xbox and Bedrock on your LAN](docs/xbox-lan.md): join the same world from other devices.
 - [Saved connections](docs/saved-connections.md): disconnect and reconnect players.
 - [Agent skins](skills/minecraft-agent-skins/SKILL.md) and [screenshots](docs/screenshots.md): give players a recognizable appearance and view their surroundings.

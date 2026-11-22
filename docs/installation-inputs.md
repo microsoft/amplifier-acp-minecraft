@@ -87,24 +87,4 @@ owner-wide input-outcome views still withhold private text. Existing public
 `responses` and Minecraft whisper withholding are unchanged. Missing rows do
 not prove no reply or successful delivery.
 
-Each private source is admitted separately. Its authenticated caller, human actor
-and private destination stay attached to the turn and its same-work continuation.
-They are not game-player names. Final text and default `chat` save a reply to
-that destination; `tell` cannot guess a game recipient from the caller label.
-Use explicit `audience:"game"` only for separately requested public game speech,
-never as a fallback for a private failure. A recorded row proves storage, not
-forwarding, hearing, or completed physical work. Consumers must negotiate this
-capability and preserve stable row IDs/times rather than repeat confirmations.
-
-Replies are bounded to 32 rows per source and 12,000 UTF-8 bytes per row. Oversize
-text is rejected without truncation. A full ledger rejects another reply and
-returns `source_replies_omitted:true`; this is a boolean, not an inferred count.
-Existing rows are never evicted. Identical text in the same turn keeps its ID and
-time after a lost reply. Query retained outcomes after uncertainty; do not
-replay a prompt or manufacture a new source.
-`completion:not_established` remains explicit: prompt settlement or a task
-transition is not proof of completed physical work.
-
-Keep the durable source receipt ledger during updates, Stop and recovery. Do
-not prune it into a replay opportunity. Original task IDs, counts, unknown
-receipts, provider constraints and world-effect guards remain independent.
+Authenticated external input is available to its private integration. It never enters the public game inbox. An authorized private reader uses the original request identity to retrieve it. A private reply uses that request identity and a distinct operation ID. Stored replies remain scoped to the original source and audience.

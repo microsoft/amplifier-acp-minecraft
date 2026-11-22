@@ -30,21 +30,7 @@ update drain and inactivity/overall replay deadlines. Refusal, timeout or lost
 response never falls back to creating a replacement session or replaying a prompt.
 An endpoint advertising neither operation cannot reconnect a saved session.
 
-The read-only public stream observer exposes the SDK-assigned prompt request ID
-for the existing negotiated active-input contract. It never assigns or rewrites
-IDs. Message metadata, source revision facts, maintenance proofs, optional message
-identity, and received-versus-incorporated distinctions remain unchanged.
-
-For an SDK-correlated `RequestError`, the adapter retains the optional attention
-`not_forwarded` fact only when the endpoint advertises version 1 of both attention
-and `noForwardRejectionVersion`, names the expected prompt metadata, and the
-receipt matches the exact requested offer and current session. The
-`attention_not_forwarded` diagnostic contains those bounded IDs and the error
-code, never the ticket, error prose or arbitrary error data. An error code alone,
-missing or mismatched metadata, and a lost response leave delivery unknown.
-This is an input-admission fact: previous effects remain unresolved, and the
-existing failure/authority path is unchanged. It does not replay an input, retry
-an offer, refund capacity, complete work or authorize continuation.
+The controller claims a fresh public event before sending it into its bound session. An interrupted send may have reached the agent. Reloading the session preserves history and leaves that event claimed. The agent chooses whether to call a game tool, speak, or finish quietly.
 
 ## Bounded wrappers and upstream gaps
 
@@ -63,8 +49,7 @@ RPC table. The SDK remains responsible for all callback and response transport.
 
 Replay progress uses decoded incoming SDK stream events. Reported bytes are a
 reserialization size, not exact network bytes. Replay inactivity/overall deadlines
-remain separate from planner duration. There is no fixed whole-planner timeout by
-default. Local EOF/process state and actual SDK transport exceptions indicate a
+apply to session history loading. Local EOF/process state and actual SDK transport exceptions indicate a
 closed connection; silence alone does not establish provider failure.
 
 Reevaluate these wrappers and the immutable dependency on every SDK upgrade and
@@ -103,5 +88,5 @@ name:<registered tool>}`. The request must repeat the announcement's exact title
 and `rawInput`, preserving nested JSON types, and match its active call ID and session. Direct argument keys are
 ordinary data, even if named `server`, `tool`, or `_meta`. Malformed capabilities,
 missing/mismatched identity, foreign servers, and unsupported tools refuse without
-falling back. Existing replay, maintenance, work-authority and budget checks remain;
+falling back. Replay and maintenance exclusions still apply;
 the connector selects only `allow_once`, never an Instance Always rule.

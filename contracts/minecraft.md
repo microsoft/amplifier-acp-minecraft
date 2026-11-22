@@ -1,86 +1,25 @@
-# Participating in the Minecraft world
+# Minecraft connection and world tools
 
-For people operating ACP players and experiences using their game tools and
-context. The promise: an agent participates through its actual player, and the
-adapter makes the meaning of game input, effects and observations dependable.
-This agreement covers the Minecraft [Connection](https://github.com/microsoft/amplifier-constellation/blob/main/contracts/connection.md)
-and its world [Tools](https://github.com/microsoft/amplifier-constellation/blob/main/contracts/tool.md).
+Players, agent designers and installation owners rely on this agreement. Minecraft owns observations, conversation transport and the effects of operating one player in one world. The agent owns attention, planning, task acceptance, collaboration, memory, reminders and follow-through. Brian approved this division for the Minecraft connector on November 22, 2026.
 
-**Example:** Ask a player to carry supplies to a build site. The player finds a
-route, uses its inventory and reports the observed handoff. A voice client can
-inspect that result without turning private direction into public game chat.
+## Conversation and context
 
-## Minecraft commitments
+Deliver game messages with stable identities, speaker attribution, audience and world. Keep public conversation, whispers and private installation input within their intended audiences. An agent may receive a message and remain silent. Sending a message is an explicit act. Transport acceptance establishes only what the transport observed. Use the shared [interaction agreement](https://github.com/microsoft/amplifier-constellation/blob/main/contracts/interaction.md) for audience and participation semantics.
 
-1. **Act through the player's body.** Agent tools use the connected player's
-   position, inventory, reach and survival mechanics. They expose no arbitrary
-   shell, operator RCON, teleportation or item creation. Operator fixture helpers
-   are separate from the agent tool surface. Supported operations and checks are
-   defined in the [adapter reference](../docs/adapter-reference.md).
+Expose the player's position, inventory, nearby entities and visible blocks as observations with their actual scope. A scan of loaded terrain can miss distant resources. An agent chooses when to look again. A quiet world generates no planning prompts. Agent-owned scheduling can invoke the same tools between messages.
 
-2. **Keep game sources recognizable.** Server-attributed chat, whispers, configured
-   or server-attested agent peers, roster events and observed movement retain their
-   distinct meanings.
-   A roster entry or readiness callback is not a new human instruction or proof
-   of respawn. Private installation input identifies its authenticated caller and
-   caller-asserted actor; it never fabricates a Minecraft player or public message.
-   [Human-led play](../docs/human-led-play.md) and
-   [installation inputs](../docs/installation-inputs.md) define the local paths.
+## Actions
 
-3. **Enforce game effects at the body.** The installation's effective activity
-   policy, any bound assignment, Stop and unresolved effects govern the next
-   operation. Task-optional survival activity is an explicit policy, not a hidden
-   task or a way to reopen an expired commission. Planned sequences use the same
-   game checks as individual operations. The [policy and sequence reference](../docs/human-led-play.md)
-   and [task intake reference](../docs/human-task-intake.md) define the controls.
-   General acceptance, delegation and limit meanings live in
-   [work authority](https://github.com/microsoft/amplifier-constellation/blob/main/contracts/work-authority.md).
+An authenticated agent with the installed capability can invoke game tools without opening a Minecraft turn, acquiring a work lease or presenting a task or message as justification. The agent decides how to use an instruction. The body enforces its configured access, operator Stop, physical reach, resource availability and conflicts on the one avatar. A compound action such as walking a path or placing a supplied pattern executes the agent's explicit request and reports partial progress.
 
-4. **Report physical evidence at its actual scope.** Movement results distinguish
-   the reached destination from the intended route or larger assignment. Dropped
-   items are not a verified transfer to a recipient. Container results use server
-   snapshots, and uncertain placement or movement remains inspectable before a
-   retry. A screenshot is a captured view, not independent construction verification.
-   Recent context projections retain coverage and a path to full authorized
-   evidence. See [tools and context](../docs/adapter-reference.md),
-   [screenshots](../docs/screenshots.md) and [input outcomes](../docs/input-outcomes.md)
-   for exact observations and failure behavior.
+A consequential call has an operation identity. Record it before dispatch. Reusing that identity with different arguments is an error. On a repeated call with identical arguments, return the existing disposition. After a disconnect the caller can inspect the outcome, including uncertainty. A missing acknowledgement supplies no authority to repeat an effect. A genuinely conflicting operation can remain unavailable while unrelated observations and safe work remain accessible. Report observed arrival, inventory change or block state at the scope actually checked.
 
-5. **Keep saved worlds and access routes distinct.** Each saved connection has its
-   own home, session binding, control route and connection definition. Server-owned
-   player identity, inventory and position stay associated with the intended world.
-   Authenticated human gateways and trusted offline agent routes are separate;
-   similar Java and Xbox names do not establish an account link. Minecraft's
-   [installation requirements](../docs/server-setup.md),
-   [saved connection phases](../docs/saved-connections.md) and
-   [update participant](../INSTALLATION-UPDATES-DESIGN.md) apply the shared
-   [installation agreement](https://github.com/microsoft/amplifier-constellation/blob/main/contracts/installations.md)
-   to those resources.
+## Continuity and compatibility
 
-## Shared promises and technical detail
+Bind a player, saved ACP session and credentials to the intended installation and world. Preserve these bindings, existing work, Stop state and evidence of pending or uncertain effects through restart or upgrade. Historical records remain available to their authorized audience. Catch-up must distinguish history from fresh input. Loading a session, refreshing transport access or reconnecting a body must never turn old instructions into new prompts or execute old actions.
 
-[Composition](https://github.com/microsoft/amplifier-constellation/blob/main/contracts/composition.md)
-defines how boundaries compose and records retain their owners;
-[interaction](https://github.com/microsoft/amplifier-constellation/blob/main/contracts/interaction.md)
-owns audience, speech and participation meaning;
-[work continuity](https://github.com/microsoft/amplifier-constellation/blob/main/contracts/work-continuity.md)
-owns input and recovery meaning. These shared promises are not redefined here.
-The [ACP compatibility profile](https://github.com/microsoft/amplifier-constellation/blob/main/contracts/engine-compatibility.md)
-defines the applicable protocol, optional capabilities and fallback; it does not
-prescribe the agent's internal architecture.
+Offer the game connection through [ACP](https://github.com/microsoft/amplifier-constellation/blob/main/contracts/engine-compatibility.md) and discoverable game tools through MCP. Operation and message identifiers belong to the connection. Agent-side scheduling, staffing, budgets, state machines and model turns remain decisions for each agent implementation. Installation lifecycle and owner controls follow the shared [installation agreement](https://github.com/microsoft/amplifier-constellation/blob/main/contracts/installations.md).
 
-The [interface map](../docs/interfaces.md) locates schemas, configuration, setup
-and executable checks, including capability discovery for the installed adapter.
+## How to judge it
 
-**Check:** Walk a route and verify arrival; transfer supplies and independently
-inspect the recipient; interrupt a sequence and inspect partial effects. Exercise
-public chat, a whisper and private installation input without crossing audiences.
-Reconnect two saved worlds without mixing bindings or changing work. Compare
-compact context with full evidence, and test the ordinary ACP fallback. Mechanical
-fixtures use disposable worlds; fresh human play checks conversation and usefulness.
-
-**Left open:** Building style, route and resource choices, product UX, and
-[Agent Instance internals](https://github.com/microsoft/amplifier-constellation/blob/main/contracts/agent-instance.md),
-including engines, workers, memory and scheduling behind the supported interfaces.
-Test new mechanics and server translations against their actual world behavior;
-a protocol connection alone does not establish support.
+Give two real agents with different internal designs the same connector. In a shared test world each can receive conversation in its intended audience, inspect the world, decide independently and use an authorized action. Verify what another player or the server observed. Leave the world quiet and check that the connector issues no continuation prompt. Interrupt a consequential operation and reconcile its identity across reconnect. Check the original session, inventory, work and outstanding receipts before and after migration. Record which of these checks ran and what remains unverified separately from this agreement.

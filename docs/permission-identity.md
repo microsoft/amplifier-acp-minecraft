@@ -1,8 +1,7 @@
 # Game-tool permission identity
 
 Automatic Minecraft approval is scoped to the current ACP session, announced
-call and active game or reply policy. Model arguments do not identify an approved
-tool. This does not change the offered game tools, tasks, budgets or Stop rules.
+call and game tool exposed to that connection. Model arguments cannot establish the identity of a tool. Stop and installation capability checks apply at the player body.
 
 The selected ACP endpoint can advertise
 `agentCapabilities._meta["com.microsoft.amplifier.tool"] = {"version":1}`.
