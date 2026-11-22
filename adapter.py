@@ -160,7 +160,10 @@ async def run(home):
                     if previous is None:
                         durable_write(home / 'session.json', {'binding': binding, 'session': client.session})
                     client.permission_active = lambda: not held(home)
-                if wake is not None and (event is None or wake['time'] <= event.get('time', '')) and not held(home):
+                # Retain a wake belonging to a former binding without starving
+                # ordinary chat for the installation's current session.
+                matching_wake = wake is not None and (wake['session'], wake['binding']) == (client.session, binding)
+                if matching_wake and (event is None or wake['time'] <= event.get('time', '')) and not held(home):
                     await deliver_wake(home, wake, client, binding, request, observe)
                     continue
                 if event is None:
