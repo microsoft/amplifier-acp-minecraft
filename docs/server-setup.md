@@ -173,7 +173,7 @@ home. Keep the directory 0700 and sensitive files 0600. Set:
   A peer it does not recognise is treated as a human, so that peer's speech can be
   mistaken for human authority. Preserve the server's actual UUID/source
   attribution; never infer human identity from message text.
-- Explicit behavior policies appropriate to this request (next section).
+- The world and capabilities this installation is authorized to access.
 
 Each additional player has its own home, credentials, session and port. Reusing a
 name, token or directory is not a shortcut to a separate installation. Preserve
@@ -293,36 +293,9 @@ Instance-specific context API. Disconnecting a body also requires deactivating
 its context registration; leaving a dead provider registered can break other
 connections. Keep the saved connection credentials/session for reconnection.
 
-## 4. Choose behavior explicitly
+## 4. Choose access and capabilities
 
-Installation, code updates and game login grant no construction authority. Keep
-old tasks, limits, consumed counts, unknown inputs and stopped/expired status
-unchanged. An initial `incoming_chat_only: true` installation is useful for
-bringing up real conversation without silently resuming construction.
-
-| Requested behavior | Policy/reference |
-| --- | --- |
-| Conversation only | Keep intake disabled; verify the effective advertised mode |
-| Ordinary survival activity without requiring a task record | Explicit `human_engagement.task_optional` with `human_engagement.enabled`; [task-optional policy](human-led-play.md#task-optional-activity) |
-| Natural human task acceptance/amendment | Explicit `human_task_intake.enabled`; [intake](human-task-intake.md) |
-| Direct human responsiveness and fewer artificial action pauses | Explicit `human_engagement.enabled`; [human-led play](human-led-play.md) |
-| Greetings/help from observed activity | Explicit `human_engagement.activity_scope: conversation_only`, negotiated host attention activity support; movement/interaction facts are not commands |
-| Completion-bound new work | Explicit default-bound policy plus independently discovered helper-v2 support; [bounds](completion-bound-tasks.md) |
-| Independently accepted helper work | Explicit delegation policy and original human provenance; [delegation](human-led-play.md#independently-accepted-helper-work) |
-
-`incoming_chat_only` is an installation policy, not an hourly-capacity condition.
-Waiting or raising a quota cannot fix disabled task intake. Inspect effective
-`task_capabilities` and blocked reasons before claiming the agent can act.
-Source updates never enable these opt-ins by themselves. Honor explicit human
-Stop/limits and actual host/provider/tool constraints. Restrictive amendments
-can exhaust future authority without rewriting work already consumed.
-
-Helpers are optional **pure decision executables**, separate from the selected ACP
-engine. Discover `helper-capabilities` before using tagged finite/no-configured-bound
-watch/continuation schemas. Do not substitute huge numeric sentinels or install a
-native engine to give a third-party agent a helper. Unknown capability is not support.
-Optional Instance attention/steering/receipts are separately negotiated; keep vanilla
-ACP fallback and retain unknown delivery without replay.
+Configure the world, authenticated routes, identity and game capabilities for this player. Inspect the tools advertised to the actual agent. Installations can differ in their access to screenshots, storage and worlds. Planning, reminders and task accounting belong to the agent. Existing owners retain their original work and outstanding receipts through a connector update.
 
 ## 5. Start and verify in layers
 
@@ -361,9 +334,7 @@ Validate independently:
 4. Retained authority, accounting, pending/unknown receipts and world observations
    match across the change. A restore returns only the services that were active
    before it; do not remove unrelated masks.
-5. A real human sends a fresh greeting and, if authorized, a fresh task request.
-   Check source receipt, acceptance, actual planner execution and action results
-   separately. Never inject a fake human event or replay an earlier failed request.
+5. Use a fresh authorized message and check that the original agent session receives it. Verify an explicit game tool through its actual result and, when possible, a server or player observation. Never inject a fake human event or replay an earlier failed request.
 6. If providing console access, observe a real authenticated join. A LAN advertisement
    and transport handshake are useful independent checks, not a console result.
 
@@ -379,7 +350,7 @@ new admission, waits for settled work, preserves authority/unknown effects,
 verifies original-session compatibility and restores captured services. Its
 reference-aware retention keeps rollback/uncertain transaction material while
 pruning regenerable abandoned stages. Preserve the fixed host-owned helper layer
-and separately enrolled pure task-helper path.
+and existing enrollment records.
 
 Enroll schedules/agent-initiated updates only when requested; hourly `when_idle`
 is an explicit policy, not implied by installing code. The same participant must
@@ -394,13 +365,7 @@ files to erase consumed counts or make continuity pass. Unknown accepted input i
 not replayable. Before listener restoration, code rollback may be appropriate;
 after verified restoration has begun, follow the updater's restore-only recovery.
 
-An online player can still be waiting on a task dependency, interrupted work,
-or a delivery backlog. Inspect those separately before restarting it. The controller
-retires elapsed peer/activity deliveries from the small inbox into the bounded
-`delivery_retirements` history with an **undelivered** disposition. This does not
-mark their sources handled, renew tickets or tasks, or remove human requests.
-Distinct attention offers are delivered separately; expired deliveries must not
-occupy every slot forever or trigger repeated failed model calls.
+An online player may be silent. Inspect fresh event delivery, the actual agent session and individual tool results before concluding it needs a restart.
 
 Keep a private final receipt: source/dependency hashes, services/routes, policies
 actually enabled, original-session/task/world continuity, actual human tests and

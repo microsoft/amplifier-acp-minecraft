@@ -17,7 +17,7 @@ function fixture(item,result){
  const spatial=realRequire('./spatial.cjs');
  const context=vm.createContext({require:name=>{
   if(name==='mineflayer')return {createBot:()=>bot};
-  if(name==='node:http')return {createServer:()=>({listen(){},close(){}})};
+  if(name==='node:http')return {createServer:()=>({listen(_port,_host,start){start()},close(){}})};
   if(name==='./spatial.cjs')return {...spatial,gotoWithProgress:async()=>{}};
   if(name==='./inventory.cjs')return {refreshInventory:async()=>{}};
   return realRequire(name);
@@ -26,9 +26,8 @@ function fixture(item,result){
  setTimeout:(fn,ms)=>setTimeout(fn,[100,180,250].includes(ms)?1:ms),clearTimeout});
  vm.runInContext(fs.readFileSync(path.join(root,'body.cjs'),'utf8')+`
  ready=true;
- const request=history.record({kind:'chat',source:'human',accepted:true,username:'Owner',message:'Plant the existing garden',time:new Date().toISOString()});
- history.begin({request_id:request.id,goal:'Existing garden task'});history.startTurn();turnUntil=Date.now()+240000;
- module.exports={operate,history};`,context,{filename:'body.cjs'});
+
+ module.exports={operate:(name,args={})=>operate(name,{operation_id:crypto.randomUUID(),...args}),history};`,context,{filename:'body.cjs'});
  return {...context.module.exports,run:()=>context.module.exports.operate('place',{x:0,y:64,z:0,item,support_face:'up'}),
   sends:()=>sends,close:()=>fs.rmSync(home,{recursive:true,force:true})};
 }
@@ -39,7 +38,7 @@ test('server crop results produce one successful action receipt without replay o
    assert.equal(r.properties.age,0);assert.equal(f.sends(),1);
    assert.equal(f.history.data.events.filter(e=>e.kind==='action_result').length,1);
    assert.equal(f.history.data.events.filter(e=>e.kind==='action_failed').length,0);
-   assert.equal(f.history.task().deadline,before.deadline);assert.equal(f.history.task().turns,before.turns);
+   assert.equal(f.history.task()?.deadline,before.deadline);assert.equal(f.history.task()?.turns,before.turns);
   }finally{f.close();}
  }
 });

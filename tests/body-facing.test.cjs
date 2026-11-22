@@ -19,7 +19,7 @@ function fixture(item,properties={facing:'south'},actual=item,refusal=null,onMov
  const spatial=realRequire('./spatial.cjs');
  const context=vm.createContext({require:name=>{
   if(name==='mineflayer')return {createBot:()=>bot};
-  if(name==='node:http')return {createServer:()=>({listen(){},close(){}})};
+  if(name==='node:http')return {createServer:()=>({listen(_port,_host,start){start()},close(){}})};
   if(name==='./spatial.cjs')return {...spatial,gotoWithProgress:async()=>{if(onMove)await onMove(bot);}};
   if(name==='./inventory.cjs')return {refreshInventory:async()=>{}};
   return realRequire(name);
@@ -28,9 +28,8 @@ function fixture(item,properties={facing:'south'},actual=item,refusal=null,onMov
  setTimeout:(fn,ms)=>setTimeout(fn,[100,180,250].includes(ms)?1:ms),clearTimeout});
  vm.runInContext(fs.readFileSync(path.join(root,'body.cjs'),'utf8')+`
  ready=true;
- const request=history.record({kind:'chat',source:'human',accepted:true,username:'Owner',message:'Build the accepted project',time:new Date().toISOString()});
- history.begin({request_id:request.id,goal:'Existing construction task'});history.startTurn();turnUntil=Date.now()+240000;
- module.exports={operate,history};`,context,{filename:'body.cjs'});
+
+ module.exports={operate:(name,args={})=>operate(name,{operation_id:crypto.randomUUID(),...args}),history};`,context,{filename:'body.cjs'});
  return {...context.module.exports,bot,run:facing=>context.module.exports.operate('place',{x:0,y:64,z:0,item,support_face:'up',...(facing?{facing}:{})}),
   observation:()=>({sends,options,look,ordinary}),close:()=>fs.rmSync(home,{recursive:true,force:true})};
 }
@@ -77,7 +76,7 @@ for(const race of ['target','support'])test('placement '+race+' changing during 
   f.bot.blockAt=p=>prepared&&((race==='target'&&p.equals(new Vec3(0,64,0)))||(race==='support'&&p.equals(new Vec3(0,63,0))))?
    {position:p,name:race==='target'?'stone':'air',boundingBox:race==='target'?'block':'empty',getProperties:()=>({})}:read(p);
   await assert.rejects(f.run(),race==='target'?/changed during preparation/:/supporting block/);
-  assert.equal(f.observation().sends,0);assert.equal(f.history.data.turn.actions[0].status,'uncertain');
+  assert.equal(f.observation().sends,0);assert.equal(Object.values(f.history.data.operations)[0].status,'unknown');
   assert.notEqual(f.history.data.events.at(-1).error,'Target is not empty');
  }finally{f.close();}
 });
@@ -85,7 +84,7 @@ test('initial occupied placement leaves no effect receipt and a changed empty ta
  const f=fixture('cobblestone',{});try{
   const read=f.bot.blockAt;let occupied=true;
   f.bot.blockAt=p=>occupied&&p.equals(new Vec3(0,64,0))?{position:p,name:'stone',boundingBox:'block',getProperties:()=>({})}:read(p);
-  await assert.rejects(f.run(),/Target is not empty/);assert.equal(f.observation().sends,0);assert.equal(f.history.data.turn.actions.length,0);
+  await assert.rejects(f.run(),/Target is not empty/);assert.equal(f.observation().sends,0);assert.equal(Object.values(f.history.data.operations).length,0);
   occupied=false;const result=await f.run();assert.equal(result.verified,true);assert.equal(f.observation().sends,1);
  }finally{f.close();}
 });
@@ -114,7 +113,7 @@ test('redstone item verifies its placed wire block without accepting missing or 
   const f=fixture('redstone',{power:0},actual);try{
    if(actual==='redstone_wire'){
     const r=await f.run();assert.equal(r.verified,true);assert.equal(r.actual,'redstone_wire');assert.equal(r.properties.power,0);
-    assert.equal(f.history.data.turn.actions[0].status,'succeeded');
+    assert.equal(Object.values(f.history.data.operations)[0].status,'completed');
    }else await assert.rejects(f.run(),/Placement mismatch/);
    assert.equal(f.observation().sends,1);
   }finally{f.close();}
@@ -129,7 +128,7 @@ for(const confirmed of [true,false])test('actual partial build '+(confirmed?'ret
   const before=JSON.stringify(f.history.task());
   const result=await f.operate('build',{item:'cobblestone',support_face:'up',blocks:[first,second,{x:2,y:64,z:0}]});
   assert.equal(attempts,2);assert.equal(result.placed.length,1);assert.equal(result.placed[0].verified,true);assert.equal(result.failed_at.x,1);assert.match(result.error,/Server refused/);
-  assert.equal(f.history.data.turn.actions[0].status,confirmed?'failed_settled':'uncertain');
+  assert.equal(Object.values(f.history.data.operations)[0].status,confirmed?'failed_settled':'unknown');
   assert.equal(!!result.settled_failure,confirmed);assert.equal(JSON.stringify(f.history.task()),before);
   assert.equal(f.bot.eventNames().filter(n=>String(n).startsWith('blockUpdate:')).length,0);
  }finally{f.close();}
@@ -153,12 +152,12 @@ for(const obstacle of ['cornflower',null,Error('Target is not empty'),Error('Rea
   assert.equal(result.placed.length,4);assert.ok(result.placed.every(v=>v.verified&&v.actual==='diorite'));
   assert.equal(result.failed_at.x,4);
   if(obstacle instanceof Error){
-   assert.equal(result.error,obstacle.message);assert.equal(f.history.data.turn.actions[0].status,'uncertain');
+   assert.equal(result.error,obstacle.message);assert.equal(Object.values(f.history.data.operations)[0].status,'unknown');
    assert.equal(result.settled_failure,undefined,'an error string is not internal refusal evidence');
    assert.equal(JSON.stringify(f.history.task()),before);return;
   }
   assert.equal(result.error,'Target is not empty');
-  assert.equal(f.history.data.turn.actions[0].status,'failed_settled');
+  assert.equal(Object.values(f.history.data.operations)[0].status,'failed_settled');
   assert.equal(result.settled_failure.kind,'settled_partial_build');
   assert.equal(result.settled_failure.placement.phase,'target_preflight');
   assert.equal(result.settled_failure.placement.effect_attempted,false,'only the refused placement had no effect');
@@ -187,7 +186,7 @@ for(const mode of ['settled','unknown','timeout'])test('place carries approach o
  });try{
   await assert.rejects(f.run(),mode==='settled'?/Movement ended/:/unconfirmed/);
   assert.equal(f.observation().sends,0);
-  assert.equal(f.history.data.turn.actions[0].status,mode==='settled'?'failed_settled':'uncertain');
+  assert.equal(Object.values(f.history.data.operations)[0].status,mode==='settled'?'failed_settled':'unknown');
   if(mode==='settled')assert.equal(f.history.data.events.at(-1).settled_failure.kind,'settled_failed_movement');
  }finally{f.close();}
 });

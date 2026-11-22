@@ -20,9 +20,6 @@ async def verify(root, source):
          'WORKSHOP_TEST_PYTHON':str(python),
          'SCREENSHOT_FIXTURE_OUTPUT':str(Path.cwd()/'native-screenshot-result')}
     subprocess.run([str(python),'-I',str(root/'launch.py'),'doctor'],env=env,check=True)
-    sys.path.insert(0,str(source/'ops/native'))
-    from verify_task_helper import verify as verify_helper
-    helper_result=verify_helper(root/manifest['commands']['task_helper'])
     subprocess.run([str(python),'-s',str(root/'app/adapter.py'),'--help'],env=env,check=True,timeout=30)
     sys.path.insert(0,str(root/'app'))
     from installation_session_probe import probe
@@ -63,12 +60,12 @@ async def verify(root, source):
     try:
         shutil.copytree(source/'tests',fixtures)
         subprocess.run([str(node),'--test',*[str(fixtures/name) for name in
-            ('body-chat.test.cjs','body-craft.test.cjs','body-gather.test.cjs','body-timeout.test.cjs','body-facing.test.cjs','body-follow.test.cjs','follow-review.test.cjs','body-lease.test.cjs','survival.test.cjs','block-controls.test.cjs','redstone-configuration.test.cjs','placement-receipt.test.cjs','task-effects-review.test.cjs','activity-review.test.cjs','partial-build-review.test.cjs','craft-preparation-review.test.cjs','activity-settlement.test.cjs','screenshots.test.cjs')]],env=env,check=True)
+            ('body-world-tools.test.cjs','world-tools-state.test.cjs','survival.test.cjs','block-controls.test.cjs','redstone-configuration.test.cjs','placement-receipt.test.cjs','screenshots.test.cjs')]],env=env,check=True)
     finally:
         shutil.rmtree(fixtures,ignore_errors=True)
     result={'target':manifest['target'],'source_commit':manifest['source_commit'],'official_sdk':manifest['sdk_commit'],
             'original_session_loaded':True,'unused_initialize_only':True,'game_server':False,'model_prompts':0,
-            'pure_task_helper':helper_result,'body_fixtures':True,'redstone_configuration_fixtures':True,'actual_packaged_browser':True,'controller_entrypoint_imports':True,'offline_body_launcher_no_join':True,'native_service_lifecycle_verified':False}
+            'body_fixtures':True,'redstone_configuration_fixtures':True,'actual_packaged_browser':True,'controller_entrypoint_imports':True,'offline_body_launcher_no_join':True,'native_service_lifecycle_verified':False}
     print(json.dumps(result))
     return result
 

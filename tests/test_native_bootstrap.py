@@ -85,6 +85,8 @@ class BootstrapTests(unittest.TestCase):
                 'state':('transactions','connections','provider-receipts','native-source-receipts','artifact-receipts')}.items():
             for name in names:self.assertTrue((self.root/root/name).is_dir())
         self.assertEqual(json.loads((self.root/'home/endpoint.json').read_text()),self.plan['endpoint'])
+        self.assertFalse((self.root/'home/task-helpers').exists())
+        self.assertNotIn('task_helpers',json.loads((self.root/'home/config.json').read_text()))
         fixed=json.loads((self.root/'state/native.json').read_text())
         self.assertEqual((self.root/'state/native/driver').read_bytes(),b'native_driver')
         self.assertEqual((self.root/'state/native/library').read_bytes(),b'native_library')

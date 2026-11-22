@@ -1,7 +1,19 @@
-import argparse,json
+import argparse
+import json
 from pathlib import Path
+
 from adapter import control
-p=argparse.ArgumentParser();p.add_argument('--home',type=Path,required=True);p.add_argument('--reviewer',action='append',default=[]);p.add_argument('operation',choices=['state','task','stop']);p.add_argument('text',nargs='?');a=p.parse_args()
-cfg=json.loads((a.home.expanduser()/'config.json').read_text())
-payload={'text':a.text,'reviewers':a.reviewer} if a.operation=='task' else {} if a.operation=='stop' else None
-print(json.dumps(control(cfg,'/'+a.operation,payload),indent=2))
+
+
+def main():
+    parser = argparse.ArgumentParser(description="Inspect, stop, or resume this Minecraft connection")
+    parser.add_argument("--home", type=Path, required=True)
+    parser.add_argument("operation", choices=["state", "stop", "resume"])
+    args = parser.parse_args()
+    cfg = json.loads((args.home.expanduser() / "config.json").read_bytes())
+    response = control(cfg, "/" + args.operation, {} if args.operation != "state" else None)
+    print(json.dumps(response, indent=2))
+
+
+if __name__ == "__main__":
+    main()

@@ -17,34 +17,23 @@ for line in sys.stdin:
     with (root / 'requests.jsonl').open('a') as log:
         log.write(json.dumps({'launch': launch, 'method': method,
                               'session': value.get('params', {}).get('sessionId'),
-                              'meta': value.get('params', {}).get('_meta')}) + '\n')
+                              'mcp_names': [s['name'] for s in value.get('params', {}).get('mcpServers', [])]}) + '\n')
     if method == 'initialize':
         result = {'protocolVersion': 1,
                   'agentCapabilities': {'loadSession': True, 'mcpCapabilities': {'http': True}}}
         if scenario.startswith('resume-'):
             result['agentCapabilities'].update(loadSession=False, sessionCapabilities={'resume': {}})
-        if scenario.startswith('attention-'):
-            result['_meta'] = {'com.microsoft.amplifier.attention': {
-                'version': 1, 'enabled': True, 'method': '_amplifier/attention'}}
-            if scenario == 'attention-rejected':
-                result['_meta']['com.microsoft.amplifier.attention'].update(
-                    promptMetadata='com.microsoft.amplifier.attention', noForwardRejectionVersion=1)
         send({'id': value['id'], 'result': result})
     elif method == 'session/new':
+        if scenario == 'lost-new-result':
+            break
         send({'id': value['id'], 'result': {'sessionId': 'durable-session'}})
     elif method in ('session/load', 'session/resume'):
-        if scenario in ('reload-fails', 'attention-reload-fails', 'resume-fails'):
+        if scenario in ('reload-fails', 'resume-fails'):
             send({'id': value['id'], 'error': {'code': -32000, 'message': 'Fixture reload failure'}})
         else:
             send({'id': value['id'], 'result': {}})
-    elif method == '_amplifier/attention':
-        send({'id': value['id'], 'result': {'action': 'engage', 'id': 'offer', 'ticket': 'fixture-ticket'}})
     elif method == 'session/prompt':
-        if scenario == 'attention-rejected' and launch > 1:
-            send({'id': value['id'], 'error': {'code': -32002, 'message': 'private admission failure',
-                  'data': {'com.microsoft.amplifier.attention': {'version': 1, 'id': 'offer',
-                           'sessionId': 'durable-session', 'outcome': 'not_forwarded'}}}})
-            break
         if scenario == 'during-prompt':
             send({'method': 'session/update', 'params': {'sessionId': 'durable-session',
                   'update': {'sessionUpdate': 'tool_call', 'toolCallId': 'unfinished',

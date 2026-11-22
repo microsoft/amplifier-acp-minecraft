@@ -13,7 +13,7 @@ not assume the author's hosts, ports, accounts, model, systemd layout or policie
 
 Read [the installation requirements](../../docs/server-setup.md). Determine whether the request
 is for a new world, an existing world, a player connection, a gateway repair,
-behavior policy, or an update. Inventory the actual versions, service owners,
+world tool access, or an update. Inventory the actual versions, service owners,
 listeners, routes, saved sessions and in-flight work before changing an existing
 installation. Resolve current coordination receipts by request ID and time;
 delayed notes do not reopen completed holds or authorize duplicate restarts.
@@ -33,10 +33,7 @@ routine reversible staging into another approval flow.
 - Adding an agent, or how players tell agents from humans:
   [agent or human](../../docs/server-setup.md#agent-or-human). Check its
   precondition before enabling the server-attested policy.
-- Natural human requests, limits, responsiveness or activity:
-  [human-led play](../../docs/human-led-play.md),
-  [task intake](../../docs/human-task-intake.md) and, if needed,
-  [completion-bound helpers](../../docs/completion-bound-tasks.md).
+- Conversation, game context and tool access: [world tools and chat](../../docs/adapter-reference.md).
 - Updating source/dependencies, engine or shared components:
   [installation updates](../../INSTALLATION-UPDATES-DESIGN.md).
 - Protocol, tools, context or recovery specifics: read only the relevant section
@@ -48,7 +45,7 @@ routine reversible staging into another approval flow.
 ## Apply the installation boundary
 
 Use the requirements in [staging and routes](../../docs/server-setup.md#3-stage-one-self-contained-player),
-[behavior choices](../../docs/server-setup.md#4-choose-behavior-explicitly),
+[access and capabilities](../../docs/server-setup.md#4-choose-access-and-capabilities),
 [layered verification](../../docs/server-setup.md#5-start-and-verify-in-layers) and
 [recovery](../../docs/server-setup.md#6-updates-recovery-and-handoff). They define
 what must survive and what the requested operation permits. This skill navigates

@@ -16,6 +16,7 @@ import urllib.error
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from adapter import control
+from mcp_game_fixture import call_tool, GameToolError
 from ops.rcon import command
 
 
@@ -49,17 +50,16 @@ def main():
                 current = act('container', **{key: arguments[key] for key in ('x', 'y', 'z', 'expected')}, operation='inspect')
                 arguments['contents_revision'] = current['contents_revision']
                 arguments['conversation_revision'] = act('conversation')['revision']
-            result = control(cfg, '/action', {'name': name, 'arguments': arguments})
+            result = call_tool(cfg, name, arguments)
             receipts.append({'tool': name, 'arguments': arguments, 'result': result})
             return result
         def denied(fragment, **kw):
             try:
                 act('container', **kw)
                 raise AssertionError('Expected a refused transfer')
-            except urllib.error.HTTPError as e:
-                assert fragment in e.read().decode()
-        def fresh_turn():
-            control(cfg, '/finish', {}); control(cfg, '/turn', {})
+            except GameToolError as e:
+                assert fragment in str(e)
+
         try:
             for _ in range(100):
                 try:
@@ -72,7 +72,7 @@ def main():
                         'tp ContainerTester 2.5 81 2.5', 'clear ContainerTester',
                         'give ContainerTester oak_planks 70', 'give ContainerTester coal 8']:
                 r(cmd)
-            time.sleep(.5); fresh_turn()
+            time.sleep(.5)
             chest = dict(x=3, y=81, z=2, expected='chest')
             result = act('container', **chest, operation='inspect')
             assert result['contents'] == [] and result['cursor'] is None
@@ -89,7 +89,7 @@ def main():
             for slot in range(27): r(f'item replace block 3 81 2 container.{slot} with minecraft:dirt 64')
             denied('destination space', **chest, operation='deposit', item='coal', count=1)
             checks.append('Missing supplies/full destination refuse before changing inventory')
-            fresh_turn()
+
             r('setblock 3 81 2 barrel'); time.sleep(.2)
             barrel = dict(x=3, y=81, z=2, expected='barrel')
             result = act('container', **barrel, operation='deposit', item='coal', count=8)
@@ -106,7 +106,7 @@ def main():
             denied('obstructed', **chest, operation='inspect')
             r('setblock 2 82 2 air')
             checks.append('A blocked reach refuses interaction')
-            fresh_turn()
+
             r('clear ContainerTester'); r('give ContainerTester oak_planks[minecraft:custom_name=\'"Special"\'] 2'); time.sleep(.2)
             denied('component-bearing', **chest, operation='deposit', item='oak_planks', count=1)
             checks.append('Custom-name components are refused, not silently treated as ordinary materials')
@@ -119,7 +119,7 @@ def main():
             assert stored['count'] == 1 and remaining['count'] == 1
             assert stored['components'] == selected['components'] == remaining['components']
             checks.append('Explicit named partial stack preserves components in storage and original remainder')
-            fresh_turn()
+
             r('clear ContainerTester')
             r('give ContainerTester wooden_hoe[minecraft:damage=7] 1'); time.sleep(.2)
             inspected = act('container', **chest, operation='inspect')

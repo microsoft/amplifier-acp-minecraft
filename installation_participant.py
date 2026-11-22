@@ -14,7 +14,7 @@ from pathlib import Path
 
 from installation_guard import (ContinuityError, NotIdle, continuity, digest,
                                 durable_write, durable_remove, installation_lock, read,
-                                require_idle, restore_plan, snapshot, OBSERVATIONS, enrollment_ids,
+                                require_idle, restore_plan, snapshot, OBSERVATIONS, enrollment_ids, legacy_history, world_continuity,
                                 service_active, service_stopped, service_unavailable, service_process_identity)
 from update_admission import process_identity
 from connection_state import deferred as connection_deferred
@@ -126,7 +126,7 @@ class LocalInstallation:
     def capture(self):
         services = self.services()
         body = status = None
-        before = read(self.home/'workshop.json')
+        before = legacy_history(self.home)
         if service_active(services['body']):
             cfg = read(self.home/'config.json')
             def get(endpoint):
@@ -143,7 +143,7 @@ class LocalInstallation:
         value = snapshot(self.home, services, body, status)
         # Observation can settle a naturally expired task. Retry capture instead
         # of accepting a mixture of pre/post-expiry evidence.
-        after = read(self.home/'workshop.json')
+        after = legacy_history(self.home)
         if digest({k:v for k,v in before.items() if k not in OBSERVATIONS}) != digest({k:v for k,v in after.items() if k not in OBSERVATIONS}):
             raise NotIdle('Saved state changed during observation')
         return value
@@ -151,6 +151,8 @@ class LocalInstallation:
     def helper(self):
         cfg = read(self.home/'config.json')
         command = (cfg.get('task_helpers') or {}).get('command')
+        if isinstance(command, list) and len(command) == 1:
+            command = command[0]  # Legacy native setup stored a fixed argv.
         if command != self.c.get('task_helper') or not command or not Path(command).is_file():
             raise ContinuityError('Pure task-helper enrollment changed')
         # Generic runtime provider has verified the frozen release digest before
@@ -298,6 +300,8 @@ class Participant:
                 return {'ready':False, 'reason':'busy'}
             stopped = self.backend.capture()
             require_idle(stopped)
+            if not all(world_continuity(self.value['baseline'], stopped).values()):
+                raise ContinuityError('World tool state changed while stopping body')
             for key in ('authority_hash', 'task_hash', 'protected_files'):
                 if stopped[key] != self.value['baseline'][key]:
                     raise ContinuityError('State changed while stopping body')

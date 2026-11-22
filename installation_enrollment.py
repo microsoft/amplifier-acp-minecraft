@@ -37,11 +37,6 @@ def registration(config, helper_directory, python):
         raise ValueError('Enroll the actual independent shared plans directory for source retention')
     if any(p.resolve().is_relative_to(Path(cfg['home']).resolve()) for p in (config,helper_directory)):
         raise ValueError('Updater code/config must be outside mutable game source and agent mounts')
-    helper=Path(cfg['task_helper'])
-    if not helper.is_absolute() or helper.is_symlink() or not helper.is_file():
-        raise ValueError('Enroll the existing separate pure task-helper executable')
-    if helper.parent != Path(cfg['home'])/'task-helpers':
-        raise ValueError('Task helper must use the dedicated game helper directory')
     for filename in ('installation_participant.py','installation_source_provider.py','installation_session_probe.py','installation_retention.py','connection_state.py'):
         if not (helper_directory/filename).is_file():raise ValueError('Install fixed owner helper files first')
     scope={'services':[],'instance':False,'slack_homes':[]}
@@ -53,11 +48,20 @@ def registration(config, helper_directory, python):
         return [str(python),str(helper_directory/script),'--config',str(config),action]
     result = {'components':[
         {'id':ids['minecraft'],'provider':'command','protocol':2,'restart_scope':dict(scope),
-         'commands':{action:command('installation_source_provider.py',action) for action in ('status','plan','apply','rollback','verify')}},
-        {'id':ids['task-helpers'],'kind':'runtime','binary':str(helper),'restart_scope':dict(scope)}],
+         'commands':{action:command('installation_source_provider.py',action) for action in ('status','plan','apply','rollback','verify')}}],
         'participants':[{'id':participant_id,'protocol':1,
-                         'components':[ids['minecraft'],ids['task-helpers'],'instance','runtime','engine','container-image'],
+                         'components':[ids['minecraft'],'instance','runtime','engine','container-image'],
                          'commands':{action:command('installation_participant.py',action) for action in ('prepare','verify','restore')}}]}
+    if 'task_helper' in cfg:
+        # Older enrollments independently manage this binary. Preserve their
+        # registration when regenerating an existing owner's component list.
+        helper = Path(cfg['task_helper'])
+        if (not helper.is_absolute() or helper.is_symlink() or not helper.is_file()
+                or helper.parent != Path(cfg['home'])/'task-helpers'):
+            raise ValueError('Existing task helper must be the dedicated enrolled executable')
+        result['components'].append({'id':ids['task-helpers'], 'kind':'runtime',
+                                     'binary':str(helper), 'restart_scope':dict(scope)})
+        result['participants'][0]['components'].insert(1, ids['task-helpers'])
     if cfg.get('service_connection') is not None:
         from installation_connection import descriptor
         entry = descriptor(cfg)

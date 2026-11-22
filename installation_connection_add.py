@@ -17,7 +17,7 @@ from pathlib import Path
 
 from installation_connection import Backend, descriptor, stored_continuity, PROVIDER_FIELDS
 from installation_guard import (ContinuityError, NotIdle, digest, durable_write,
-                                installation_lock, read, require_idle)
+                                installation_lock, read, require_idle, legacy_history, world_state)
 from installation_source_provider import verify_sdk
 
 
@@ -114,7 +114,7 @@ class Prerequisites:
         if (len(matched) != 1 or matched[0].get('url') != context['url']
                 or matched[0].get('secret_ref') != context['secret_ref'] or matched[0].get('enabled') is not False):
             raise ContinuityError('Prepared context must match and remain explicitly disabled until mapped offline')
-        if cfg.get('incoming_chat_only') is not True or cfg.get('human_task_intake', {}).get('enabled') is True:
+        if cfg.get('human_task_intake', {}).get('enabled') is True:
             raise ContinuityError('A fresh saved connection must have no task-intake opt-in')
         verify_sdk(Path(self.cfg['venv']), Path(self.cfg['app']))
         for name in ('installation_connection.py', 'connection_state.py', 'connection_session_job.py',
@@ -126,8 +126,8 @@ class Prerequisites:
         snapshot['prepared_provider'] = {k:matched[0].get(k) for k in PROVIDER_FIELDS}
         snapshot['prepared_provider_configured'] = matched[0].get('configured') is True
         require_idle(snapshot)
-        history = read(home/'workshop.json')
-        if (history.get('task') is not None or history.get('turn') is not None or history.get('action_sequences')
+        history = legacy_history(home)
+        if (world_state(home) is not None or history.get('task') is not None or history.get('turn') is not None or history.get('action_sequences')
                 or (home/'session.json').exists() or (Path(self.cfg['state'])/'active.json').exists()):
             raise ContinuityError('Only a prepared unused connection can be added; preserve used homes')
         for s in snapshot['services'].values():

@@ -16,6 +16,7 @@ import urllib.error
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from adapter import control
+from mcp_game_fixture import call_tool, GameToolError
 from ops.rcon import command
 
 
@@ -43,12 +44,12 @@ def main():
             proc = subprocess.Popen([a.node, 'body.cjs', str(config)], stdout=log, stderr=log)
             def r(text): return command(a.properties, text)
             def act(name, **arguments):
-                result = control(cfg, '/action', {'name': name, 'arguments': arguments})
+                result = call_tool(cfg, name, arguments)
                 receipts.append({'tool': name, 'arguments': arguments, 'result': result}); return result
             def denied(fragment, name, **arguments):
                 try: act(name, **arguments)
-                except urllib.error.HTTPError as error:
-                    result = json.loads(error.read()); assert fragment in result['error'], result
+                except GameToolError as error:
+                    result = error.result; assert fragment in result['error'], result
                     receipts.append({'tool': name, 'rejection': result}); return
                 raise AssertionError('Expected rejection')
             try:
@@ -61,7 +62,7 @@ def main():
                 for text in ['forceload add 0 0', 'fill 0 79 0 5 84 5 air', 'fill 0 80 0 5 80 5 stone',
                              'setblock 2 80 1 grass_block', 'tp TillTester 1.5 81 1.5', 'clear TillTester']:
                     r(text)
-                time.sleep(.4); control(cfg, '/turn', {})
+                time.sleep(.4)
                 soil = {'x': 2, 'y': 80, 'z': 1, 'expected': 'grass_block'}
                 denied('hoe is required', 'till', **soil)
                 r('give TillTester wooden_hoe'); time.sleep(.2)

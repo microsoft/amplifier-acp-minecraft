@@ -189,7 +189,7 @@ needed. Updater enrollment remains a distinct owner operation.
 ## Settlement and preservation
 
 - Disconnect closes game admission, waits for the current controller turn,
-  action lease, sequence and inventory to settle, captures continuity, then
+  game actions and inventory to settle, captures continuity, then
   stops the controller. Its `context_quiesced` report lets the host close the
   context gate only after active work settles; after the report is acknowledged,
   a later status call stops the body. It retains all saved work and unit settings.

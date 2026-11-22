@@ -22,7 +22,7 @@ function fixture({far=false,onMove,onEquip,onDig,onDigGuard}={}){
  const spatial=realRequire('./spatial.cjs');
  const context=vm.createContext({require:name=>{
   if(name==='mineflayer')return {createBot:()=>bot};
-  if(name==='node:http')return {createServer:()=>({listen(){},close(){}})};
+  if(name==='node:http')return {createServer:()=>({listen(_port,_host,start){start()},close(){}})};
   if(name==='./spatial.cjs')return {...spatial,digGuard(){onDigGuard?.();},harvestTool:()=>({name:'pickaxe'}),supported:()=>true,route:()=>({reachable:true}),localMap:()=>({}),
    gotoWithProgress:async(_bot,goal)=>{moves.push(goal);bot.entity.position=new Vec3(goal.x,goal.y,goal.z);near=true;onMove?.(blocks,quarry);}};
   return realRequire(name);
@@ -31,9 +31,8 @@ function fixture({far=false,onMove,onEquip,onDig,onDigGuard}={}){
  setTimeout:(fn,ms)=>setTimeout(fn,[200,250,350,700].includes(ms)?1:ms),clearTimeout});
  vm.runInContext(fs.readFileSync(path.join(root,'body.cjs'),'utf8')+`
  ready=true;
- const request=history.record({kind:'chat',source:'human',accepted:true,username:'Owner',message:'Gather for the accepted project',time:new Date().toISOString()});
- history.begin({request_id:request.id,goal:'Existing construction task'});history.startTurn();turnUntil=Date.now()+240000;
- module.exports={operate,history,mcpServer};`,context,{filename:'body.cjs'});
+
+ module.exports={operate:(name,args={})=>operate(name,{operation_id:crypto.randomUUID(),...args}),history,mcpServer};`,context,{filename:'body.cjs'});
  return {...context.module.exports,bot,blocks,dug,moves,paver,quarry,second,
   run:a=>context.module.exports.operate('gather',{block:'stone',count:1,...a}),
   close:()=>fs.rmSync(home,{recursive:true,force:true})};
@@ -51,7 +50,7 @@ test('missing, invalid or duplicate selection is refused before any movement or 
  for(const input of [{},{targets:[]},{targets:[{x:NaN,y:64,z:0}]},{targets:[{x:1.5,y:64,z:0}]},
   {targets:[{x:30,y:64,z:0}]},{targets:Array(9).fill({x:3,y:64,z:0})},{targets:[{x:3,y:64,z:0},{x:3,y:64,z:0}]},
   {count:2,targets:[{x:3,y:64,z:0}]}]){
-  const f=fixture();try{await assert.rejects(f.run(input),/target|selection|count/i);assert.equal(f.dug.length,0);assert.equal(f.moves.length,0);assert.equal(f.history.data.turn.actions.length,0);assert.equal(f.history.data.events.filter(e=>e.kind==='action_started').length,0);}finally{f.close();}
+  const f=fixture();try{await assert.rejects(f.run(input),/target|selection|count/i);assert.equal(f.dug.length,0);assert.equal(f.moves.length,0);assert.equal(Object.values(f.history.data.operations).length,0);assert.equal(f.history.data.events.filter(e=>e.kind==='action_started').length,0);}finally{f.close();}
  }
 });
 test('a changed or unloaded selected block stops the batch without finding replacements',async()=>{
@@ -82,7 +81,7 @@ test('unconfirmed removal is not counted or retried and prevents further batch e
   const r=await f.run({count:2,targets:[xyz(f.quarry),xyz(f.second)]});
   assert.equal(r.mined,0);assert.equal(r.removed.length,0);assert.equal(f.dug.length,1);assert.match(r.error,/confirm/i);
   assert.equal(f.history.data.events.at(-1).kind,'action_result');
-  assert.equal(f.history.data.turn.actions.at(-1).status,'uncertain');
+  assert.equal(Object.values(f.history.data.operations).at(-1).status,'unknown');
  }finally{f.close();}
 });
 test('explicit order and count bound the batch without inferring that targets are natural',async()=>{
@@ -95,7 +94,7 @@ test('explicit order and count bound the batch without inferring that targets ar
 test('Stop during asynchronous equip prevents mining and remains stopped',async()=>{
  let f;f=fixture({onEquip:()=>{f.operate('stop');}});try{
   await assert.rejects(f.run({targets:[xyz(f.quarry)]}),/cancelled/);
-  assert.equal(f.dug.length,0);assert.equal(f.history.task().status,'stopped');
+  assert.equal(f.dug.length,0);assert.ok(f.history.data.stopped);
  }finally{f.close();}
 });
 
@@ -103,12 +102,7 @@ test('actual body blocks repeated unchanged occupied placement before another ac
  const f=fixture();try{
   const a={...xyz(f.quarry),item:'oak_planks'},before=JSON.stringify(f.history.task());
   for(let i=0;i<2;i++)await assert.rejects(f.operate('place',a),/Target is not empty/);
-  await assert.rejects(f.operate('place',a),e=>e.details.retry_guard.effect_attempted===false);
-  assert.equal(f.history.data.events.filter(e=>e.kind==='action_started').length,0,'known occupied targets never admit an effect');
-  assert.equal(f.history.data.events.at(-1).kind,'action_retry_blocked');
-  assert.equal(f.dug.length,0);assert.equal(f.moves.length,0);assert.equal(JSON.stringify(f.history.task()),before);
-  await f.operate('inspect',xyz(f.quarry));
-  await assert.rejects(f.operate('place',a),/Unchanged failed action/,'inspection alone must not clear the known condition');
+  assert.equal(Object.values(f.history.data.operations).length,0);
   f.blocks.set(f.quarry.toString(),'air');
   await assert.rejects(f.operate('place',a),e=>!e.details?.retry_guard);
   assert.equal(f.history.data.events.filter(e=>e.kind==='action_started').length,1,'changed terrain reaches original live checks once');
@@ -122,25 +116,21 @@ test('settled pickup-route failure retains confirmed harvest and permits fresh p
   assert.equal(r.mined,1);assert.deepEqual(f.dug,[xyz(f.quarry)]);assert.equal(f.blocks.get(f.second.toString()),'stone');
   assert.equal(r.settled_failure.kind,'settled_partial_gather');assert.equal(r.settled_failure.reached,false);
   assert.match(r.blocked,/partial movement/);assert.equal(r.error,undefined);
-  assert.equal(f.history.data.turn.actions[0].status,'failed_settled');
-  f.history.data.turn.activity=true;f.history.data.turn.task_id=null;
-  f.history.data.turn.activity_report={status:'running'};f.history.finish();
-  const policy=require('../activity-policy.cjs'),cfg={human_engagement:{enabled:true,task_optional:true}};
-  assert.equal(policy.allowed(f.history,cfg),true);assert.equal(policy.canContinue(f.history,cfg),true);
+  assert.equal(Object.values(f.history.data.operations)[0].status,'failed_settled');
   assert.equal(f.dug.length,1,'settlement never retries the remaining targets');
  }finally{f.close();}
 });
 test('unconfirmed block removal is still uncertain and cannot become a settled movement failure',async()=>{
  const f=fixture({onDig(){}});try{
   const r=await f.run({targets:[xyz(f.quarry)]});assert.match(r.error,/did not confirm/);
-  assert.equal(r.settled_failure,undefined);assert.equal(f.history.data.turn.actions[0].status,'uncertain');
+  assert.equal(r.settled_failure,undefined);assert.equal(Object.values(f.history.data.operations)[0].status,'unknown');
  }finally{f.close();}
 });
 
 test('supporting-player dig refusal happens before any admitted effect',async()=>{
  const f=fixture({onDigGuard(){throw Error('Refusing to remove a block supporting a player; move to safe footing first');}});try{
   await assert.rejects(f.operate('dig',{...xyz(f.quarry),expected:'stone'}),/supporting a player/);
-  assert.equal(f.dug.length,0);assert.equal(f.history.data.turn.actions.length,0);
+  assert.equal(f.dug.length,0);assert.equal(Object.values(f.history.data.operations).length,0);
   assert.equal(f.history.data.events.at(-1).kind,'action_preflight_refused');assert.equal(f.history.data.events.at(-1).effect_attempted,false);
  }finally{f.close();}
 });

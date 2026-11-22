@@ -27,8 +27,6 @@ class SdkBoundary(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result['final_text'], 'new')
         self.assertEqual(chunks, ['old', 'new', ' tail'])
         self.assertIsNone(self.client.active_prompt_id)
-        self.assertFalse(self.client.supports_awareness())  # vanilla peer
-        self.assertFalse(self.client.supports_input_receipts())
 
     async def test_sdk_concurrent_extension_keeps_actual_prompt_id_and_no_receipt_claim(self):
         ready = asyncio.Event()

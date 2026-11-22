@@ -2,7 +2,7 @@
 
 An agent can capture a view from its Minecraft eyes, save the PNG locally,
 inspect it, and explicitly attach it to a conversation. Capturing does not
-publish to Slack or start another planner turn.
+publish to Slack or request model inference.
 
 This optional renderer uses the player's already-loaded world, not a second
 Minecraft login or a remote camera. It starts Chromium on demand, takes one
@@ -42,7 +42,7 @@ updating application files alone does not replace installation-owned helpers.
 For a non-mutating readiness check, run `node screenshot-browser.cjs check` in
 the installed app, adding `--browser-path` if configured.
 
-Restart the body only when its controller has no active turn or action. Preserve
+Drain the connection and settle active game operations before restarting the body. Preserve
 `workshop.json`, endpoint/session files, task deadlines and budgets. Reconnect the
 same controller. Do not reset the task or world to install this capability.
 

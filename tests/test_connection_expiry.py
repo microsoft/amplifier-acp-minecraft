@@ -1,9 +1,7 @@
-"""Saved connections accept only the body's real status-only deadline expiry."""
+"""Reconnect archived installations, including observations from a pre-tools body."""
 import copy
-import subprocess
 import unittest
 import uuid
-from pathlib import Path
 from unittest.mock import patch
 
 from installation_guard import ContinuityError, continuity, durable_write, read
@@ -35,21 +33,21 @@ class ExpiryTests(unittest.TestCase):
         durable_write(self.home/'workshop.json',history)
         self.backend.body['task']=copy.deepcopy(task)
 
-    def body_expire(self, now=3000):
-        subprocess.run(['node','-e',
-            'Date.now=()=>Number(process.argv[2]); const {WorkshopState}=require("./workshop-state.cjs");'
-            'new WorkshopState(process.argv[1]).task();',str(self.home/'workshop.json'),str(now)],
-            cwd=Path(__file__).resolve().parents[1], check=True, capture_output=True)
-        self.backend.body['task']=read(self.home/'workshop.json')['task']
+    def old_body_expiry_record(self):
+        # Exact persisted outcome produced by the retired Workshop body.
+        # Current bodies keep this file read-only. Exercise the legacy reader
+        # with independently constructed before/after states.
+        prior = read(self.home/'workshop.json')['task']
+        self.store_task({**prior, 'status':'budget_exhausted'})
 
-    def test_real_body_status_only_expiry_for_legacy_and_tagged_bounds(self):
+    def test_saved_legacy_expiry_for_plain_and_tagged_bounds(self):
         for tagged in (False,True):
             for status in ('running','waiting','review','blocked','needs_review'):
                 with self.subTest(tagged=tagged,status=status):
                     original=self.finite_task(tagged,status)
                     with patch('installation_guard.time.time_ns',return_value=1000_000_000):
                         before=self.backend.capture()
-                    self.body_expire()
+                    self.old_body_expiry_record()
                     after=self.backend.capture()
                     self.assertEqual(read(self.home/'workshop.json')['task'],
                                      {**original,'status':'budget_exhausted'})
@@ -61,7 +59,7 @@ class ExpiryTests(unittest.TestCase):
                     with self.assertRaises(ContinuityError):stored_continuity(after,before)
 
     def test_no_other_task_or_authority_drift_is_normalized(self):
-        self.finite_task(True);before=self.backend.capture();self.body_expire()
+        self.finite_task(True);before=self.backend.capture();self.old_body_expiry_record()
         closed=read(self.home/'workshop.json')
         for field,value in [('id','replacement'),('deadline',4000),('turns',7),
                             ('max_turns',20),('progress',[]),('recovery_attempts',0),
@@ -75,8 +73,18 @@ class ExpiryTests(unittest.TestCase):
         durable_write(self.home/'workshop.json',changed)
         with self.assertRaises(ContinuityError):stored_continuity(before,self.backend.capture())
 
+    def test_world_tools_reconnect_preserves_the_historical_task_exactly(self):
+        task=self.finite_task()
+        self.backend.body.update(lifecycle_version=2,active_operation=None)
+        before=self.backend.capture()
+        self.assertEqual(read(self.home/'workshop.json')['task'],task)
+        self.assertTrue(all(stored_continuity(before,self.backend.capture()).values()))
+        self.old_body_expiry_record()
+        with self.assertRaises(ContinuityError):
+            stored_continuity(before,self.backend.capture())
+
     def test_exact_original_deadline_and_captured_evidence_required(self):
-        self.finite_task();before=self.backend.capture();self.body_expire(now=2000)
+        self.finite_task();before=self.backend.capture();self.old_body_expiry_record()
         with patch('installation_guard.time.time_ns',return_value=1999_000_000):
             with self.assertRaises(ContinuityError):stored_continuity(before,self.backend.capture())
         with patch('installation_guard.time.time_ns',return_value=2000_000_000):
@@ -105,7 +113,7 @@ class ExpiryTests(unittest.TestCase):
         actions=self.backend.action
         def start(kind,action):
             actions(kind,action)
-            if (kind,action)==('body','start'):self.body_expire()
+            if (kind,action)==('body','start'):self.old_body_expiry_record()
         self.backend.action=start
         result=self.connect_settle()
         self.assertTrue(result['settled']);self.assertEqual(result['state'],'connected')

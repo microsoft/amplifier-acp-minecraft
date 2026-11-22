@@ -3,6 +3,7 @@ import argparse,json,os,secrets,subprocess,sys,tempfile,time,urllib.error
 from pathlib import Path
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
 from adapter import control
+from mcp_game_fixture import call_tool, GameToolError
 from ops.rcon import command
 p=argparse.ArgumentParser();p.add_argument('--node',required=True);p.add_argument('--properties',type=Path,required=True)
 p.add_argument('--port',type=int,help='Optional translation proxy port; defaults to the disposable server port')
@@ -18,11 +19,11 @@ with tempfile.TemporaryDirectory(prefix='survival-course-') as tmp:
  cfg={'username':'SurvivalTester','host':'127.0.0.1','port':port,'control_port':18535,'token':secrets.token_hex(32)}
  file=Path(tmp)/'config.json';file.write_text(json.dumps(cfg));os.chmod(file,0o600)
  log=open(a.log,'w');proc=subprocess.Popen([a.node,'body.cjs',str(file)],stdout=log,stderr=log)
- def act(tool,**arguments):return control(cfg,'/action',{'name':tool,'arguments':arguments})
- def turn():control(cfg,'/finish',{});control(cfg,'/turn',{})
+ def act(tool,**arguments):return call_tool(cfg, tool, arguments)
+
  def denied(fragment,name,**kw):
   try:act(name,**kw);raise AssertionError('Expected refusal: '+name)
-  except urllib.error.HTTPError as e:assert fragment in e.read().decode()
+  except GameToolError as e:assert fragment in str(e)
  try:
   for _ in range(100):
    try:
@@ -34,7 +35,7 @@ with tempfile.TemporaryDirectory(prefix='survival-course-') as tmp:
   rcon('fill 2998 79 2998 3012 85 3008 air');rcon('fill 2998 80 2998 3012 80 3008 stone')
   rcon('kill @e[type=sheep,tag=survival_fixture]');time.sleep(.2)
   rcon('kill @e[type=item,x=3000,y=81,z=3000,distance=..20]')
-  rcon('gamemode survival SurvivalTester');rcon('tp SurvivalTester 3000.5 81 3000.5');rcon('clear SurvivalTester');time.sleep(.6);turn()
+  rcon('gamemode survival SurvivalTester');rcon('tp SurvivalTester 3000.5 81 3000.5');rcon('clear SurvivalTester');time.sleep(.6)
   for name,x,nbt in [('adult',3002,'Color:0b,Sheared:0b'),('baby',3002,'Age:-24000,Color:14b'),('shorn',3002,'Color:4b,Sheared:1b')]:
    z={'adult':3000,'baby':3001,'shorn':3002}[name]
    rcon(f'summon sheep {x}.5 81 {z}.5 {{NoAI:1b,Tags:["survival_fixture","{name}"],{nbt}}}')
@@ -78,7 +79,7 @@ with tempfile.TemporaryDirectory(prefix='survival-course-') as tmp:
   act('move',x=3002,y=81,z=3000,range=0);time.sleep(1)
   assert any(i['name']=='white_wool' for i in act('inventory')['items'])
   checks.append('Survival: craft shears from smelted ingots, refuse blocked line of sight, shear once and collect actual wool')
-  turn()
+
   # Use fixture-only extra wool to ensure the random 1–3 yield cannot make the
   # bed-placement regression flaky. Production agents receive no supplies.
   rcon('give SurvivalTester white_wool 3');rcon('give SurvivalTester oak_planks 3');rcon('setblock 3003 81 3002 crafting_table');time.sleep(.3)

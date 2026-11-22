@@ -80,20 +80,9 @@ with each tested archive. The fixture does not contact a real game or model.
 Server installation, Java, accounts, edition gateways and LAN discovery remain
 separate: follow the [server setup guide](server-setup.md).
 
-## Pure task helper
+## Package-v1 compatibility
 
-`manifest.commands.task_helper` resolves the bundled helper below the validated
-package root. Native setup can explicitly configure `task_helpers.command` to
-that absolute executable; it is independent of the selected ACP engine. The
-package does not replace an engine, select a model, renew work or rewrite an
-existing configuration. Existing enrolled installs keep their separately owned
-helper update component.
-
-The six-target fixture invokes the actual packaged `helper-capabilities`,
-`continuation-v2` and `watch-v2` commands without a model or agent home. It checks
-explicit unbounded tasks, bounded watch lifetime, Stop, unknown-bound refusal
-and unchanged stored watches after invalid input. No maximum-number sentinel
-or task conversion is introduced.
+The package-v1 inventory includes the existing helper executable for installations whose enrolled validator requires that entry. The player has no task scheduler. Fresh setup does not configure the helper for game decisions. An existing independently enrolled component retains its own installation and update history.
 
 ## Native lifecycle integration
 
@@ -271,7 +260,7 @@ install an engine, copy another account, log in, create a session or authorize
 world work.
 
 Setup creates separate private `home` and `state` directories, copies only
-inventoried application/private-Python/helper bytes, and records its intent.
+inventoried application and private Python bytes, and records its intent.
 Before opening the first caller-process session, the fixed CLI creates new
 private empty driver/library files in that unpublished root. Setup copies and
 hash-verifies the exact bundled bytes there; it does not repair the extracted

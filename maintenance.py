@@ -13,6 +13,9 @@ from harness_capabilities import maintenance, MAINTENANCE_META
 
 def closed_body(state):
     if not isinstance(state,dict):return False
+    if state.get('lifecycle_version') == 2:
+        return (state.get('ready') is True and state.get('busy') is False
+                and 'active_operation' in state and state['active_operation'] is None)
     lease=state.get('action_lease')
     return (state.get('ready') is True and state.get('busy') is False
             and state.get('turn_active') is False and isinstance(lease,dict)

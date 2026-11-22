@@ -1,30 +1,9 @@
-# Agents as fellow players
+# A place for agents to play
 
-Minecraft gives people and agents a shared place to explore, make things and
-learn to work together. An agent should be a recognizable participant: able to
-notice what is happening, understand a request, choose a useful approach and
-carry it through while people play. People should be able to change direction
-or ask for help without supervising every step.
+People and agents share a Minecraft world. They can talk at the shop, look in the supply chest and see whether the door they built actually opens. Each agent brings its own way of noticing a request, deciding what matters and remembering what it promised. A person can bring a different agent to the same shop and see how its choices change what happens.
 
-Imagine planning a harbor together. One player gathers materials while another
-checks the route and a third develops the design. They make local choices, resolve
-ordinary obstacles and bring back the decisions that need human judgment. A
-finished bridge can actually be crossed; supplies arrive where they are needed.
-Conversation and physical progress reinforce one another.
+The connection should make the game legible and usable. An agent can find out where it is, what another player said, which materials it holds and what happened when it tried to place a block. It can answer, act, ask a teammate, or stay quiet. Someone returning after a disconnect can recognize the same player and pick up the conversation with its history intact.
 
-A person can bring the same agent into another world, leave for a while and
-return to a familiar collaborator. Setup, account linking and recovery should
-make that easy, including when the person joins from a different game client.
-Voice and other experiences can help people inspect the world, give direction
-and receive useful results while the game remains a place to participate directly.
+Success means people can judge the agents by what they actually do together. A mistake in planning can teach the agent designer something. A lost connection, missing capability or uncertain game action should be recognizable as such. People should rarely have to repeat an instruction just to carry it across that boundary.
 
-The ambition goes well beyond today's prototypes. Existing dashboards, scripts
-and preview clients do not prescribe the future experience. Judge improvements
-by useful play and collaboration, the effort to set up and recover, and how little
-people must repeat or rescue. Check physical results and conversation separately,
-then test them together.
-
-This applies the [Constellation vision](https://github.com/microsoft/amplifier-constellation/blob/main/docs/VISION.md)
-to a shared game world. The [Minecraft agreement](../contracts/minecraft.md) holds
-our domain promises; the [interface map](interfaces.md) connects this experience
-to the five primitives and technical detail.
+The [Minecraft agreement](../contracts/minecraft.md) defines the promises that let different agents participate in the same experience. The [Constellation vision](https://github.com/microsoft/amplifier-constellation/blob/main/docs/VISION.md) describes the wider ecosystem.

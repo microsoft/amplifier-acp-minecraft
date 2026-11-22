@@ -17,7 +17,7 @@ function fixture({prepare,recipe,table=null}={}){
  const crafting=realRequire('./crafting.cjs'),spatial=realRequire('./spatial.cjs');
  const context=vm.createContext({require:name=>{
   if(name==='mineflayer')return {createBot:()=>bot};
-  if(name==='node:http')return {createServer:()=>({listen(){},close(){}})};
+  if(name==='node:http')return {createServer:()=>({listen(_port,_host,start){start()},close(){}})};
   if(name==='./crafting.cjs')return {...crafting,prepare:async()=>{calls.prepare++;await prepare?.(bot);},craft:async()=>{calls.craft++;return {completed_recipes:1,crafted:1};}};
   if(name==='./inventory.cjs')return {refreshInventory:async()=>{calls.refresh++;}};
   if(name==='./spatial.cjs')return {...spatial,gotoWithProgress:async()=>{calls.move++;}};
@@ -26,19 +26,18 @@ function fixture({prepare,recipe,table=null}={}){
  process:{argv:['node','body.cjs',config],on(){},exit(){assert.fail('Unexpected exit');}},setTimeout,clearTimeout});
  vm.runInContext(fs.readFileSync(path.join(root,'body.cjs'),'utf8')+`
  ready=true;
- const request=history.record({kind:'chat',source:'human',accepted:true,username:'Owner',message:'Craft a pickaxe',time:new Date().toISOString()});
- history.begin({request_id:request.id,goal:'Existing crafting task'});history.startTurn();turnUntil=Date.now()+240000;
- module.exports={operate,history};`,context,{filename:'body.cjs'});
+
+ module.exports={operate:(name,args={})=>operate(name,{operation_id:crypto.randomUUID(),...args}),history};`,context,{filename:'body.cjs'});
  return {...context.module.exports,bot,calls,run:()=>context.module.exports.operate('craft',{item:'stone_pickaxe',count:1}),close:()=>fs.rmSync(home,{recursive:true,force:true})};
 }
 test('clean initial no-recipe refusal has no effect admission or preparation and preserves task',async()=>{
  const f=fixture();try{
   const before=JSON.stringify(f.history.task());
   let refusal;await assert.rejects(f.run(),e=>{refusal=e;return true;});
-  assert.equal(f.history.data.turn.actions.length,0,'read-only recipe refusal must not admit an uncertain effect');
+  assert.equal(Object.values(f.history.data.operations).length,0,'read-only recipe refusal must not admit an uncertain effect');
   assert.match(refusal.message,/observed inventory.*no crafting preparation/);
   assert.deepEqual(f.calls,{prepare:0,craft:0,close:0,refresh:0,move:0});
-  assert.equal(f.history.data.turn.actions.length,0);
+  assert.equal(Object.values(f.history.data.operations).length,0);
   assert.equal(f.history.data.events.filter(e=>e.kind==='action_started').length,0);
   assert.equal(f.history.data.events.at(-1).kind,'action_preflight_refused');
   assert.equal(f.history.data.events.at(-1).effect_attempted,false);
@@ -56,7 +55,7 @@ for(const dirty of ['cursor','grid','output','open_table','unknown_window','miss
   if(dirty==='missing_cursor')delete f.bot.inventory.selectedItem;
   await assert.rejects(f.run(),/after crafting preparation.*may have changed/);
   assert.equal(f.calls.prepare,1);assert.equal(f.calls.craft,0);assert.equal(f.calls.move,0);
-  assert.equal(f.history.data.turn.actions.length,1);assert.equal(f.history.data.turn.actions[0].status,'uncertain');
+  assert.equal(Object.values(f.history.data.operations).length,1);assert.equal(Object.values(f.history.data.operations)[0].status,'unknown');
   assert.equal(f.history.data.events.at(-1).kind,'action_failed');
   assert.equal(f.history.data.events.at(-1).settled_failure,undefined);
  }finally{f.close();}
@@ -68,7 +67,7 @@ for(const type of ['minecraft:chest','minecraft:furnace'])for(const cursor of [n
   f.bot.recipesFor=()=>assert.fail('Foreign-window refusal must not query recipes');
   await assert.rejects(f.run(),/Close the other container before crafting/);
   assert.deepEqual(f.calls,{prepare:0,craft:0,close:0,refresh:0,move:0});
-  assert.equal(f.history.data.turn.actions.length,0);
+  assert.equal(Object.values(f.history.data.operations).length,0);
   assert.equal(f.history.data.events.at(-1).kind,'action_preflight_refused');
   assert.equal(f.history.data.events.at(-1).effect_attempted,false);
   assert.equal(JSON.stringify({task:f.history.task(),window:f.bot.currentWindow,inventory:f.bot.inventory}),before);
@@ -78,8 +77,8 @@ test('foreign window appearing after admission remains uncertain without automat
  const f=fixture({recipe:()=>[{}],prepare:bot=>{bot.currentWindow={type:'minecraft:furnace'};throw Error('Close the other container before crafting');}});try{
   await assert.rejects(f.run(),/Close the other container/);
   assert.equal(f.calls.prepare,1);assert.equal(f.calls.craft,0);
-  assert.equal(f.history.data.turn.actions.length,1);
-  assert.equal(f.history.data.turn.actions[0].status,'uncertain');
+  assert.equal(Object.values(f.history.data.operations).length,1);
+  assert.equal(Object.values(f.history.data.operations)[0].status,'unknown');
   assert.equal(f.history.data.events.at(-1).kind,'action_failed');
   assert.equal(f.history.data.events.at(-1).settled_failure,undefined);
  }finally{f.close();}
@@ -88,21 +87,21 @@ test('recipe lost during preparation stays uncertain, without movement or craft 
  const f=fixture({recipe:(_bot,_table,c)=>c.prepare===0?[{}]:[]});try{
   await assert.rejects(f.run(),/after crafting preparation/);
   assert.equal(f.calls.prepare,1);assert.equal(f.calls.craft,0);
-  assert.equal(f.history.data.turn.actions[0].status,'uncertain');
+  assert.equal(Object.values(f.history.data.operations)[0].status,'unknown');
  }finally{f.close();}
 });
 test('ingredients returned by preparation can still make a recipe possible',async()=>{
  const f=fixture({prepare:bot=>{bot.inventory.selectedItem=null;},recipe:(_bot,_table,c)=>c.prepare?[{}]:[]});try{
   f.bot.inventory.selectedItem={type:2,count:1};
   const result=await f.run();assert.equal(result.crafted,1);assert.equal(f.calls.craft,1);
-  assert.equal(f.history.data.turn.actions[0].status,'succeeded');
+  assert.equal(Object.values(f.history.data.operations)[0].status,'completed');
  }finally{f.close();}
 });
 test('unknown item is rejected before admission even with a dirty cursor',async()=>{
  const f=fixture();try{
   f.bot.inventory.selectedItem={type:2,count:1};
   await assert.rejects(f.operate('craft',{item:'not_an_item',count:1}),/Unknown item/);
-  assert.equal(f.calls.prepare,0);assert.equal(f.history.data.turn.actions.length,0);
+  assert.equal(f.calls.prepare,0);assert.equal(Object.values(f.history.data.operations).length,0);
  }finally{f.close();}
 });
 // Use the pinned production Mineflayer recipe queries, not a fixture recipe classifier.

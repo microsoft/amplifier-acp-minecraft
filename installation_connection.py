@@ -20,7 +20,7 @@ from pathlib import Path
 from contextlib import ExitStack
 
 from connection_state import state as connection_state
-from installation_guard import (ContinuityError, NotIdle, continuity, digest, authority_checks,
+from installation_guard import (world_continuity, ContinuityError, NotIdle, continuity, digest, authority_checks,
     durable_write, durable_remove, installation_lock, read, require_idle, restore_plan, service_active, service_stopped,
     service_unavailable, service_process_identity, native_service)
 from installation_participant import LocalInstallation
@@ -51,6 +51,7 @@ def stored_continuity(before, after):
     checks = {key:before[key]==after[key] for key in
               ('home','protected_files','source_metadata')}
     checks.update(authority_checks(before, after, allow_expiry=True))
+    checks.update(world_continuity(before, after))
     for key in ('inbox','participation_pending'):
         old = Counter(digest(x) for x in before.get('observations',{}).get(key) or [])
         new = Counter(digest(x) for x in after.get('observations',{}).get(key) or [])
