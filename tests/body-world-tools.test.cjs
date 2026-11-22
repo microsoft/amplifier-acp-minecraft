@@ -95,3 +95,28 @@ test('agent wakes are session-bound, durable and separate from chat and game eff
   assert.ok((await ask({...args,id:'wake-two'})).isError);
   assert.deepEqual(f.sends,[]);
 });
+
+test('move returns the observed failure at the MCP boundary and in the receipt', async t => {
+  const f = await fixture(t);
+  let attempts = 0;
+  f.bot.pathfinder.goto = async () => {
+    attempts++;
+    f.bot.entity.position.set(-1.4, 61.55, 1.5);
+    throw Error('Took to long to decide path to goal!');
+  };
+  f.bot.registry = {entitiesByName:{player:{metadataKeys:['flags','air_supply']}}};
+  f.bot.entity.metadata = {1:127};
+  f.bot.entity.eyeHeight = 1.62;
+  f.bot.blockAt = p => ({name:p.y === 63 ? 'water' : 'stone'});
+  const args = {x:-2,y:64,z:1,range:3,operation_id:'fresh-swim-01'};
+  const reply = await f.call('move',args);
+  assert.equal(reply.isError,true);
+  const failure = JSON.parse(reply.content[0].text);
+  assert.deepEqual(failure.movement,{
+    position:{x:-1.4,y:61.55,z:1.5},reached:false,air_supply_ticks:127,
+    head_block:{position:{x:-2,y:63,z:1},name:'water'},operation_status:'failed_settled'
+  });
+  const receipt = await f.call('operation_status',{operation_id:args.operation_id});
+  assert.deepEqual(JSON.parse(receipt.content[0].text).result.movement,failure.movement);
+  assert.equal(attempts,1);
+});

@@ -86,6 +86,23 @@ function footing(p,positions){return positions.some(v=>p.x>=Math.floor(v.x-.299)
 class FeetGoal extends goals.GoalNear {
  isEnd(n){return n.y===this.y&&((n.x-this.x)**2+(n.z-this.z)**2)<=this.rangeSq;}
 }
+// Sample the player's current pose and protocol air supply without moving it.
+function moveObservation(bot, target, ready) {
+  const entity = ready ? bot.entity : null;
+  const position = entity?.position?.clone();
+  const feet = position?.floored();
+  const eyes = position && Number.isFinite(entity.eyeHeight)
+    ? position.offset(0, entity.eyeHeight, 0).floored() : null;
+  const airIndex = bot.registry?.entitiesByName?.player?.metadataKeys?.indexOf('air_supply');
+  const air = airIndex >= 0 ? entity?.metadata?.[airIndex] : null;
+  const goal = new FeetGoal(target.x, target.y, target.z, target.range ?? 0);
+  return {
+    position: position ?? null,
+    reached: feet ? goal.isEnd(feet) : null,
+    air_supply_ticks: Number.isInteger(air) ? air : null,
+    head_block: eyes ? {position: eyes, name: bot.blockAt(eyes)?.name ?? null} : null,
+  };
+}
 function route(bot,p,range=0){
  const target_stance=targetStance(bot,p),movement_capabilities=movementCapabilities(bot),source_jump_clearance=jumpClearance(bot);
  if(range===0&&target_stance.exact_target_obstructed)return {reachable:false,status:'target_obstructed',target:p,range,exact_feet_y:true,steps:[],target_stance,movement_capabilities,source_jump_clearance,coverage:'Loaded exact destination is obstructed; no path search or movement performed'};
@@ -171,4 +188,4 @@ async function gotoWithProgress(bot,goal,{stallMs=8000,pollMs=500,settleMs=1000}
  }finally{clearInterval(timer);clearTimeout(drainTimer);}
 }
 
-module.exports={alignPlayerCollision,survey,openPassage,SpatialMovements,cell,targetStance,jumpClearance,placementGeometry,movementCapabilities,supported,footing,FeetGoal,route,localMap,digGuard,harvestTool,gotoWithProgress,placementSupport,normalizePassages};
+module.exports={moveObservation,alignPlayerCollision,survey,openPassage,SpatialMovements,cell,targetStance,jumpClearance,placementGeometry,movementCapabilities,supported,footing,FeetGoal,route,localMap,digGuard,harvestTool,gotoWithProgress,placementSupport,normalizePassages};
