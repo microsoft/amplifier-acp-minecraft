@@ -39,7 +39,14 @@ function fixture({ignoreCancel=false,cleanupMs=0,timeoutMs=10}={}){
 const move={x:2,y:64,z:0,mode:'normal',operation_id:'movement-1'};
 test('uncertain movement remains exclusive through cancellation and cannot be replayed',async()=>{
  const f=fixture({ignoreCancel:true});try{
-  await assert.rejects(f.operate('move',move),/cancellation has not settled/);
+  await assert.rejects(f.operate('move',move), error => {
+    assert.match(error.message,/cancellation has not settled/);
+    assert.equal(error.details.movement.operation_status,'unknown');
+    assert.equal(error.details.movement.reached,false);
+    assert.equal(error.details.movement.head_block,null);
+    assert.equal(error.details.movement.air_supply_ticks,null);
+    return true;
+  });
   assert.equal(f.state().busy,true);
   await assert.rejects(f.operate('move',{...move,operation_id:'movement-2'}),/in progress/);
   f.release();await wait(20);assert.equal(f.state().busy,false);
