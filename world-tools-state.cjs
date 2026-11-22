@@ -2,6 +2,7 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const crypto = require('node:crypto');
+const {isDeepStrictEqual} = require('node:util');
 
 function read(file, fallback) {
   try { return JSON.parse(fs.readFileSync(file, 'utf8')); }
@@ -74,6 +75,66 @@ function fingerprint(args) {
   return crypto.createHash('sha256').update(JSON.stringify(canonical(fields))).digest('hex');
 }
 
+function writeAtomic(file,data) {
+  const directory=path.dirname(file);
+  const created=fs.mkdirSync(directory, {mode:0o700, recursive:true});
+  if(created && process.platform!=='win32') {
+    const home=fs.openSync(path.dirname(directory),'r');
+    try { fs.fsyncSync(home); } finally { fs.closeSync(home); }
+  }
+  const temp = file + '.' + crypto.randomUUID();
+  const fd = fs.openSync(temp, 'wx', 0o600);
+  try { fs.writeFileSync(fd, JSON.stringify(data)); fs.fsyncSync(fd); }
+  finally { fs.closeSync(fd); }
+  fs.renameSync(temp, file);
+  if (process.platform !== 'win32') {
+    const dirFd = fs.openSync(directory, 'r');
+    try { fs.fsyncSync(dirFd); } finally { fs.closeSync(dirFd); }
+  }
+}
+
+// The legacy journal is read-only and can already be truncated when first seen.
+// Keep original evidence for unresolved references separately from rolling events.
+function retainLegacyEvidence(directory,legacy) {
+  const file=path.join(directory,'legacy-action-evidence.json');
+  const retained=read(file,[]);
+  const kinds=new Set(['action_started','action_result','action_failed']);
+  const valid=e=>e && kinds.has(e.kind) && typeof e.action_id==='string' && e.action_id.length>0;
+  if(!Array.isArray(retained) || !retained.every(valid))throw Error('Invalid historical action evidence');
+  const byId=new Map();
+  function index(event) {
+    if(!byId.has(event.action_id))byId.set(event.action_id,[]);
+    byId.get(event.action_id).push(event);
+  }
+  for(const event of retained)index(event);
+  const unresolved=new Set();
+  for(const turn of [legacy.turn,legacy.last_turn,legacy.last_conversation_turn]) {
+    for(const a of turn?.actions||[]) {
+      if(!['succeeded','failed_settled'].includes(a.status))unresolved.add(a.id);
+    }
+  }
+  const previous=retained.length;
+  for(const event of legacy.events||[]) {
+    if(!valid(event) || !unresolved.has(event.action_id))continue;
+    if(byId.get(event.action_id)?.some(old=>isDeepStrictEqual(old,event)))continue;
+    retained.push(event);
+    index(event);
+  }
+  if(retained.length!==previous)writeAtomic(file,retained);
+  return byId;
+}
+
+function historicalKeys(events) {
+  const starts=events?.filter(e=>e.kind==='action_started');
+  if(starts?.length!==1)return null;
+  const [start]=starts;
+  if(typeof start.action!=='string' || !start.arguments || typeof start.arguments!=='object' || Array.isArray(start.arguments))return null;
+  // Contradictory evidence must never narrow a hold to the wrong effect.
+  if(events.some(e=>(e.action!==undefined && e.action!==start.action) ||
+      (e.arguments!==undefined && !isDeepStrictEqual(e.arguments,start.arguments))))return null;
+  return effectKeys(start.action,start.arguments);
+}
+
 class WorldToolsState {
   constructor(home) {
     this.directory = path.join(home, 'world-tools');
@@ -94,28 +155,14 @@ class WorldToolsState {
          (entry.effect_keys!==undefined && (!Array.isArray(entry.effect_keys)||!entry.effect_keys.length||entry.effect_keys.some(k=>typeof k!=='string'||!k))) ||
          !['started','unknown','completed','failed_settled'].includes(entry.status))throw Error('Invalid operation receipt');
     }
+    this.legacyEvidence=retainLegacyEvidence(this.directory,this.legacy);
     this.healthy = true;
   }
 
   save() {
     if (!this.healthy) throw Error('Receipt storage failed; operator reconciliation required');
-    // An I/O error can occur after rename. Never dispatch again in this process.
-    try {
-      const created=fs.mkdirSync(this.directory, {mode:0o700, recursive:true});
-      if(created && process.platform!=='win32') {
-        const home=fs.openSync(path.dirname(this.directory),'r');
-        try { fs.fsyncSync(home); } finally { fs.closeSync(home); }
-      }
-      const temp = this.file + '.' + crypto.randomUUID();
-      const fd = fs.openSync(temp, 'wx', 0o600);
-      try { fs.writeFileSync(fd, JSON.stringify(this.data)); fs.fsyncSync(fd); }
-      finally { fs.closeSync(fd); }
-      fs.renameSync(temp, this.file);
-      if (process.platform !== 'win32') {
-        const directory = fs.openSync(this.directory, 'r');
-        try { fs.fsyncSync(directory); } finally { fs.closeSync(directory); }
-      }
-    } catch (error) { this.healthy = false; throw error; }
+    try { writeAtomic(this.file,this.data); }
+    catch (error) { this.healthy = false; throw error; }
   }
 
   task() { return null; }
@@ -163,19 +210,34 @@ class WorldToolsState {
     // effect cannot be narrowed to a particular world tool.
     if ((this.legacy.action_sequences||[]).some(seq=>['running','interrupted'].includes(seq.status)) && overlaps(keys,['world:*']))
       throw Error('Historical sequence has unconfirmed effects');
+    const remaining=new Set(this.legacyEvidence.keys());
     for (const turn of [this.legacy.turn,this.legacy.last_turn,this.legacy.last_conversation_turn]) {
       if (!turn) continue;
       for (const action of turn.actions || []) {
+        remaining.delete(action.id);
         if(id===action.id)throw Error('Operation id belongs to historical work');
         if(['succeeded','failed_settled'].includes(action.status) || previouslyReviewed(turn,action))continue;
-        const evidence = (this.legacy.events || []).find(e => e.kind === 'action_started' && e.action_id === action.id);
-        if (!evidence || overlaps(keys,effectKeys(evidence.action,evidence.arguments))) throw Error('Historical action requires reconciliation: ' + action.id);
+        this.checkHistoricalOverlap(action.id,keys);
       }
     }
+    // Even if a legacy turn disappears, its retained unresolved action cannot replay.
+    for(const oldId of remaining) {
+      if(id===oldId)throw Error('Operation id belongs to historical work');
+      this.checkHistoricalOverlap(oldId,keys);
+    }
     const entry = {id,tool,arguments_hash:digest,effect_keys:keys,status:'started',at:new Date().toISOString()};
+    if(!['chat','tell','private_reply'].includes(tool)) {
+      const {operation_id,...fields}=args;
+      entry.arguments=canonical(fields);
+    }
     this.data.operations[id] = entry;
     this.save(); // Persist intent before the first possible game packet.
     return {entry};
+  }
+
+  checkHistoricalOverlap(id,keys) {
+    const historical=historicalKeys(this.legacyEvidence.get(id));
+    if(!historical || overlaps(keys,historical))throw Error('Historical action requires reconciliation: '+id);
   }
 
   finish(entry, status, result) {

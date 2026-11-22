@@ -165,8 +165,9 @@ async function operate(name,a) {
   if(name==='operation_status') {
     const receipt=history.receipt(a.operation_id);
     if(!receipt||receipt.tool==='private_reply')return {status:'not_found'};
-    if(receipt.status==='started' && activeId!==receipt.id)return {...receipt,status:'unknown',recorded_status:'started'};
-    return receipt;
+    const {arguments:ownerArguments,...status}=receipt;
+    if(status.status==='started' && activeId!==status.id)return {...status,status:'unknown',recorded_status:'started'};
+    return status;
   }
   if(name==='legacy_work') {
     const old=history.legacy, task=old.task;
