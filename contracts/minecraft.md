@@ -6,7 +6,7 @@ Players, agent designers and installation owners rely on this agreement. Minecra
 
 Deliver game messages with stable identities, speaker attribution, audience and world. Keep public conversation, whispers and private installation input within their intended audiences. An agent may receive a message and remain silent. Sending a message is an explicit act. Transport acceptance establishes only what the transport observed. Use the shared [interaction agreement](https://github.com/microsoft/amplifier-constellation/blob/main/contracts/interaction.md) for audience and participation semantics.
 
-Expose the player's position, inventory, nearby entities and visible blocks as observations with their actual scope. A scan of loaded terrain can miss distant resources. An agent chooses when to look again. A quiet world generates no planning prompts. Agent-owned scheduling can invoke the same tools between messages.
+Expose the player's position, inventory, nearby entities and visible blocks as observations with their actual scope. A scan of loaded terrain can miss distant resources. An agent chooses when to look again. A quiet world generates no planning prompts. Agent-owned scheduling can invoke the same tools between messages. An authenticated `wake({id,note})` asks for one immediate prompt on the saved game session. The agent chooses when to ask. The prompt identifies an agent wake and carries its ID, note and request time. It carries no player attribution or new authority. Acceptance records the request before replying. A repeated ID with identical input queues nothing further, including after an unknown delivery. Stop cancels queued wakes, and a claimed wake with an unknown outcome requires reconciliation.
 
 ## Actions
 

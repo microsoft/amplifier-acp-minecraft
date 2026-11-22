@@ -68,3 +68,30 @@ test('public chat is data, including messages that mention Stop',async t=>{
   const response=await f.call('chat',{operation_id:'chat-intent-2',text:'Heard'});
   assert.ok(!response.isError);assert.deepEqual(f.sends,['Heard']);
 });
+
+test('agent wakes are session-bound, durable and separate from chat and game effects',async t=>{
+  const f=await fixture(t), session={session:'original',binding:'bound'}, args={id:'wake-one',note:'Look around'};
+  const file=path.join(f.home,'session.json');
+  fs.writeFileSync(file, JSON.stringify(session));
+  const ask=async a=>(await f.call('wake',a));
+  assert.deepEqual(JSON.parse((await ask(args)).content[0].text),{queued:true,id:args.id});
+  assert.equal((await ask(args)).isError,undefined);
+  assert.ok((await ask({...args,note:'other'})).isError);
+  const peek=()=>f.request('/inbox/peek');
+  const queued=(await peek()).value;
+  assert.equal(queued.event,null);assert.equal(queued.wake.source,'agent_wake');
+  const claim={id:args.id,...session};
+  assert.equal((await f.request('/wake/claim',{...claim,binding:'foreign'})).status,400);
+  assert.equal((await f.request('/wake/claim',claim)).status,200);
+  assert.equal((await peek()).value.wake,null);
+  assert.ok((await ask({...args,id:'wake-two'})).isError);
+  assert.equal((await ask(args)).isError,undefined);
+  assert.equal((await f.request('/wake/finish',claim)).status,200);
+  assert.equal((await ask(args)).isError,undefined);
+  assert.equal((await peek()).value.wake,null);
+  assert.equal((await ask({...args,id:'wake-two'})).isError,undefined);
+  await f.request('/stop',{});
+  assert.equal((await peek()).value.wake,null);
+  assert.ok((await ask({...args,id:'wake-two'})).isError);
+  assert.deepEqual(f.sends,[]);
+});
