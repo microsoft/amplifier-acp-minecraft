@@ -18,7 +18,11 @@ function queue(history, home, {id,note}, admit) {
   const prior = wakes.receipts[key];
   if (prior) {
     if (prior.digest !== digest) throw Error('Wake ID already bound to other input or session');
-    if (prior.state === 'cancelled') throw Error('Wake cancelled before dispatch');
+    if (prior.state === 'cancelled') {
+      const error = Error('Wake cancelled before dispatch');
+      error.details = {queued:false,id};
+      throw error;
+    }
     return {queued:true,id};
   }
   admit();
